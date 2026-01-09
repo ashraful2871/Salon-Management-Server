@@ -245,7 +245,7 @@ const updateSalonStatus = async (salonId: string, status: string) => {
 
   const result = await prisma.salon.update({
     where: { id: salonId },
-    data: { status },
+    data: { status: status as any },
   });
 
   return result;

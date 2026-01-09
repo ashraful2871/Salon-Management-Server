@@ -156,7 +156,7 @@ const updateUserStatus = async (id: string, status: string) => {
 
   const result = await prisma.user.update({
     where: { id },
-    data: { status },
+    data: { status: status as any },
     select: {
       id: true,
       email: true,
@@ -180,6 +180,10 @@ const updateUserRole = async (id: string, role: string) => {
       id,
       isDeleted: false,
     },
+    include: {
+      admin: true,
+      salonOwner: true,
+    },
   });
 
   if (!user) {
@@ -189,7 +193,7 @@ const updateUserRole = async (id: string, role: string) => {
   const result = await prisma.$transaction(async (tx: any) => {
     const updatedUser = await tx.user.update({
       where: { id },
-      data: { role },
+      data: { role: role as any },
     });
 
     // Handle role-specific profile creation
