@@ -1,0 +1,72 @@
+enum UserRole {
+  CUSTOMER
+  STAFF
+  SALON_OWNER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  DELETED
+  BLOCKED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  ONLINE
+  MOBILE_BANKING
+}
+
+enum ServiceCategory {
+  HAIRCUT
+  STYLING
+  COLORING
+  TREATMENT
+  SPA
+  FACIAL
+  MANICURE
+  PEDICURE
+  MAKEUP
+  WAXING
+  MASSAGE
+  OTHER
+}
+
+enum StaffStatus {
+  AVAILABLE
+  BUSY
+  ON_LEAVE
+  INACTIVE
+}
+
+enum SalonStatus {
+  ACTIVE
+  INACTIVE
+  PENDING_APPROVAL
+  REJECTED
+}
