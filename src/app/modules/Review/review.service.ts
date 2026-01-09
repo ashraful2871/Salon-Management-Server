@@ -1,4 +1,5 @@
 import { StatusCodes } from 'http-status-codes';
+import { Prisma } from '@prisma/client';
 import ApiError from '../../Error/error';
 import prisma from '../../shared/prisma';
 
@@ -30,7 +31,7 @@ const createReview = async (userId: string, payload: any) => {
   }
 
   // Create review in a transaction and update ratings
-  const result = await prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const review = await tx.review.create({
       data: {
         appointmentId: payload.appointmentId,

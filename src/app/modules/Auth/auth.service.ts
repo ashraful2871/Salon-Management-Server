@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { StatusCodes } from 'http-status-codes';
+import { Prisma } from '@prisma/client';
 import ApiError from '../../Error/error';
 import prisma from '../../shared/prisma';
 import { jwtHelpers } from '../../helper/jwtHelper';
@@ -19,7 +20,7 @@ const register = async (payload: any) => {
   const hashedPassword = await bcrypt.hash(payload.password, 12);
 
   // Create user in a transaction
-  const result = await prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const user = await tx.user.create({
       data: {
         email: payload.email,

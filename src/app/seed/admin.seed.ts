@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import prisma from '../shared/prisma';
 
@@ -13,7 +14,7 @@ export const seedAdmin = async () => {
 
       const hashedPassword = await bcrypt.hash('admin123456', 12);
 
-      await prisma.$transaction(async (tx: any) => {
+      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const admin = await tx.user.create({
           data: {
             email: 'admin@salon.com',

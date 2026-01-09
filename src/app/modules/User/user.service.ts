@@ -1,4 +1,5 @@
 import { StatusCodes } from 'http-status-codes';
+import { Prisma } from '@prisma/client';
 import ApiError from '../../Error/error';
 import prisma from '../../shared/prisma';
 
@@ -190,7 +191,7 @@ const updateUserRole = async (id: string, role: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
   }
 
-  const result = await prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const updatedUser = await tx.user.update({
       where: { id },
       data: { role: role as any },

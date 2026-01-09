@@ -14,10 +14,7 @@ const auth = (...requiredRoles: string[]) => {
         throw new ApiError(StatusCodes.UNAUTHORIZED, 'You are not authorized!');
       }
 
-      const verifiedUser = jwtHelpers.verifyToken(
-        token,
-        config.jwt.jwt_secret as string
-      );
+      const verifiedUser = jwtHelpers.verifyToken(token, config.jwt.jwt_secret);
 
       // Check if user exists and is active
       const user = await prisma.user.findUnique({
