@@ -1,9 +1,9 @@
-import { Request, Response, NextFunction } from 'express';
-import { StatusCodes } from 'http-status-codes';
-import ApiError from '../Error/error';
-import { jwtHelpers } from '../helper/jwtHelper';
-import config from '../../config';
-import prisma from '../shared/prisma';
+import { Request, Response, NextFunction } from "express";
+import { StatusCodes } from "http-status-codes";
+import ApiError from "../Error/error";
+import { jwtHelpers } from "../helper/jwtHelper";
+import config from "../../config";
+import prisma from "../shared/prisma";
 
 const auth = (...requiredRoles: string[]) => {
   return async (req: Request, _res: Response, next: NextFunction) => {
@@ -11,7 +11,7 @@ const auth = (...requiredRoles: string[]) => {
       const token = req.headers.authorization;
 
       if (!token) {
-        throw new ApiError(StatusCodes.UNAUTHORIZED, 'You are not authorized!');
+        throw new ApiError(StatusCodes.UNAUTHORIZED, "You are not authorized!");
       }
 
       const verifiedUser = jwtHelpers.verifyToken(token, config.jwt.jwt_secret);
@@ -25,10 +25,10 @@ const auth = (...requiredRoles: string[]) => {
       });
 
       if (!user) {
-        throw new ApiError(StatusCodes.NOT_FOUND, 'User not found!');
+        throw new ApiError(StatusCodes.NOT_FOUND, "User not found!");
       }
 
-      if (user.status !== 'ACTIVE') {
+      if (user.status !== "ACTIVE") {
         throw new ApiError(
           StatusCodes.FORBIDDEN,
           `User account is ${user.status.toLowerCase()}`
@@ -36,7 +36,7 @@ const auth = (...requiredRoles: string[]) => {
       }
 
       if (requiredRoles.length && !requiredRoles.includes(verifiedUser.role)) {
-        throw new ApiError(StatusCodes.FORBIDDEN, 'Forbidden!');
+        throw new ApiError(StatusCodes.FORBIDDEN, "Forbidden!");
       }
 
       req.user = verifiedUser;
