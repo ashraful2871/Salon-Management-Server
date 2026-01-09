@@ -105,7 +105,7 @@ const getAllAppointments = async (userId: string, userRole: string, query: any) 
     });
     if (salonOwner) {
       whereConditions.salonId = {
-        in: salonOwner.salons.map((s) => s.id),
+        in: salonOwner.salons.map((s: any) => s.id),
       };
     }
   }

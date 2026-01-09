@@ -1,14 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { StatusCodes } from 'http-status-codes';
 import { ZodError } from 'zod';
-import { Prisma } from '@prisma/client';
 import ApiError from '../Error/error';
 
 const globalErrorHandler = (
   err: any,
-  req: Request,
+  _req: Request,
   res: Response,
-  next: NextFunction
+  _next: NextFunction
 ) => {
   let statusCode = StatusCodes.INTERNAL_SERVER_ERROR;
   let message = 'Something went wrong!';
@@ -24,7 +23,7 @@ const globalErrorHandler = (
     }));
   }
   // Handle Prisma errors
-  else if (err instanceof Prisma.PrismaClientKnownRequestError) {
+  else if (err.name === 'PrismaClientKnownRequestError') {
     if (err.code === 'P2002') {
       statusCode = StatusCodes.CONFLICT;
       message = 'Unique constraint violation';
@@ -37,7 +36,7 @@ const globalErrorHandler = (
       message = 'Foreign key constraint failed';
       errorDetails = err.meta;
     }
-  } else if (err instanceof Prisma.PrismaClientValidationError) {
+  } else if (err.name === 'PrismaClientValidationError') {
     statusCode = StatusCodes.BAD_REQUEST;
     message = 'Validation error';
   }

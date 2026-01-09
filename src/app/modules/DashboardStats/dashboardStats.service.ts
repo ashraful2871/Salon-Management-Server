@@ -60,7 +60,7 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
     throw new ApiError(StatusCodes.FORBIDDEN, 'Only salon owners can access this route');
   }
 
-  const salonIds = salonOwner.salons.map((s) => s.id);
+  const salonIds = salonOwner.salons.map((s: any) => s.id);
 
   const [
     totalSalons,

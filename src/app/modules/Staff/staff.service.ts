@@ -49,7 +49,7 @@ const addStaff = async (ownerId: string, payload: any) => {
   }
 
   // Create staff in transaction
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     // Update user role to STAFF
     await tx.user.update({
       where: { id: payload.userId },
@@ -231,7 +231,7 @@ const updateStaff = async (ownerId: string, staffId: string, payload: any) => {
     throw new ApiError(StatusCodes.FORBIDDEN, 'You can only update your own staff');
   }
 
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     const { serviceIds, ...updateData } = payload;
 
     const updatedStaff = await tx.staff.update({
@@ -301,7 +301,7 @@ const removeStaff = async (ownerId: string, staffId: string) => {
   }
 
   // Soft delete and revert user role
-  await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: any) => {
     await tx.staff.update({
       where: { id: staffId },
       data: { isDeleted: true },

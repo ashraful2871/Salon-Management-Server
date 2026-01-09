@@ -186,7 +186,7 @@ const updateUserRole = async (id: string, role: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
   }
 
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     const updatedUser = await tx.user.update({
       where: { id },
       data: { role },

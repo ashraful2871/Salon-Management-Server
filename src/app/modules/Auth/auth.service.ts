@@ -19,7 +19,7 @@ const register = async (payload: any) => {
   const hashedPassword = await bcrypt.hash(payload.password, 12);
 
   // Create user in a transaction
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     const user = await tx.user.create({
       data: {
         email: payload.email,

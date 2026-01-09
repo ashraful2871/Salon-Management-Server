@@ -13,7 +13,7 @@ export const seedAdmin = async () => {
 
       const hashedPassword = await bcrypt.hash('admin123456', 12);
 
-      await prisma.$transaction(async (tx) => {
+      await prisma.$transaction(async (tx: any) => {
         const admin = await tx.user.create({
           data: {
             email: 'admin@salon.com',

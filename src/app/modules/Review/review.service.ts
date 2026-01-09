@@ -30,7 +30,7 @@ const createReview = async (userId: string, payload: any) => {
   }
 
   // Create review in a transaction and update ratings
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     const review = await tx.review.create({
       data: {
         appointmentId: payload.appointmentId,
@@ -73,7 +73,7 @@ const createReview = async (userId: string, payload: any) => {
       select: { rating: true },
     });
     const salonAvgRating =
-      salonReviews.reduce((sum, r) => sum + r.rating, 0) / salonReviews.length;
+      salonReviews.reduce((sum: number, r: any) => sum + r.rating, 0) / salonReviews.length;
     await tx.salon.update({
       where: { id: appointment.salonId },
       data: {
@@ -89,7 +89,7 @@ const createReview = async (userId: string, payload: any) => {
         select: { rating: true },
       });
       const staffAvgRating =
-        staffReviews.reduce((sum, r) => sum + r.rating, 0) / staffReviews.length;
+        staffReviews.reduce((sum: number, r: any) => sum + r.rating, 0) / staffReviews.length;
       await tx.staff.update({
         where: { id: appointment.staffId },
         data: {

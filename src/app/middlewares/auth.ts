@@ -6,7 +6,7 @@ import config from '../../config';
 import prisma from '../shared/prisma';
 
 const auth = (...requiredRoles: string[]) => {
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, _res: Response, next: NextFunction) => {
     try {
       const token = req.headers.authorization;
 
