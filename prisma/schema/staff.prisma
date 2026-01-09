@@ -1,0 +1,23 @@
+model Staff {
+  id              String       @id @default(uuid())
+  userId          String       @unique
+  salonId         String
+  speciality      String?
+  experience      Int? // in years
+  bio             String?
+  status          StaffStatus  @default(AVAILABLE)
+  rating          Float        @default(0)
+  totalReviews    Int          @default(0)
+  isDeleted       Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  salon         Salon          @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  staffServices StaffService[]
+  appointments  Appointment[]
+  reviews       Review[]
+
+  @@map("staff")
+}

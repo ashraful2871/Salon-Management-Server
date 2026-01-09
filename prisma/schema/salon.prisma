@@ -1,0 +1,29 @@
+model Salon {
+  id               String       @id @default(uuid())
+  name             String
+  description      String?
+  address          String
+  city             String
+  state            String?
+  zipCode          String?
+  phone            String
+  email            String?
+  images           String[]
+  operatingHours   Json?
+  status           SalonStatus  @default(PENDING_APPROVAL)
+  rating           Float        @default(0)
+  totalReviews     Int          @default(0)
+  ownerId          String
+  isDeleted        Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  // Relations
+  owner        SalonOwner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  services     Service[]
+  staff        Staff[]
+  appointments Appointment[]
+  reviews      Review[]
+
+  @@map("salons")
+}
