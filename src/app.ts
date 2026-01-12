@@ -7,7 +7,7 @@ import notFound from "./app/middlewares/notFound";
 
 const app: Application = express();
 
-// Middlewares
+// Middlewares setup
 app.use(
   cors({
     origin: [
