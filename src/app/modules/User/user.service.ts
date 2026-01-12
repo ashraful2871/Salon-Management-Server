@@ -1,7 +1,7 @@
-import { StatusCodes } from 'http-status-codes';
-import { Prisma } from '@prisma/client';
-import ApiError from '../../Error/error';
-import prisma from '../../shared/prisma';
+import { StatusCodes } from "http-status-codes";
+import { Prisma } from "@prisma/client";
+import ApiError from "../../Error/error";
+import prisma from "../../shared/prisma";
 
 const getAllUsers = async (query: any) => {
   const { page = 1, limit = 10, searchTerm, role, status } = query;
@@ -13,9 +13,9 @@ const getAllUsers = async (query: any) => {
 
   if (searchTerm) {
     whereConditions.OR = [
-      { name: { contains: searchTerm, mode: 'insensitive' } },
-      { email: { contains: searchTerm, mode: 'insensitive' } },
-      { phone: { contains: searchTerm, mode: 'insensitive' } },
+      { name: { contains: searchTerm, mode: "insensitive" } },
+      { email: { contains: searchTerm, mode: "insensitive" } },
+      { phone: { contains: searchTerm, mode: "insensitive" } },
     ];
   }
 
@@ -46,7 +46,7 @@ const getAllUsers = async (query: any) => {
         createdAt: true,
         updatedAt: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     }),
     prisma.user.count({ where: whereConditions }),
   ]);
@@ -95,7 +95,7 @@ const getUserById = async (id: string) => {
   });
 
   if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
   return user;
@@ -111,7 +111,7 @@ const updateUser = async (id: string, payload: any) => {
   });
 
   if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
   const updateData: any = { ...payload };
@@ -152,7 +152,7 @@ const updateUserStatus = async (id: string, status: string) => {
   });
 
   if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
   const result = await prisma.user.update({
@@ -188,28 +188,30 @@ const updateUserRole = async (id: string, role: string) => {
   });
 
   if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
-  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const updatedUser = await tx.user.update({
-      where: { id },
-      data: { role: role as any },
-    });
+  const result = await prisma.$transaction(
+    async (tx: Prisma.TransactionClient) => {
+      const updatedUser = await tx.user.update({
+        where: { id },
+        data: { role: role as any },
+      });
 
-    // Handle role-specific profile creation
-    if (role === 'SALON_OWNER' && !user.salonOwner) {
-      await tx.salonOwner.create({
-        data: { userId: id },
-      });
-    } else if (role === 'ADMIN' && !user.admin) {
-      await tx.admin.create({
-        data: { userId: id },
-      });
+      // Handle role-specific profile creation
+      if (role === "SALON_OWNER" && !user.salonOwner) {
+        await tx.salonOwner.create({
+          data: { userId: id },
+        });
+      } else if (role === "ADMIN" && !user.admin) {
+        await tx.admin.create({
+          data: { userId: id },
+        });
+      }
+
+      return updatedUser;
     }
-
-    return updatedUser;
-  });
+  );
 
   return result;
 };
@@ -224,7 +226,7 @@ const deleteUser = async (id: string) => {
   });
 
   if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
   // Soft delete
@@ -232,7 +234,7 @@ const deleteUser = async (id: string) => {
     where: { id },
     data: {
       isDeleted: true,
-      status: 'DELETED',
+      status: "DELETED",
     },
   });
 

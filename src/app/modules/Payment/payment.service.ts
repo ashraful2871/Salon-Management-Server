@@ -1,6 +1,6 @@
-import { StatusCodes } from 'http-status-codes';
-import ApiError from '../../Error/error';
-import prisma from '../../shared/prisma';
+import { StatusCodes } from "http-status-codes";
+import ApiError from "../../Error/error";
+import prisma from "../../shared/prisma";
 
 const createPayment = async (payload: any) => {
   // Verify appointment exists
@@ -10,7 +10,7 @@ const createPayment = async (payload: any) => {
   });
 
   if (!appointment) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Appointment not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
   // Check if payment already exists
@@ -19,7 +19,10 @@ const createPayment = async (payload: any) => {
   });
 
   if (existingPayment) {
-    throw new ApiError(StatusCodes.CONFLICT, 'Payment already exists for this appointment');
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "Payment already exists for this appointment"
+    );
   }
 
   const payment = await prisma.payment.create({
@@ -27,9 +30,11 @@ const createPayment = async (payload: any) => {
       appointmentId: payload.appointmentId,
       amount: payload.amount || appointment.service.price,
       paymentMethod: payload.paymentMethod,
-      status: payload.status || 'PENDING',
+      status: payload.status || "PENDING",
       transactionId: payload.transactionId,
-      paymentDate: payload.paymentDate ? new Date(payload.paymentDate) : undefined,
+      paymentDate: payload.paymentDate
+        ? new Date(payload.paymentDate)
+        : undefined,
     },
     include: {
       appointment: {
@@ -63,7 +68,7 @@ const getAllPayments = async (userId: string, userRole: string, query: any) => {
   const whereConditions: any = {};
 
   // Filter based on role
-  if (userRole === 'SALON_OWNER') {
+  if (userRole === "SALON_OWNER") {
     const salonOwner = await prisma.salonOwner.findUnique({
       where: { userId },
       include: { salons: { select: { id: true } } },
@@ -112,7 +117,7 @@ const getAllPayments = async (userId: string, userRole: string, query: any) => {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     }),
     prisma.payment.count({ where: whereConditions }),
   ]);
@@ -159,7 +164,7 @@ const getPaymentById = async (id: string) => {
   });
 
   if (!payment) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Payment not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Payment not found");
   }
 
   return payment;

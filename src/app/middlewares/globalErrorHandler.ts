@@ -1,7 +1,7 @@
-import { Request, Response, NextFunction } from 'express';
-import { StatusCodes } from 'http-status-codes';
-import { ZodError } from 'zod';
-import ApiError from '../Error/error';
+import { Request, Response, NextFunction } from "express";
+import { StatusCodes } from "http-status-codes";
+import { ZodError } from "zod";
+import ApiError from "../Error/error";
 
 const globalErrorHandler = (
   err: any,
@@ -10,35 +10,37 @@ const globalErrorHandler = (
   _next: NextFunction
 ) => {
   let statusCode = StatusCodes.INTERNAL_SERVER_ERROR;
-  let message = 'Something went wrong!';
+  let message = "Something went wrong!";
   let errorDetails = null;
 
   // Handle Zod validation errors
   if (err instanceof ZodError) {
     statusCode = StatusCodes.BAD_REQUEST;
-    message = 'Validation error';
-    errorDetails = err.errors.map((error) => ({
-      path: error.path.join('.'),
+    message = "Validation error";
+    errorDetails = err.issues.map((error) => ({
+      path: error.path
+        .filter((p) => typeof p === "string" || typeof p === "number")
+        .join("."),
       message: error.message,
     }));
   }
   // Handle Prisma errors
-  else if (err.name === 'PrismaClientKnownRequestError') {
-    if (err.code === 'P2002') {
+  else if (err.name === "PrismaClientKnownRequestError") {
+    if (err.code === "P2002") {
       statusCode = StatusCodes.CONFLICT;
-      message = 'Unique constraint violation';
+      message = "Unique constraint violation";
       errorDetails = err.meta;
-    } else if (err.code === 'P2025') {
+    } else if (err.code === "P2025") {
       statusCode = StatusCodes.NOT_FOUND;
-      message = 'Record not found';
-    } else if (err.code === 'P2003') {
+      message = "Record not found";
+    } else if (err.code === "P2003") {
       statusCode = StatusCodes.BAD_REQUEST;
-      message = 'Foreign key constraint failed';
+      message = "Foreign key constraint failed";
       errorDetails = err.meta;
     }
-  } else if (err.name === 'PrismaClientValidationError') {
+  } else if (err.name === "PrismaClientValidationError") {
     statusCode = StatusCodes.BAD_REQUEST;
-    message = 'Validation error';
+    message = "Validation error";
   }
   // Handle custom ApiError
   else if (err instanceof ApiError) {
@@ -54,7 +56,7 @@ const globalErrorHandler = (
     success: false,
     message,
     errorDetails,
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
+    stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
   });
 };
 

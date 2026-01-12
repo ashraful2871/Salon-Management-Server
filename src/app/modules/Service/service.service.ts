@@ -1,6 +1,6 @@
-import { StatusCodes } from 'http-status-codes';
-import ApiError from '../../Error/error';
-import prisma from '../../shared/prisma';
+import { StatusCodes } from "http-status-codes";
+import ApiError from "../../Error/error";
+import prisma from "../../shared/prisma";
 
 const createService = async (userId: string, payload: any) => {
   // Verify salon ownership
@@ -9,7 +9,10 @@ const createService = async (userId: string, payload: any) => {
   });
 
   if (!salonOwner) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'Only salon owners can create services');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only salon owners can create services"
+    );
   }
 
   const salon = await prisma.salon.findUnique({
@@ -20,11 +23,14 @@ const createService = async (userId: string, payload: any) => {
   });
 
   if (!salon) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Salon not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
   if (salon.ownerId !== salonOwner.id) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'You can only create services for your own salons');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You can only create services for your own salons"
+    );
   }
 
   const service = await prisma.service.create({
@@ -45,8 +51,8 @@ const getAllServices = async (query: any) => {
 
   if (searchTerm) {
     whereConditions.OR = [
-      { name: { contains: searchTerm, mode: 'insensitive' } },
-      { description: { contains: searchTerm, mode: 'insensitive' } },
+      { name: { contains: searchTerm, mode: "insensitive" } },
+      { description: { contains: searchTerm, mode: "insensitive" } },
     ];
   }
 
@@ -74,7 +80,7 @@ const getAllServices = async (query: any) => {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     }),
     prisma.service.count({ where: whereConditions }),
   ]);
@@ -116,20 +122,27 @@ const getServiceById = async (id: string) => {
   });
 
   if (!service) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Service not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Service not found");
   }
 
   return service;
 };
 
-const updateService = async (userId: string, serviceId: string, payload: any) => {
+const updateService = async (
+  userId: string,
+  serviceId: string,
+  payload: any
+) => {
   // Verify ownership
   const salonOwner = await prisma.salonOwner.findUnique({
     where: { userId },
   });
 
   if (!salonOwner) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'Only salon owners can update services');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only salon owners can update services"
+    );
   }
 
   const service = await prisma.service.findUnique({
@@ -141,11 +154,14 @@ const updateService = async (userId: string, serviceId: string, payload: any) =>
   });
 
   if (!service) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Service not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Service not found");
   }
 
   if (service.salon.ownerId !== salonOwner.id) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'You can only update your own services');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You can only update your own services"
+    );
   }
 
   const result = await prisma.service.update({
@@ -163,7 +179,10 @@ const deleteService = async (userId: string, serviceId: string) => {
   });
 
   if (!salonOwner) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'Only salon owners can delete services');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only salon owners can delete services"
+    );
   }
 
   const service = await prisma.service.findUnique({
@@ -175,11 +194,14 @@ const deleteService = async (userId: string, serviceId: string) => {
   });
 
   if (!service) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Service not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Service not found");
   }
 
   if (service.salon.ownerId !== salonOwner.id) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'You can only delete your own services');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You can only delete your own services"
+    );
   }
 
   // Soft delete

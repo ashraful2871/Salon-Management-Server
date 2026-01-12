@@ -1,6 +1,6 @@
-import { StatusCodes } from 'http-status-codes';
-import ApiError from '../../Error/error';
-import prisma from '../../shared/prisma';
+import { StatusCodes } from "http-status-codes";
+import ApiError from "../../Error/error";
+import prisma from "../../shared/prisma";
 
 const createSalon = async (userId: string, payload: any) => {
   // Check if user is salon owner
@@ -9,7 +9,10 @@ const createSalon = async (userId: string, payload: any) => {
   });
 
   if (!salonOwner) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'Only salon owners can create salons');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only salon owners can create salons"
+    );
   }
 
   const salon = await prisma.salon.create({
@@ -32,21 +35,21 @@ const getAllSalons = async (query: any) => {
 
   if (searchTerm) {
     whereConditions.OR = [
-      { name: { contains: searchTerm, mode: 'insensitive' } },
-      { description: { contains: searchTerm, mode: 'insensitive' } },
-      { city: { contains: searchTerm, mode: 'insensitive' } },
+      { name: { contains: searchTerm, mode: "insensitive" } },
+      { description: { contains: searchTerm, mode: "insensitive" } },
+      { city: { contains: searchTerm, mode: "insensitive" } },
     ];
   }
 
   if (city) {
-    whereConditions.city = { contains: city, mode: 'insensitive' };
+    whereConditions.city = { contains: city, mode: "insensitive" };
   }
 
   if (status) {
     whereConditions.status = status;
   } else {
     // By default, only show active salons to public
-    whereConditions.status = 'ACTIVE';
+    whereConditions.status = "ACTIVE";
   }
 
   const [salons, total] = await Promise.all([
@@ -75,7 +78,7 @@ const getAllSalons = async (query: any) => {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     }),
     prisma.salon.count({ where: whereConditions }),
   ]);
@@ -100,7 +103,10 @@ const getMySalons = async (userId: string, query: any) => {
   });
 
   if (!salonOwner) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'Only salon owners can access this route');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only salon owners can access this route"
+    );
   }
 
   const [salons, total] = await Promise.all([
@@ -121,7 +127,7 @@ const getMySalons = async (userId: string, query: any) => {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     }),
     prisma.salon.count({
       where: {
@@ -185,14 +191,14 @@ const getSalonById = async (id: string) => {
             },
           },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
         take: 10,
       },
     },
   });
 
   if (!salon) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Salon not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
   return salon;
@@ -205,7 +211,10 @@ const updateSalon = async (userId: string, salonId: string, payload: any) => {
   });
 
   if (!salonOwner) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'Only salon owners can update salons');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only salon owners can update salons"
+    );
   }
 
   const salon = await prisma.salon.findUnique({
@@ -216,11 +225,14 @@ const updateSalon = async (userId: string, salonId: string, payload: any) => {
   });
 
   if (!salon) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Salon not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
   if (salon.ownerId !== salonOwner.id) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'You can only update your own salons');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You can only update your own salons"
+    );
   }
 
   const result = await prisma.salon.update({
@@ -240,7 +252,7 @@ const updateSalonStatus = async (salonId: string, status: string) => {
   });
 
   if (!salon) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Salon not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
   const result = await prisma.salon.update({
@@ -251,7 +263,11 @@ const updateSalonStatus = async (salonId: string, status: string) => {
   return result;
 };
 
-const deleteSalon = async (userId: string, userRole: string, salonId: string) => {
+const deleteSalon = async (
+  userId: string,
+  userRole: string,
+  salonId: string
+) => {
   const salon = await prisma.salon.findUnique({
     where: {
       id: salonId,
@@ -260,17 +276,20 @@ const deleteSalon = async (userId: string, userRole: string, salonId: string) =>
   });
 
   if (!salon) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Salon not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
   // Check ownership if not admin
-  if (userRole !== 'ADMIN') {
+  if (userRole !== "ADMIN") {
     const salonOwner = await prisma.salonOwner.findUnique({
       where: { userId },
     });
 
     if (!salonOwner || salon.ownerId !== salonOwner.id) {
-      throw new ApiError(StatusCodes.FORBIDDEN, 'You can only delete your own salons');
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        "You can only delete your own salons"
+      );
     }
   }
 

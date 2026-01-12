@@ -1,7 +1,7 @@
-import { Server } from 'http';
-import app from './app';
-import config from './config';
-import { seedAdmin } from './app/seed/admin.seed';
+import { Server } from "http";
+import app from "./app";
+import config from "./config";
+import { seedAdmin } from "./app/seed/admin.seed";
 
 async function main() {
   try {
@@ -15,7 +15,7 @@ async function main() {
     const exitHandler = () => {
       if (server) {
         server.close(() => {
-          console.info('Server closed');
+          console.info("Server closed");
         });
       }
       process.exit(1);
@@ -26,17 +26,17 @@ async function main() {
       exitHandler();
     };
 
-    process.on('uncaughtException', unexpectedErrorHandler);
-    process.on('unhandledRejection', unexpectedErrorHandler);
+    process.on("uncaughtException", unexpectedErrorHandler);
+    process.on("unhandledRejection", unexpectedErrorHandler);
 
-    process.on('SIGTERM', () => {
-      console.info('SIGTERM received');
+    process.on("SIGTERM", () => {
+      console.info("SIGTERM received");
       if (server) {
         server.close();
       }
     });
   } catch (error) {
-    console.error('Failed to start server:', error);
+    console.error("Failed to start server:", error);
     process.exit(1);
   }
 }

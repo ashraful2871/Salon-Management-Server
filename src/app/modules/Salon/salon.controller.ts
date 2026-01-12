@@ -1,8 +1,8 @@
-import { Request, Response } from 'express';
-import { StatusCodes } from 'http-status-codes';
-import catchAsync from '../../shared/catchAsync';
-import sendResponse from '../../shared/sendResponse';
-import { SalonService } from './salon.service';
+import { Request, Response } from "express";
+import { StatusCodes } from "http-status-codes";
+import catchAsync from "../../shared/catchAsync";
+import sendResponse from "../../shared/sendResponse";
+import { SalonService } from "./salon.service";
 
 const createSalon = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
@@ -12,7 +12,7 @@ const createSalon = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,
     success: true,
-    message: 'Salon created successfully',
+    message: "Salon created successfully",
     data: result,
   });
 });
@@ -23,7 +23,7 @@ const getAllSalons = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: 'Salons retrieved successfully',
+    message: "Salons retrieved successfully",
     meta: result.meta,
     data: result.data,
   });
@@ -37,43 +37,49 @@ const getMySalons = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: 'My salons retrieved successfully',
+    message: "My salons retrieved successfully",
     meta: result.meta,
     data: result.data,
   });
 });
 
 const getSalonById = catchAsync(async (req: Request, res: Response) => {
-  const result = await SalonService.getSalonById(req.params.id);
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+  const result = await SalonService.getSalonById(id);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: 'Salon retrieved successfully',
+    message: "Salon retrieved successfully",
     data: result,
   });
 });
 
 const updateSalon = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  const result = await SalonService.updateSalon(userId, req.params.id, req.body);
+  const result = await SalonService.updateSalon(userId, id, req.body);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: 'Salon updated successfully',
+    message: "Salon updated successfully",
     data: result,
   });
 });
 
 const updateSalonStatus = catchAsync(async (req: Request, res: Response) => {
-  const result = await SalonService.updateSalonStatus(req.params.id, req.body.status);
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+  const result = await SalonService.updateSalonStatus(id, req.body.status);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: 'Salon status updated successfully',
+    message: "Salon status updated successfully",
     data: result,
   });
 });
@@ -81,13 +87,15 @@ const updateSalonStatus = catchAsync(async (req: Request, res: Response) => {
 const deleteSalon = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
   const userRole = req.user?.role;
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  await SalonService.deleteSalon(userId, userRole, req.params.id);
+  await SalonService.deleteSalon(userId, userRole, id);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: 'Salon deleted successfully',
+    message: "Salon deleted successfully",
     data: null,
   });
 });

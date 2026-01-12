@@ -1,8 +1,8 @@
-import { Request, Response } from 'express';
-import { StatusCodes } from 'http-status-codes';
-import catchAsync from '../../shared/catchAsync';
-import sendResponse from '../../shared/sendResponse';
-import { ReviewService } from './review.service';
+import { Request, Response } from "express";
+import { StatusCodes } from "http-status-codes";
+import catchAsync from "../../shared/catchAsync";
+import sendResponse from "../../shared/sendResponse";
+import { ReviewService } from "./review.service";
 
 const createReview = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
@@ -12,7 +12,7 @@ const createReview = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,
     success: true,
-    message: 'Review created successfully',
+    message: "Review created successfully",
     data: result,
   });
 });
@@ -23,19 +23,21 @@ const getAllReviews = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: 'Reviews retrieved successfully',
+    message: "Reviews retrieved successfully",
     meta: result.meta,
     data: result.data,
   });
 });
 
 const getReviewById = catchAsync(async (req: Request, res: Response) => {
-  const result = await ReviewService.getReviewById(req.params.id);
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+  const result = await ReviewService.getReviewById(id);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: 'Review retrieved successfully',
+    message: "Review retrieved successfully",
     data: result,
   });
 });
