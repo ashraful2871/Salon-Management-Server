@@ -3,13 +3,14 @@ import auth from "../../middlewares/auth";
 import validateRequest from "../../middlewares/validateRequest";
 import { SalonOwnerController } from "./salonOwner.controller";
 import { SalonOwnerValidation } from "./salonOwner.validation";
+import { UserRole } from "@prisma/client";
 
 const router = express.Router();
 
 // Customer applies
 router.post(
   "/apply",
-  auth("CUSTOMER"),
+  auth(UserRole.CUSTOMER, UserRole.SALON_OWNER),
   validateRequest(SalonOwnerValidation.applySalonOwnerValidation),
   SalonOwnerController.applySalonOwner
 );
@@ -17,33 +18,33 @@ router.post(
 // Customer checks application
 router.get(
   "/me",
-  auth("CUSTOMER", "SALON_OWNER"),
+  auth(UserRole.CUSTOMER, UserRole.SALON_OWNER),
   SalonOwnerController.getMyApplication
 );
 
 // Admin: list + single
 router.get(
   "/applications",
-  auth("ADMIN"),
+  auth(UserRole.ADMIN),
   SalonOwnerController.getAllApplications
 );
 router.get(
   "/applications/:id",
-  auth("ADMIN"),
+  auth(UserRole.ADMIN),
   SalonOwnerController.getApplicationById
 );
 
 // Admin: approve/reject
 router.patch(
   "/applications/:id/approve",
-  auth("ADMIN"),
+  auth(UserRole.ADMIN),
   validateRequest(SalonOwnerValidation.approveSalonOwnerValidation),
   SalonOwnerController.approveApplication
 );
 
 router.patch(
   "/applications/:id/reject",
-  auth("ADMIN"),
+  auth(UserRole.ADMIN),
   validateRequest(SalonOwnerValidation.rejectSalonOwnerValidation),
   SalonOwnerController.rejectApplication
 );

@@ -1,42 +1,33 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { OwnerApplicationStatus, UserRole } from "@prisma/client";
 
 const applySalonOwner = async (userId: string, payload: any) => {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await prisma.user.findMany({ where: { id: userId } });
 
   if (!user) throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
 
-  // If already salon owner role, block
-  if (user.role === "SALON_OWNER") {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      "You are already a salon owner"
-    );
-  }
-
-  const existing = await prisma.salonOwner.findUnique({ where: { userId } });
+  const existing = await prisma.salonOwner.findFirst({ where: { userId } });
 
   // If already applied
   if (existing) {
     // If REJECTED, allow re-apply by updating the same record (recommended behavior)
-    if (existing.applicationStatus === "REJECTED") {
+    if (
+      existing.applicationStatus === OwnerApplicationStatus.REJECTED ||
+      existing.applicationStatus === OwnerApplicationStatus.PENDING
+    ) {
       const updated = await prisma.salonOwner.update({
-        where: { userId },
+        where: { id: existing.id },
         data: {
           ...payload,
-          applicationStatus: "PENDING",
+          applicationStatus: OwnerApplicationStatus.PENDING,
           rejectionReason: null,
           verificationStatus: false,
         },
       });
       return updated;
     }
-
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      `You already have an application: ${existing.applicationStatus}`
-    );
   }
 
   const result = await prisma.salonOwner.create({
@@ -47,7 +38,7 @@ const applySalonOwner = async (userId: string, payload: any) => {
       businessPhone: payload.businessPhone,
       businessEmail: payload.businessEmail,
       documentUrl: payload.documentUrl,
-      applicationStatus: "PENDING",
+      applicationStatus: OwnerApplicationStatus.PENDING,
       verificationStatus: false,
     },
   });
@@ -56,14 +47,14 @@ const applySalonOwner = async (userId: string, payload: any) => {
 };
 
 const getMySalonOwnerApplication = async (userId: string) => {
-  const application = await prisma.salonOwner.findUnique({
+  const application = await prisma.salonOwner.findMany({
     where: { userId },
     include: {
       user: { select: { id: true, name: true, email: true, role: true } },
     },
   });
 
-  if (!application) {
+  if (!application || application.length === 0) {
     throw new ApiError(
       StatusCodes.NOT_FOUND,
       "No salon owner application found"
@@ -145,7 +136,7 @@ const approveApplication = async (
     const updatedApplication = await tx.salonOwner.update({
       where: { id: applicationId },
       data: {
-        applicationStatus: "APPROVED",
+        applicationStatus: OwnerApplicationStatus.APPROVED,
         verificationStatus: true,
         rejectionReason: null,
       },
@@ -154,7 +145,7 @@ const approveApplication = async (
     // ✅ set user role to SALON_OWNER after approval
     await tx.user.update({
       where: { id: application.userId },
-      data: { role: "SALON_OWNER" },
+      data: { role: UserRole.SALON_OWNER },
     });
 
     return updatedApplication;

@@ -25,6 +25,9 @@ CREATE TYPE "StaffStatus" AS ENUM ('AVAILABLE', 'BUSY', 'ON_LEAVE', 'INACTIVE');
 -- CreateEnum
 CREATE TYPE "SalonStatus" AS ENUM ('ACTIVE', 'INACTIVE', 'PENDING_APPROVAL', 'REJECTED');
 
+-- CreateEnum
+CREATE TYPE "OwnerApplicationStatus" AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
+
 -- CreateTable
 CREATE TABLE "appointments" (
     "id" TEXT NOT NULL,
@@ -188,6 +191,8 @@ CREATE TABLE "salon_owners" (
     "businessEmail" TEXT,
     "verificationStatus" BOOLEAN NOT NULL DEFAULT false,
     "documentUrl" TEXT,
+    "applicationStatus" "OwnerApplicationStatus" NOT NULL DEFAULT 'PENDING',
+    "rejectionReason" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

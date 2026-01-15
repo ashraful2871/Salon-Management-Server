@@ -16,7 +16,7 @@ model User {
 
   // Relations
   admin        Admin?
-  salonOwner   SalonOwner?
+  salonOwner   SalonOwner[]
   staff        Staff?
   appointments Appointment[]
   reviews      Review[]
@@ -42,7 +42,7 @@ model Admin {
 
 model SalonOwner {
   id                 String  @id @default(uuid())
-  userId             String  @unique
+  userId             String
   businessName       String?
   businessAddress    String?
   businessPhone      String?
