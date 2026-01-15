@@ -22,7 +22,7 @@ router.get(
   SalonOwnerController.getMyApplication
 );
 
-// Admin: list + single
+// Admin: list + single //
 router.get(
   "/applications",
   auth(UserRole.ADMIN),
