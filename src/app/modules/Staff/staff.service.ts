@@ -6,7 +6,7 @@ import prisma from "../../shared/prisma";
 const addStaff = async (ownerId: string, payload: any) => {
   // Verify salon ownership
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId: ownerId },
+    where: { id: ownerId },
   });
 
   if (!salonOwner) {
@@ -217,7 +217,7 @@ const getStaffById = async (id: string) => {
 const updateStaff = async (ownerId: string, staffId: string, payload: any) => {
   // Verify ownership
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId: ownerId },
+    where: { id: ownerId },
   });
 
   if (!salonOwner) {
@@ -294,7 +294,7 @@ const updateStaff = async (ownerId: string, staffId: string, payload: any) => {
 const removeStaff = async (ownerId: string, staffId: string) => {
   // Verify ownership
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId: ownerId },
+    where: { id: ownerId },
   });
 
   if (!salonOwner) {

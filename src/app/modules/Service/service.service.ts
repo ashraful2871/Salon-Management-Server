@@ -5,7 +5,7 @@ import prisma from "../../shared/prisma";
 const createService = async (userId: string, payload: any) => {
   // Verify salon ownership
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
+    where: { id: userId },
   });
 
   if (!salonOwner) {
@@ -135,7 +135,7 @@ const updateService = async (
 ) => {
   // Verify ownership
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
+    where: { id: userId },
   });
 
   if (!salonOwner) {
@@ -175,7 +175,7 @@ const updateService = async (
 const deleteService = async (userId: string, serviceId: string) => {
   // Verify ownership
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
+    where: { id: userId },
   });
 
   if (!salonOwner) {

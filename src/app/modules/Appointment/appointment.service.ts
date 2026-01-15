@@ -1,6 +1,6 @@
-import { StatusCodes } from 'http-status-codes';
-import ApiError from '../../Error/error';
-import prisma from '../../shared/prisma';
+import { StatusCodes } from "http-status-codes";
+import ApiError from "../../Error/error";
+import prisma from "../../shared/prisma";
 
 const bookAppointment = async (userId: string, payload: any) => {
   // Verify user is customer
@@ -8,14 +8,17 @@ const bookAppointment = async (userId: string, payload: any) => {
     where: { id: userId },
   });
 
-  if (!user || user.role !== 'CUSTOMER') {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'Only customers can book appointments');
+  if (!user || user.role !== "CUSTOMER") {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only customers can book appointments"
+    );
   }
 
   // Verify salon, service, and staff exist
   const [salon, service, staff] = await Promise.all([
     prisma.salon.findUnique({
-      where: { id: payload.salonId, isDeleted: false, status: 'ACTIVE' },
+      where: { id: payload.salonId, isDeleted: false, status: "ACTIVE" },
     }),
     prisma.service.findUnique({
       where: { id: payload.serviceId, isDeleted: false, isActive: true },
@@ -26,15 +29,15 @@ const bookAppointment = async (userId: string, payload: any) => {
   ]);
 
   if (!salon) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Salon not found or inactive');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found or inactive");
   }
 
   if (!service) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Service not found or inactive');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Service not found or inactive");
   }
 
   if (!staff) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Staff not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Staff not found");
   }
 
   // Create appointment
@@ -82,25 +85,29 @@ const bookAppointment = async (userId: string, payload: any) => {
   return appointment;
 };
 
-const getAllAppointments = async (userId: string, userRole: string, query: any) => {
+const getAllAppointments = async (
+  userId: string,
+  userRole: string,
+  query: any
+) => {
   const { page = 1, limit = 10, status, salonId } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
   const whereConditions: any = {};
 
   // Filter based on role
-  if (userRole === 'CUSTOMER') {
+  if (userRole === "CUSTOMER") {
     whereConditions.customerId = userId;
-  } else if (userRole === 'STAFF') {
+  } else if (userRole === "STAFF") {
     const staff = await prisma.staff.findUnique({
       where: { userId },
     });
     if (staff) {
       whereConditions.staffId = staff.id;
     }
-  } else if (userRole === 'SALON_OWNER') {
+  } else if (userRole === "SALON_OWNER") {
     const salonOwner = await prisma.salonOwner.findUnique({
-      where: { userId },
+      where: { id: userId },
       include: { salons: { select: { id: true } } },
     });
     if (salonOwner) {
@@ -163,7 +170,7 @@ const getAllAppointments = async (userId: string, userRole: string, query: any) 
         },
         payment: true,
       },
-      orderBy: { appointmentDate: 'desc' },
+      orderBy: { appointmentDate: "desc" },
     }),
     prisma.appointment.count({ where: whereConditions }),
   ]);
@@ -226,7 +233,7 @@ const getMyAppointments = async (userId: string, query: any) => {
         },
         payment: true,
       },
-      orderBy: { appointmentDate: 'desc' },
+      orderBy: { appointmentDate: "desc" },
     }),
     prisma.appointment.count({ where: whereConditions }),
   ]);
@@ -274,7 +281,7 @@ const getAppointmentById = async (id: string) => {
   });
 
   if (!appointment) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Appointment not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
   return appointment;
@@ -295,33 +302,39 @@ const updateAppointmentStatus = async (
   });
 
   if (!appointment) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Appointment not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
   // Verify permissions
-  if (userRole === 'CUSTOMER') {
+  if (userRole === "CUSTOMER") {
     if (appointment.customerId !== userId) {
-      throw new ApiError(StatusCodes.FORBIDDEN, 'You can only update your own appointments');
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        "You can only update your own appointments"
+      );
     }
     // Customers can only cancel
-    if (payload.status !== 'CANCELLED') {
-      throw new ApiError(StatusCodes.FORBIDDEN, 'Customers can only cancel appointments');
+    if (payload.status !== "CANCELLED") {
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        "Customers can only cancel appointments"
+      );
     }
-  } else if (userRole === 'STAFF') {
+  } else if (userRole === "STAFF") {
     if (appointment.staff.userId !== userId) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
-        'You can only update appointments assigned to you'
+        "You can only update appointments assigned to you"
       );
     }
-  } else if (userRole === 'SALON_OWNER') {
+  } else if (userRole === "SALON_OWNER") {
     const salonOwner = await prisma.salonOwner.findUnique({
-      where: { userId },
+      where: { id: userId },
     });
     if (!salonOwner || appointment.salon.ownerId !== salonOwner.id) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
-        'You can only update appointments for your salons'
+        "You can only update appointments for your salons"
       );
     }
   }
@@ -343,14 +356,17 @@ const cancelAppointment = async (userId: string, appointmentId: string) => {
   });
 
   if (!appointment) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'Appointment not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
   if (appointment.customerId !== userId) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'You can only cancel your own appointments');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You can only cancel your own appointments"
+    );
   }
 
-  if (['COMPLETED', 'CANCELLED'].includes(appointment.status)) {
+  if (["COMPLETED", "CANCELLED"].includes(appointment.status)) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       `Cannot cancel ${appointment.status.toLowerCase()} appointment`
@@ -359,7 +375,7 @@ const cancelAppointment = async (userId: string, appointmentId: string) => {
 
   const result = await prisma.appointment.update({
     where: { id: appointmentId },
-    data: { status: 'CANCELLED' },
+    data: { status: "CANCELLED" },
   });
 
   return result;

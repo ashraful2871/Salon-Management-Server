@@ -1,6 +1,6 @@
-import { StatusCodes } from 'http-status-codes';
-import ApiError from '../../Error/error';
-import prisma from '../../shared/prisma';
+import { StatusCodes } from "http-status-codes";
+import ApiError from "../../Error/error";
+import prisma from "../../shared/prisma";
 
 const getAdminDashboardStats = async () => {
   const [
@@ -15,12 +15,12 @@ const getAdminDashboardStats = async () => {
     prisma.salon.count({ where: { isDeleted: false } }),
     prisma.appointment.count(),
     prisma.payment.aggregate({
-      where: { status: 'COMPLETED' },
+      where: { status: "COMPLETED" },
       _sum: { amount: true },
     }),
     prisma.appointment.findMany({
       take: 10,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       include: {
         customer: {
           select: { name: true, email: true },
@@ -34,7 +34,7 @@ const getAdminDashboardStats = async () => {
       },
     }),
     prisma.salon.groupBy({
-      by: ['status'],
+      by: ["status"],
       _count: true,
       where: { isDeleted: false },
     }),
@@ -52,12 +52,15 @@ const getAdminDashboardStats = async () => {
 
 const getSalonOwnerDashboardStats = async (userId: string) => {
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
+    where: { id: userId },
     include: { salons: { select: { id: true } } },
   });
 
   if (!salonOwner) {
-    throw new ApiError(StatusCodes.FORBIDDEN, 'Only salon owners can access this route');
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only salon owners can access this route"
+    );
   }
 
   const salonIds = salonOwner.salons.map((s: any) => s.id);
@@ -85,7 +88,7 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
     }),
     prisma.payment.aggregate({
       where: {
-        status: 'COMPLETED',
+        status: "COMPLETED",
         appointment: { salonId: { in: salonIds } },
       },
       _sum: { amount: true },
@@ -93,7 +96,7 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
     prisma.appointment.findMany({
       where: { salonId: { in: salonIds } },
       take: 10,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       include: {
         customer: {
           select: { name: true, email: true, phone: true },
@@ -111,7 +114,7 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
       },
     }),
     prisma.appointment.groupBy({
-      by: ['status'],
+      by: ["status"],
       _count: true,
       where: { salonId: { in: salonIds } },
     }),
@@ -140,18 +143,18 @@ const getCustomerDashboardStats = async (userId: string) => {
       where: { customerId: userId },
     }),
     prisma.appointment.count({
-      where: { customerId: userId, status: 'COMPLETED' },
+      where: { customerId: userId, status: "COMPLETED" },
     }),
     prisma.appointment.count({
       where: {
         customerId: userId,
-        status: { in: ['PENDING', 'CONFIRMED'] },
+        status: { in: ["PENDING", "CONFIRMED"] },
         appointmentDate: { gte: new Date() },
       },
     }),
     prisma.payment.aggregate({
       where: {
-        status: 'COMPLETED',
+        status: "COMPLETED",
         appointment: { customerId: userId },
       },
       _sum: { amount: true },
@@ -159,7 +162,7 @@ const getCustomerDashboardStats = async (userId: string) => {
     prisma.appointment.findMany({
       where: { customerId: userId },
       take: 5,
-      orderBy: { appointmentDate: 'desc' },
+      orderBy: { appointmentDate: "desc" },
       include: {
         salon: {
           select: { name: true, address: true },

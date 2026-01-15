@@ -70,7 +70,7 @@ const getAllPayments = async (userId: string, userRole: string, query: any) => {
   // Filter based on role
   if (userRole === "SALON_OWNER") {
     const salonOwner = await prisma.salonOwner.findUnique({
-      where: { userId },
+      where: { id: userId },
       include: { salons: { select: { id: true } } },
     });
     if (salonOwner) {

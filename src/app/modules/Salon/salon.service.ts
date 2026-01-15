@@ -5,7 +5,7 @@ import prisma from "../../shared/prisma";
 const createSalon = async (userId: string, payload: any) => {
   // Check if user is salon owner
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
+    where: { id: userId },
   });
 
   if (!salonOwner) {
@@ -99,7 +99,7 @@ const getMySalons = async (userId: string, query: any) => {
 
   // Get salon owner
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
+    where: { id: userId },
   });
 
   if (!salonOwner) {
@@ -207,7 +207,7 @@ const getSalonById = async (id: string) => {
 const updateSalon = async (userId: string, salonId: string, payload: any) => {
   // Check if salon exists and belongs to the user
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
+    where: { id: userId },
   });
 
   if (!salonOwner) {
@@ -282,7 +282,7 @@ const deleteSalon = async (
   // Check ownership if not admin
   if (userRole !== "ADMIN") {
     const salonOwner = await prisma.salonOwner.findUnique({
-      where: { userId },
+      where: { id: userId },
     });
 
     if (!salonOwner || salon.ownerId !== salonOwner.id) {
