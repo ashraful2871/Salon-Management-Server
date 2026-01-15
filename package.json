@@ -4,10 +4,11 @@
   "description": "Backend for Salon Management application",
   "main": "index.ts",
   "prisma": {
-    "schema": "./prisma/schema"
+    "schema": "./prisma/schema/schema.prisma"
   },
   "scripts": {
-    "build": "tsc",
+    "postinstall": "prisma generate",
+    "build": "prisma generate && tsc",
     "start": "node ./dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only ./src/server.ts"
   },
@@ -24,8 +25,8 @@
   "dependencies": {
     "@prisma/client": "^6.16.3",
     "@types/cookie-parser": "^1.4.9",
-    "@types/cors": "^2.8.19",         
-    "@types/jsonwebtoken": "^9.0.10", 
+    "@types/cors": "^2.8.19",
+    "@types/jsonwebtoken": "^9.0.10",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^2.7.0",
     "cookie-parser": "^1.4.7",
