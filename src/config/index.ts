@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import path from "path";
 
 dotenv.config({ path: path.join(process.cwd(), ".env") });
-
+// Define the shape of the configuration object
 interface Config {
   env: string | undefined;
   port: string | undefined;
