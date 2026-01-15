@@ -7,10 +7,9 @@
     "schema": "./prisma/schema/schema.prisma"
   },
   "scripts": {
-    "postinstall": "prisma generate",
-    "build": "prisma generate && tsc",
-    "start": "node ./dist/server.js",
-    "dev": "ts-node-dev --respawn --transpile-only ./src/server.ts"
+    "postinstall": "bunx prisma generate --schema=./prisma/schema/schema.prisma",
+    "build": "bunx prisma generate --schema=./prisma/schema/schema.prisma && tsc",
+    "start": "bunx prisma migrate deploy --schema=./prisma/schema/schema.prisma && node ./dist/server.js"
   },
   "keywords": [
     "salon",
