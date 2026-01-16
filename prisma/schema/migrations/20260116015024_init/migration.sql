@@ -217,9 +217,6 @@ CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 -- CreateIndex
 CREATE UNIQUE INDEX "admins_userId_key" ON "admins"("userId");
 
--- CreateIndex
-CREATE UNIQUE INDEX "salon_owners_userId_key" ON "salon_owners"("userId");
-
 -- AddForeignKey
 ALTER TABLE "appointments" ADD CONSTRAINT "appointments_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
