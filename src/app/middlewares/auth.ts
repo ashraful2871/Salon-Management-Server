@@ -5,6 +5,7 @@ import { jwtHelpers } from "../helper/jwtHelper";
 import config from "../../config";
 import prisma from "../shared/prisma";
 
+// Middleware to authenticate and authorize users based on JWT and roles
 const auth = (...requiredRoles: string[]) => {
   return async (req: Request, _res: Response, next: NextFunction) => {
     try {
