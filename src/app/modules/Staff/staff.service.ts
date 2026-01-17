@@ -6,13 +6,13 @@ import prisma from "../../shared/prisma";
 const addStaff = async (ownerId: string, payload: any) => {
   // Verify salon ownership
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { id: ownerId },
+    where: { userId: ownerId },
   });
 
   if (!salonOwner) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can add staff"
+      "Only salon owners can add staff",
     );
   }
 
@@ -30,7 +30,7 @@ const addStaff = async (ownerId: string, payload: any) => {
   if (salon.ownerId !== salonOwner.id) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "You can only add staff to your own salons"
+      "You can only add staff to your own salons",
     );
   }
 
@@ -103,7 +103,7 @@ const addStaff = async (ownerId: string, payload: any) => {
       }
 
       return staff;
-    }
+    },
   );
 
   return result;
@@ -223,7 +223,7 @@ const updateStaff = async (ownerId: string, staffId: string, payload: any) => {
   if (!salonOwner) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can update staff"
+      "Only salon owners can update staff",
     );
   }
 
@@ -242,7 +242,7 @@ const updateStaff = async (ownerId: string, staffId: string, payload: any) => {
   if (staff.salon.ownerId !== salonOwner.id) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "You can only update your own staff"
+      "You can only update your own staff",
     );
   }
 
@@ -285,7 +285,7 @@ const updateStaff = async (ownerId: string, staffId: string, payload: any) => {
       }
 
       return updatedStaff;
-    }
+    },
   );
 
   return result;
@@ -300,7 +300,7 @@ const removeStaff = async (ownerId: string, staffId: string) => {
   if (!salonOwner) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can remove staff"
+      "Only salon owners can remove staff",
     );
   }
 
@@ -319,7 +319,7 @@ const removeStaff = async (ownerId: string, staffId: string) => {
   if (staff.salon.ownerId !== salonOwner.id) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "You can only remove your own staff"
+      "You can only remove your own staff",
     );
   }
 

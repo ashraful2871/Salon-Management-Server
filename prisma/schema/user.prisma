@@ -42,7 +42,7 @@ model Admin {
 
 model SalonOwner {
   id                 String  @id @default(uuid())
-  userId             String
+  userId             String  @unique
   businessName       String?
   businessAddress    String?
   businessPhone      String?

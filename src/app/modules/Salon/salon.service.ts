@@ -5,19 +5,28 @@ import prisma from "../../shared/prisma";
 const createSalon = async (userId: string, payload: any) => {
   // Check if user is salon owner
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { id: userId },
+    where: { userId },
   });
 
   if (!salonOwner) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can create salons"
+      "Only salon owners can create salons",
     );
   }
 
   const salon = await prisma.salon.create({
     data: {
-      ...payload,
+      name: payload.name,
+      description: payload.description,
+      address: payload.address,
+      city: payload.city,
+      state: payload.state,
+      zipCode: payload.zipCode,
+      phone: payload.phone,
+      email: payload.email,
+      images: payload.images ?? [],
+      operatingHours: payload.operatingHours,
       ownerId: salonOwner.id,
     },
   });
@@ -54,9 +63,9 @@ const getAllSalons = async (query: any) => {
 
   const [salons, total] = await Promise.all([
     prisma.salon.findMany({
-      where: whereConditions,
-      skip,
-      take: Number(limit),
+      // where: whereConditions,
+      // skip,
+      // take: Number(limit),
       include: {
         owner: {
           include: {
@@ -97,15 +106,15 @@ const getMySalons = async (userId: string, query: any) => {
   const { page = 1, limit = 10 } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  // Get salon owner
+  // ✅ Get salon owner by userId
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { id: userId },
+    where: { userId },
   });
 
   if (!salonOwner) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can access this route"
+      "Only salon owners can access this route",
     );
   }
 
@@ -118,6 +127,71 @@ const getMySalons = async (userId: string, query: any) => {
       skip,
       take: Number(limit),
       include: {
+        // ✅ Owner info
+        owner: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                profilePhoto: true,
+              },
+            },
+          },
+        },
+
+        // ✅ Services
+        services: {
+          where: { isDeleted: false, isActive: true },
+          orderBy: { createdAt: "desc" },
+        },
+
+        // ✅ Staff with user info + staff services
+        staff: {
+          where: { isDeleted: false },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                profilePhoto: true,
+              },
+            },
+            staffServices: {
+              include: {
+                service: true,
+              },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+        },
+
+        // ✅ Appointments (optional but useful)
+        appointments: {
+          orderBy: { createdAt: "desc" },
+          take: 10, // ✅ last 10 appointments only (you can remove take if you want all)
+        },
+
+        // ✅ Reviews (last 10 reviews)
+        reviews: {
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          include: {
+            customer: {
+              select: {
+                id: true,
+                name: true,
+                profilePhoto: true,
+              },
+            },
+          },
+        },
+
+        // ✅ Counts
         _count: {
           select: {
             services: true,
@@ -129,6 +203,7 @@ const getMySalons = async (userId: string, query: any) => {
       },
       orderBy: { createdAt: "desc" },
     }),
+
     prisma.salon.count({
       where: {
         ownerId: salonOwner.id,
@@ -207,13 +282,13 @@ const getSalonById = async (id: string) => {
 const updateSalon = async (userId: string, salonId: string, payload: any) => {
   // Check if salon exists and belongs to the user
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { id: userId },
+    where: { userId },
   });
 
   if (!salonOwner) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can update salons"
+      "Only salon owners can update salons",
     );
   }
 
@@ -231,7 +306,7 @@ const updateSalon = async (userId: string, salonId: string, payload: any) => {
   if (salon.ownerId !== salonOwner.id) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "You can only update your own salons"
+      "You can only update your own salons",
     );
   }
 
@@ -266,7 +341,7 @@ const updateSalonStatus = async (salonId: string, status: string) => {
 const deleteSalon = async (
   userId: string,
   userRole: string,
-  salonId: string
+  salonId: string,
 ) => {
   const salon = await prisma.salon.findUnique({
     where: {
@@ -288,7 +363,7 @@ const deleteSalon = async (
     if (!salonOwner || salon.ownerId !== salonOwner.id) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
-        "You can only delete your own salons"
+        "You can only delete your own salons",
       );
     }
   }

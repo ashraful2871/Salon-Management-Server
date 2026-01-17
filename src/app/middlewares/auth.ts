@@ -5,20 +5,27 @@ import { jwtHelpers } from "../helper/jwtHelper";
 import config from "../../config";
 import prisma from "../shared/prisma";
 
-// Middleware to authenticate and authorize users based on JWT and roles
 const auth = (...requiredRoles: string[]) => {
   return async (req: Request, _res: Response, next: NextFunction) => {
     try {
-      const token = req.headers.authorization || req.cookies.accessToken;
+      let token = req.headers.authorization || req.cookies.accessToken;
 
       if (!token) {
         throw new ApiError(StatusCodes.UNAUTHORIZED, "You are not authorized!");
       }
 
+      // ✅ If token comes from header as "Bearer xxx", extract only the real token
+      if (typeof token === "string" && token.startsWith("Bearer ")) {
+        token = token.split(" ")[1];
+      }
+
+      // ✅ extra safety: remove spaces/newlines
+      token = token.trim();
+
       const verifiedUser = jwtHelpers.verifyToken(token, config.jwt.jwt_secret);
 
-      // Check if user exists and is active
-      const user = await prisma.user.findUnique({
+      // ✅ Prisma issue: findUnique can't use non-unique filters like isDeleted
+      const user = await prisma.user.findFirst({
         where: {
           id: verifiedUser.userId,
           isDeleted: false,
@@ -32,7 +39,7 @@ const auth = (...requiredRoles: string[]) => {
       if (user.status !== "ACTIVE") {
         throw new ApiError(
           StatusCodes.FORBIDDEN,
-          `User account is ${user.status.toLowerCase()}`
+          `User account is ${user.status.toLowerCase()}`,
         );
       }
 

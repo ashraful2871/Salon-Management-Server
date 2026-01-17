@@ -10,7 +10,7 @@ router.post(
   "/",
   auth("SALON_OWNER"),
   validateRequest(SalonValidation.createSalonValidation),
-  SalonController.createSalon
+  SalonController.createSalon,
 );
 
 router.get("/", SalonController.getAllSalons);
@@ -23,20 +23,20 @@ router.patch(
   "/:id",
   auth("SALON_OWNER"),
   validateRequest(SalonValidation.updateSalonValidation),
-  SalonController.updateSalon
+  SalonController.updateSalon,
 );
 
 router.patch(
   "/:id/status",
   auth("ADMIN"),
   validateRequest(SalonValidation.updateSalonStatusValidation),
-  SalonController.updateSalonStatus
+  SalonController.updateSalonStatus,
 );
 
 router.delete(
   "/:id",
   auth("SALON_OWNER", "ADMIN"),
-  SalonController.deleteSalon
+  SalonController.deleteSalon,
 );
 
 export const SalonRoutes = router;
