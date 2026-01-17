@@ -191,7 +191,7 @@ const getMySalons = async (userId: string, query: any) => {
           },
         },
 
-        // ✅ Counts
+        // Counts
         _count: {
           select: {
             services: true,
