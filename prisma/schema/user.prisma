@@ -16,7 +16,7 @@ model User {
 
   // Relations
   admin        Admin?
-  salonOwner   SalonOwner[]
+  salonOwner   SalonOwner?
   staff        Staff?
   appointments Appointment[]
   reviews      Review[]
