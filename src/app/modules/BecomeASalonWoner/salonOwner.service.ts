@@ -132,7 +132,7 @@ const approveApplication = async (
       },
     });
 
-    // ✅ set user role to SALON_OWNER after approval
+    // set user role to SALON_OWNER after approval
     await tx.user.update({
       where: { id: application.userId },
       data: { role: UserRole.SALON_OWNER },
