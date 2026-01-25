@@ -2,6 +2,7 @@ model Salon {
   id             String      @id @default(uuid())
   name           String
   description    String?
+  website        String?
   address        String
   city           String
   state          String?
