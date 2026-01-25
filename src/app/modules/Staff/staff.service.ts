@@ -1,5 +1,5 @@
 import { StatusCodes } from "http-status-codes";
-import { Prisma } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 
@@ -37,7 +37,7 @@ const addStaff = async (ownerId: string, payload: any) => {
   // Check if user exists
   const user = await prisma.user.findUnique({
     where: {
-      id: payload.userId,
+      email: payload.email,
       isDeleted: false,
     },
   });
@@ -48,7 +48,7 @@ const addStaff = async (ownerId: string, payload: any) => {
 
   // Check if user is already staff somewhere
   const existingStaff = await prisma.staff.findUnique({
-    where: { userId: payload.userId },
+    where: { userId: user.id },
   });
 
   if (existingStaff) {
@@ -60,14 +60,14 @@ const addStaff = async (ownerId: string, payload: any) => {
     async (tx: Prisma.TransactionClient) => {
       // Update user role to STAFF
       await tx.user.update({
-        where: { id: payload.userId },
-        data: { role: "STAFF" },
+        where: { id: user.id },
+        data: { role: UserRole.STAFF },
       });
 
       // Create staff record
       const staff = await tx.staff.create({
         data: {
-          userId: payload.userId,
+          userId: user.id,
           salonId: payload.salonId,
           speciality: payload.speciality,
           experience: payload.experience,
