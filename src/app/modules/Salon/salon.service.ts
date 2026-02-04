@@ -79,6 +79,24 @@ const getAllSalons = async (query: any) => {
             },
           },
         },
+        services: {
+          where: { isDeleted: false, isActive: true },
+          orderBy: { createdAt: "desc" },
+        },
+        staff: {
+          where: { isDeleted: false },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                profilePhoto: true,
+              },
+            },
+          },
+        },
         _count: {
           select: {
             services: true,
