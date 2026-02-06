@@ -1,6 +1,7 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { SalonStatus, UserRole } from "@prisma/client";
 
 const bookAppointment = async (userId: string, payload: any) => {
   // Verify user is customer
@@ -8,17 +9,21 @@ const bookAppointment = async (userId: string, payload: any) => {
     where: { id: userId },
   });
 
-  if (!user || user.role !== "CUSTOMER") {
+  if (!user || user.role !== UserRole.CUSTOMER) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only customers can book appointments"
+      "Only customers can book appointments",
     );
   }
 
   // Verify salon, service, and staff exist
   const [salon, service, staff] = await Promise.all([
     prisma.salon.findUnique({
-      where: { id: payload.salonId, isDeleted: false, status: "ACTIVE" },
+      where: {
+        id: payload.salonId,
+        isDeleted: false,
+        status: SalonStatus.ACTIVE,
+      },
     }),
     prisma.service.findUnique({
       where: { id: payload.serviceId, isDeleted: false, isActive: true },
@@ -88,7 +93,7 @@ const bookAppointment = async (userId: string, payload: any) => {
 const getAllAppointments = async (
   userId: string,
   userRole: string,
-  query: any
+  query: any,
 ) => {
   const { page = 1, limit = 10, status, salonId } = query;
   const skip = (Number(page) - 1) * Number(limit);
@@ -291,7 +296,7 @@ const updateAppointmentStatus = async (
   userId: string,
   userRole: string,
   appointmentId: string,
-  payload: any
+  payload: any,
 ) => {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
@@ -310,21 +315,21 @@ const updateAppointmentStatus = async (
     if (appointment.customerId !== userId) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
-        "You can only update your own appointments"
+        "You can only update your own appointments",
       );
     }
     // Customers can only cancel
     if (payload.status !== "CANCELLED") {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
-        "Customers can only cancel appointments"
+        "Customers can only cancel appointments",
       );
     }
   } else if (userRole === "STAFF") {
     if (appointment.staff.userId !== userId) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
-        "You can only update appointments assigned to you"
+        "You can only update appointments assigned to you",
       );
     }
   } else if (userRole === "SALON_OWNER") {
@@ -334,7 +339,7 @@ const updateAppointmentStatus = async (
     if (!salonOwner || appointment.salon.ownerId !== salonOwner.id) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
-        "You can only update appointments for your salons"
+        "You can only update appointments for your salons",
       );
     }
   }
@@ -362,14 +367,14 @@ const cancelAppointment = async (userId: string, appointmentId: string) => {
   if (appointment.customerId !== userId) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "You can only cancel your own appointments"
+      "You can only cancel your own appointments",
     );
   }
 
   if (["COMPLETED", "CANCELLED"].includes(appointment.status)) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      `Cannot cancel ${appointment.status.toLowerCase()} appointment`
+      `Cannot cancel ${appointment.status.toLowerCase()} appointment`,
     );
   }
 
