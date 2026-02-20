@@ -16,14 +16,14 @@ const createReview = async (userId: string, payload: any) => {
   if (appointment.customerId !== userId) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "You can only review your own appointments"
+      "You can only review your own appointments",
     );
   }
 
   if (appointment.status !== "COMPLETED") {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      "You can only review completed appointments"
+      "You can only review completed appointments",
     );
   }
 
@@ -35,7 +35,7 @@ const createReview = async (userId: string, payload: any) => {
   if (existingReview) {
     throw new ApiError(
       StatusCodes.CONFLICT,
-      "Review already exists for this appointment"
+      "Review already exists for this appointment",
     );
   }
 
@@ -113,7 +113,7 @@ const createReview = async (userId: string, payload: any) => {
       }
 
       return review;
-    }
+    },
   );
 
   return result;
