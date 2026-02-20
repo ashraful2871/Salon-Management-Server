@@ -5,13 +5,13 @@ import prisma from "../../shared/prisma";
 const createService = async (userId: string, payload: any) => {
   // Verify salon ownership
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { id: userId },
+    where: { userId },
   });
 
   if (!salonOwner) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can create services"
+      "Only salon owners can create services",
     );
   }
 
@@ -29,7 +29,7 @@ const createService = async (userId: string, payload: any) => {
   if (salon.ownerId !== salonOwner.id) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "You can only create services for your own salons"
+      "You can only create services for your own salons",
     );
   }
 
@@ -131,17 +131,17 @@ const getServiceById = async (id: string) => {
 const updateService = async (
   userId: string,
   serviceId: string,
-  payload: any
+  payload: any,
 ) => {
   // Verify ownership
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { id: userId },
+    where: { userId },
   });
 
   if (!salonOwner) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can update services"
+      "Only salon owners can update services",
     );
   }
 
@@ -160,7 +160,7 @@ const updateService = async (
   if (service.salon.ownerId !== salonOwner.id) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "You can only update your own services"
+      "You can only update your own services",
     );
   }
 
@@ -175,13 +175,13 @@ const updateService = async (
 const deleteService = async (userId: string, serviceId: string) => {
   // Verify ownership
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { id: userId },
+    where: { userId },
   });
 
   if (!salonOwner) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can delete services"
+      "Only salon owners can delete services",
     );
   }
 
@@ -200,7 +200,7 @@ const deleteService = async (userId: string, serviceId: string) => {
   if (service.salon.ownerId !== salonOwner.id) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "You can only delete your own services"
+      "You can only delete your own services",
     );
   }
 
