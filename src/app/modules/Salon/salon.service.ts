@@ -149,7 +149,6 @@ const getMySalons = async (userId: string, query: any) => {
       skip,
       take: Number(limit),
       include: {
-        // ✅ Owner info
         owner: {
           include: {
             user: {
@@ -164,13 +163,11 @@ const getMySalons = async (userId: string, query: any) => {
           },
         },
 
-        // ✅ Services
         services: {
           where: { isDeleted: false, isActive: true },
           orderBy: { createdAt: "desc" },
         },
 
-        // ✅ Staff with user info + staff services
         staff: {
           where: { isDeleted: false },
           include: {
@@ -191,19 +188,16 @@ const getMySalons = async (userId: string, query: any) => {
           },
           orderBy: { createdAt: "desc" },
         },
-        // ✅ Counters
         counters: {
           where: { isDeleted: false },
           orderBy: { createdAt: "desc" },
         },
 
-        // ✅ Appointments (optional but useful)
         appointments: {
           orderBy: { createdAt: "desc" },
           take: 10,
         },
 
-        // ✅ Reviews (last 10 reviews)
         reviews: {
           orderBy: { createdAt: "desc" },
           take: 10,
@@ -218,7 +212,6 @@ const getMySalons = async (userId: string, query: any) => {
           },
         },
 
-        // Counts
         _count: {
           select: {
             services: true,
@@ -307,7 +300,6 @@ const getSalonById = async (id: string) => {
 };
 
 const updateSalon = async (userId: string, salonId: string, payload: any) => {
-  // Check if salon exists and belongs to the user
   const salonOwner = await prisma.salonOwner.findUnique({
     where: { userId },
   });
