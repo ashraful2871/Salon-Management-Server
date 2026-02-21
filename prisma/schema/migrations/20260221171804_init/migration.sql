@@ -35,6 +35,7 @@ CREATE TABLE "appointments" (
     "salonId" TEXT NOT NULL,
     "serviceId" TEXT NOT NULL,
     "staffId" TEXT NOT NULL,
+    "counterId" TEXT NOT NULL,
     "appointmentDate" TIMESTAMP(3) NOT NULL,
     "startTime" TEXT NOT NULL,
     "endTime" TEXT,
@@ -45,6 +46,20 @@ CREATE TABLE "appointments" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "appointments_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "counters" (
+    "id" TEXT NOT NULL,
+    "salonId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "code" TEXT,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "counters_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -82,6 +97,7 @@ CREATE TABLE "salons" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
+    "website" TEXT,
     "address" TEXT NOT NULL,
     "city" TEXT NOT NULL,
     "state" TEXT,
@@ -217,6 +233,9 @@ CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 -- CreateIndex
 CREATE UNIQUE INDEX "admins_userId_key" ON "admins"("userId");
 
+-- CreateIndex
+CREATE UNIQUE INDEX "salon_owners_userId_key" ON "salon_owners"("userId");
+
 -- AddForeignKey
 ALTER TABLE "appointments" ADD CONSTRAINT "appointments_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -228,6 +247,12 @@ ALTER TABLE "appointments" ADD CONSTRAINT "appointments_serviceId_fkey" FOREIGN 
 
 -- AddForeignKey
 ALTER TABLE "appointments" ADD CONSTRAINT "appointments_staffId_fkey" FOREIGN KEY ("staffId") REFERENCES "staff"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "appointments" ADD CONSTRAINT "appointments_counterId_fkey" FOREIGN KEY ("counterId") REFERENCES "counters"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "counters" ADD CONSTRAINT "counters_salonId_fkey" FOREIGN KEY ("salonId") REFERENCES "salons"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "payments" ADD CONSTRAINT "payments_appointmentId_fkey" FOREIGN KEY ("appointmentId") REFERENCES "appointments"("id") ON DELETE CASCADE ON UPDATE CASCADE;

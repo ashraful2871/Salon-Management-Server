@@ -5,6 +5,7 @@ const bookAppointmentValidation = z.object({
     salonId: z.string().nonempty({ message: "Salon ID is required" }),
     serviceId: z.string().nonempty({ message: "Service ID is required" }),
     staffId: z.string().nonempty({ message: "Staff ID is required" }),
+    counterId: z.string().nonempty({ message: "Counter ID is required" }),
     appointmentDate: z
       .string()
       .nonempty({ message: "Appointment date is required" }),

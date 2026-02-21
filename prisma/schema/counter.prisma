@@ -1,0 +1,16 @@
+model Counter {
+    id        String   @id @default(uuid())
+    salonId   String
+    name      String // e.g. "Counter 1", "Chair A", "Room 2"
+    code      String? // optional unique label like C-01
+    isActive  Boolean  @default(true)
+    isDeleted Boolean  @default(false)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    salon        Salon         @relation(fields: [salonId], references: [id], onDelete: Cascade)
+    appointments Appointment[]
+
+    @@map("counters")
+}

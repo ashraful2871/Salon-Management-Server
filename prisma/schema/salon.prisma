@@ -23,6 +23,7 @@ model Salon {
   owner        SalonOwner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   services     Service[]
   staff        Staff[]
+  counters     Counter[]
   appointments Appointment[]
   reviews      Review[]
 

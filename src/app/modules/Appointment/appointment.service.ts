@@ -17,7 +17,7 @@ const bookAppointment = async (userId: string, payload: any) => {
   }
 
   // Verify salon, service, and staff exist
-  const [salon, service, staff] = await Promise.all([
+  const [salon, service, staff, counter] = await Promise.all([
     prisma.salon.findUnique({
       where: {
         id: payload.salonId,
@@ -30,6 +30,9 @@ const bookAppointment = async (userId: string, payload: any) => {
     }),
     prisma.staff.findUnique({
       where: { id: payload.staffId, isDeleted: false },
+    }),
+    prisma.counter.findUnique({
+      where: { id: payload.counterId, isDeleted: false },
     }),
   ]);
 
@@ -44,7 +47,57 @@ const bookAppointment = async (userId: string, payload: any) => {
   if (!staff) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Staff not found");
   }
+  if (!counter) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Counter not found");
+  }
 
+  // Optional but recommended:
+  // make sure staff belongs to this salon
+  if (staff.salonId !== payload.salonId) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Selected staff does not belong to this salon",
+    );
+  }
+
+  // Prevent duplicate booking on same counter/date/time
+  const existingCounterBooking = await prisma.appointment.findFirst({
+    where: {
+      salonId: payload.salonId,
+      counterId: payload.counterId,
+      appointmentDate: new Date(payload.appointmentDate),
+      startTime: payload.startTime,
+      status: {
+        in: ["PENDING", "CONFIRMED"], // block active bookings
+      },
+    },
+  });
+
+  if (existingCounterBooking) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "This counter is already booked for the selected date and time",
+    );
+  }
+
+  // (Optional) also prevent same staff double booking
+  const existingStaffBooking = await prisma.appointment.findFirst({
+    where: {
+      staffId: payload.staffId,
+      appointmentDate: new Date(payload.appointmentDate),
+      startTime: payload.startTime,
+      status: {
+        in: ["PENDING", "CONFIRMED"],
+      },
+    },
+  });
+
+  if (existingStaffBooking) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "This staff member is already booked for the selected date and time",
+    );
+  }
   // Create appointment
   const appointment = await prisma.appointment.create({
     data: {
@@ -52,6 +105,7 @@ const bookAppointment = async (userId: string, payload: any) => {
       salonId: payload.salonId,
       serviceId: payload.serviceId,
       staffId: payload.staffId,
+      counterId: payload.counterId,
       appointmentDate: new Date(payload.appointmentDate),
       startTime: payload.startTime,
       notes: payload.notes,
@@ -84,6 +138,7 @@ const bookAppointment = async (userId: string, payload: any) => {
           },
         },
       },
+      counter: true,
     },
   });
 
