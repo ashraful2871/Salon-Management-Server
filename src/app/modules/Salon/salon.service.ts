@@ -97,6 +97,10 @@ const getAllSalons = async (query: any) => {
             },
           },
         },
+        counters: {
+          where: { isDeleted: false },
+          orderBy: { createdAt: "desc" },
+        },
         _count: {
           select: {
             services: true,
@@ -185,6 +189,11 @@ const getMySalons = async (userId: string, query: any) => {
               },
             },
           },
+          orderBy: { createdAt: "desc" },
+        },
+        // ✅ Counters
+        counters: {
+          where: { isDeleted: false },
           orderBy: { createdAt: "desc" },
         },
 
