@@ -4,7 +4,7 @@ model Service {
   description String?
   category    ServiceCategory
   price       Float
-  duration    Int // in minutes
+  duration    Int
   salonId     String
   images      String[]
   isActive    Boolean         @default(true)
@@ -13,9 +13,9 @@ model Service {
   updatedAt   DateTime        @updatedAt
 
   // Relations
-  salon        Salon          @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  salon         Salon          @relation(fields: [salonId], references: [id], onDelete: Cascade)
   staffServices StaffService[]
-  appointments Appointment[]
+  appointments  Appointment[]
 
   @@map("services")
 }
