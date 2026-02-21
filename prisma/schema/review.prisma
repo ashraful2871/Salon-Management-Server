@@ -4,7 +4,7 @@ model Review {
   customerId    String
   salonId       String
   staffId       String?
-  rating        Int // 1-5
+  rating        Int
   comment       String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

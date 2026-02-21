@@ -3,7 +3,7 @@ model Staff {
   userId       String      @unique
   salonId      String
   speciality   String?
-  experience   Int? // in years
+  experience   Int?
   bio          String?
   status       StaffStatus @default(AVAILABLE)
   rating       Float       @default(0)
