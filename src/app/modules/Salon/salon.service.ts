@@ -200,7 +200,7 @@ const getMySalons = async (userId: string, query: any) => {
         // ✅ Appointments (optional but useful)
         appointments: {
           orderBy: { createdAt: "desc" },
-          take: 10, // ✅ last 10 appointments only (you can remove take if you want all)
+          take: 10,
         },
 
         // ✅ Reviews (last 10 reviews)
