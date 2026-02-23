@@ -276,6 +276,10 @@ const getSalonById = async (id: string) => {
           },
         },
       },
+      counters: {
+        where: { isDeleted: false },
+        orderBy: { createdAt: "desc" },
+      },
       reviews: {
         include: {
           customer: {
