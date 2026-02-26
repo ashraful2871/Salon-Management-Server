@@ -151,45 +151,107 @@ const getAllAppointments = async (
   query: any,
 ) => {
   const { page = 1, limit = 10, status, salonId } = query;
-  const skip = (Number(page) - 1) * Number(limit);
+  const pageNum = Number(page);
+  const limitNum = Number(limit);
+  const skip = (pageNum - 1) * limitNum;
 
   const whereConditions: any = {};
 
-  // Filter based on role
-  if (userRole === "CUSTOMER") {
+  // -------------------------
+  // Role-based filtering
+  // -------------------------
+  if (userRole === UserRole.CUSTOMER) {
+    // Customer sees only own appointments
     whereConditions.customerId = userId;
-  } else if (userRole === "STAFF") {
+  } else if (userRole === UserRole.STAFF) {
+    // Staff userId -> find staff profile -> filter by staffId
     const staff = await prisma.staff.findUnique({
       where: { userId },
+      select: { id: true },
     });
-    if (staff) {
-      whereConditions.staffId = staff.id;
-    }
-  } else if (userRole === "SALON_OWNER") {
-    const salonOwner = await prisma.salonOwner.findUnique({
-      where: { id: userId },
-      include: { salons: { select: { id: true } } },
-    });
-    if (salonOwner) {
-      whereConditions.salonId = {
-        in: salonOwner.salons.map((s: any) => s.id),
+
+    // If staff profile doesn't exist, return no data
+    if (!staff) {
+      return {
+        meta: {
+          page: pageNum,
+          limit: limitNum,
+          total: 0,
+        },
+        data: [],
       };
     }
+
+    whereConditions.staffId = staff.id;
+  } else if (userRole === UserRole.SALON_OWNER) {
+    // ✅ userId is from User table, so match by salonOwner.userId
+    const salonOwner = await prisma.salonOwner.findUnique({
+      where: { userId },
+      include: {
+        salons: {
+          select: { id: true },
+        },
+      },
+    });
+
+    // If no owner profile or no salons, return empty
+    if (!salonOwner || salonOwner.salons.length === 0) {
+      return {
+        meta: {
+          page: pageNum,
+          limit: limitNum,
+          total: 0,
+        },
+        data: [],
+      };
+    }
+
+    whereConditions.salonId = {
+      in: salonOwner.salons.map((s: any) => s.id),
+    };
   }
 
+  // Admin can see all (no extra role filter)
+  // else if (userRole === UserRole.ADMIN) { }
+
+  // -------------------------
+  // Additional query filters
+  // -------------------------
   if (status) {
     whereConditions.status = status;
   }
 
+  // Optional salonId filter
+  // For salon owner: this still works, but only if salonId belongs to owner's salons due to previous `in` filter.
+  // To avoid override bug, combine carefully:
   if (salonId) {
-    whereConditions.salonId = salonId;
+    // if salonId already has "in" filter from owner, combine with exact match
+    if (
+      whereConditions.salonId &&
+      typeof whereConditions.salonId === "object"
+    ) {
+      const allowedSalonIds = whereConditions.salonId.in || [];
+      if (!allowedSalonIds.includes(salonId)) {
+        return {
+          meta: {
+            page: pageNum,
+            limit: limitNum,
+            total: 0,
+          },
+          data: [],
+        };
+      }
+      whereConditions.salonId = salonId;
+    } else {
+      whereConditions.salonId = salonId;
+    }
   }
 
   const [appointments, total] = await Promise.all([
     prisma.appointment.findMany({
       where: whereConditions,
       skip,
-      take: Number(limit),
+      take: limitNum,
       include: {
         customer: {
           select: {
@@ -228,17 +290,24 @@ const getAllAppointments = async (
             },
           },
         },
+        counter: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
         payment: true,
       },
-      orderBy: { appointmentDate: "desc" },
+      orderBy: [{ appointmentDate: "desc" }, { startTime: "asc" }],
     }),
     prisma.appointment.count({ where: whereConditions }),
   ]);
 
   return {
     meta: {
-      page: Number(page),
-      limit: Number(limit),
+      page: pageNum,
+      limit: limitNum,
       total,
     },
     data: appointments,
