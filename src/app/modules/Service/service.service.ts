@@ -213,9 +213,73 @@ const deleteService = async (userId: string, serviceId: string) => {
   return null;
 };
 
+const getMyServices = async (userId: string, query: any) => {
+  const salonOwner = await prisma.salonOwner.findUnique({
+    where: { userId },
+    include: { salons: true },
+  });
+
+  if (!salonOwner) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "Only salon owners can access their services");
+  }
+
+  const salonIds = salonOwner.salons.map((s) => s.id);
+
+  const { page = 1, limit = 10, searchTerm, category } = query;
+  const skip = (Number(page) - 1) * Number(limit);
+
+  const whereConditions: any = {
+    isDeleted: false,
+    isActive: true,
+    salonId: { in: salonIds },
+  };
+
+  if (searchTerm) {
+    whereConditions.OR = [
+      { name: { contains: searchTerm, mode: "insensitive" } },
+      { description: { contains: searchTerm, mode: "insensitive" } },
+    ];
+  }
+
+  if (category) {
+    whereConditions.category = category;
+  }
+
+  const [services, total] = await Promise.all([
+    prisma.service.findMany({
+      where: whereConditions,
+      skip,
+      take: Number(limit),
+      include: {
+        salon: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+            city: true,
+            phone: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.service.count({ where: whereConditions }),
+  ]);
+
+  return {
+    meta: {
+      page: Number(page),
+      limit: Number(limit),
+      total,
+    },
+    data: services,
+  };
+};
+
 export const ServiceService = {
   createService,
   getAllServices,
+  getMyServices,
   getServiceById,
   updateService,
   deleteService,
