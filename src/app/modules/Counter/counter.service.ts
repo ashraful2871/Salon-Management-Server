@@ -25,6 +25,22 @@ const createCounter = async (userId: string, payload: any) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
+  if (payload.code) {
+    const isCodeExists = await prisma.counter.findFirst({
+      where: {
+        code: payload.code,
+        isDeleted: false,
+      },
+    });
+
+    if (isCodeExists) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Counter code already exists",
+      );
+    }
+  }
+
   const counter = await prisma.counter.create({
     data: {
       salonId: payload.salonId,
