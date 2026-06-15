@@ -42,8 +42,36 @@ const getReviewById = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const getReviewsBySalonId = catchAsync(async (req: Request, res: Response) => {
+  const salonId = req.params.salonId;
+  const result = await ReviewService.getReviewsBySalonId(salonId, req.query);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Salon reviews retrieved successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
+const getReviewsByStaffId = catchAsync(async (req: Request, res: Response) => {
+  const staffId = req.params.staffId;
+  const result = await ReviewService.getReviewsByStaffId(staffId, req.query);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Staff reviews retrieved successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
 export const ReviewController = {
   createReview,
   getAllReviews,
   getReviewById,
+  getReviewsBySalonId,
+  getReviewsByStaffId,
 };

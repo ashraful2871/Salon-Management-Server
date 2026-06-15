@@ -47,8 +47,22 @@ const getPaymentById = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const updatePaymentStatus = catchAsync(async (req: Request, res: Response) => {
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+  const result = await PaymentService.updatePaymentStatus(id, req.body);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Payment status updated successfully",
+    data: result,
+  });
+});
+
 export const PaymentController = {
   createPayment,
   getAllPayments,
   getPaymentById,
+  updatePaymentStatus,
 };

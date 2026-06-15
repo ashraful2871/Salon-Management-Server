@@ -28,9 +28,11 @@ const bookAppointment = async (userId: string, payload: any) => {
     prisma.service.findUnique({
       where: { id: payload.serviceId, isDeleted: false, isActive: true },
     }),
-    prisma.staff.findUnique({
-      where: { id: payload.staffId, isDeleted: false },
-    }),
+    payload.staffId
+      ? prisma.staff.findUnique({
+          where: { id: payload.staffId, isDeleted: false },
+        })
+      : Promise.resolve(null),
     prisma.counter.findUnique({
       where: { id: payload.counterId, isDeleted: false },
     }),
@@ -44,7 +46,7 @@ const bookAppointment = async (userId: string, payload: any) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "Service not found or inactive");
   }
 
-  if (!staff) {
+  if (payload.staffId && !staff) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Staff not found");
   }
   if (!counter) {
@@ -53,7 +55,7 @@ const bookAppointment = async (userId: string, payload: any) => {
 
   // Optional but recommended:
   // make sure staff belongs to this salon
-  if (staff.salonId !== payload.salonId) {
+  if (staff && staff.salonId !== payload.salonId) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       "Selected staff does not belong to this salon",
@@ -81,22 +83,24 @@ const bookAppointment = async (userId: string, payload: any) => {
   }
 
   // (Optional) also prevent same staff double booking
-  const existingStaffBooking = await prisma.appointment.findFirst({
-    where: {
-      staffId: payload.staffId,
-      appointmentDate: new Date(payload.appointmentDate),
-      startTime: payload.startTime,
-      status: {
-        in: ["PENDING", "CONFIRMED"],
+  if (payload.staffId) {
+    const existingStaffBooking = await prisma.appointment.findFirst({
+      where: {
+        staffId: payload.staffId,
+        appointmentDate: new Date(payload.appointmentDate),
+        startTime: payload.startTime,
+        status: {
+          in: ["PENDING", "CONFIRMED"],
+        },
       },
-    },
-  });
+    });
 
-  if (existingStaffBooking) {
-    throw new ApiError(
-      StatusCodes.CONFLICT,
-      "This staff member is already booked for the selected date and time",
-    );
+    if (existingStaffBooking) {
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        "This staff member is already booked for the selected date and time",
+      );
+    }
   }
   // Create appointment
   const appointment = await prisma.appointment.create({
@@ -104,7 +108,7 @@ const bookAppointment = async (userId: string, payload: any) => {
       customerId: userId,
       salonId: payload.salonId,
       serviceId: payload.serviceId,
-      staffId: payload.staffId,
+      staffId: payload.staffId || null,
       counterId: payload.counterId,
       appointmentDate: new Date(payload.appointmentDate),
       startTime: payload.startTime,
@@ -435,7 +439,7 @@ const updateAppointmentStatus = async (
   }
 
   // Verify permissions
-  if (userRole === "CUSTOMER") {
+  if (userRole === UserRole.CUSTOMER) {
     if (appointment.customerId !== userId) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
@@ -449,16 +453,16 @@ const updateAppointmentStatus = async (
         "Customers can only cancel appointments",
       );
     }
-  } else if (userRole === "STAFF") {
-    if (appointment.staff.userId !== userId) {
+  } else if (userRole === UserRole.STAFF) {
+    if (appointment?.staff?.userId !== userId) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
         "You can only update appointments assigned to you",
       );
     }
-  } else if (userRole === "SALON_OWNER") {
+  } else if (userRole === UserRole.SALON_OWNER) {
     const salonOwner = await prisma.salonOwner.findUnique({
-      where: { id: userId },
+      where: { userId },
     });
     if (!salonOwner || appointment.salon.ownerId !== salonOwner.id) {
       throw new ApiError(

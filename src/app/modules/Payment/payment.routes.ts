@@ -18,4 +18,10 @@ router.get(
   PaymentController.getPaymentById
 );
 
+router.patch(
+  "/:id/status",
+  auth("ADMIN", "SALON_OWNER"),
+  PaymentController.updatePaymentStatus
+);
+
 export const PaymentRoutes = router;

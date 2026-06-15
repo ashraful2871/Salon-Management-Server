@@ -8,6 +8,10 @@ router.post("/", auth("CUSTOMER"), ReviewController.createReview);
 
 router.get("/", ReviewController.getAllReviews);
 
+router.get("/salon/:salonId", ReviewController.getReviewsBySalonId);
+
+router.get("/staff/:staffId", ReviewController.getReviewsByStaffId);
+
 router.get("/:id", ReviewController.getReviewById);
 
 export const ReviewRoutes = router;

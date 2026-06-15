@@ -224,8 +224,112 @@ const getReviewById = async (id: string) => {
   return review;
 };
 
+const getReviewsBySalonId = async (salonId: string, query: any) => {
+  const { page = 1, limit = 10 } = query;
+  const skip = (Number(page) - 1) * Number(limit);
+
+  const whereConditions: any = { salonId };
+
+  const [reviews, total] = await Promise.all([
+    prisma.review.findMany({
+      where: whereConditions,
+      skip,
+      take: Number(limit),
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            profilePhoto: true,
+          },
+        },
+        salon: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        staff: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.review.count({ where: whereConditions }),
+  ]);
+
+  return {
+    meta: {
+      page: Number(page),
+      limit: Number(limit),
+      total,
+    },
+    data: reviews,
+  };
+};
+
+const getReviewsByStaffId = async (staffId: string, query: any) => {
+  const { page = 1, limit = 10 } = query;
+  const skip = (Number(page) - 1) * Number(limit);
+
+  const whereConditions: any = { staffId };
+
+  const [reviews, total] = await Promise.all([
+    prisma.review.findMany({
+      where: whereConditions,
+      skip,
+      take: Number(limit),
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            profilePhoto: true,
+          },
+        },
+        salon: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        staff: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.review.count({ where: whereConditions }),
+  ]);
+
+  return {
+    meta: {
+      page: Number(page),
+      limit: Number(limit),
+      total,
+    },
+    data: reviews,
+  };
+};
+
 export const ReviewService = {
   createReview,
   getAllReviews,
   getReviewById,
+  getReviewsBySalonId,
+  getReviewsByStaffId,
 };
