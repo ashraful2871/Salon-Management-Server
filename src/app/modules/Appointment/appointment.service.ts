@@ -439,7 +439,7 @@ const updateAppointmentStatus = async (
   }
 
   // Verify permissions
-  if (userRole === "CUSTOMER") {
+  if (userRole === UserRole.CUSTOMER) {
     if (appointment.customerId !== userId) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
@@ -453,16 +453,16 @@ const updateAppointmentStatus = async (
         "Customers can only cancel appointments",
       );
     }
-  } else if (userRole === "STAFF") {
-    if (appointment.staff.userId !== userId) {
+  } else if (userRole === UserRole.STAFF) {
+    if (appointment?.staff?.userId !== userId) {
       throw new ApiError(
         StatusCodes.FORBIDDEN,
         "You can only update appointments assigned to you",
       );
     }
-  } else if (userRole === "SALON_OWNER") {
+  } else if (userRole === UserRole.SALON_OWNER) {
     const salonOwner = await prisma.salonOwner.findUnique({
-      where: { id: userId },
+      where: { userId },
     });
     if (!salonOwner || appointment.salon.ownerId !== salonOwner.id) {
       throw new ApiError(

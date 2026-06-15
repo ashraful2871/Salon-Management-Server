@@ -52,6 +52,66 @@ const createCounter = async (userId: string, payload: any) => {
   return counter;
 };
 
+const getAllCounters = async (query: any) => {
+  const { page = 1, limit = 10, salonId } = query;
+  const skip = (Number(page) - 1) * Number(limit);
+
+  const whereConditions: any = { isDeleted: false };
+
+  if (salonId) {
+    whereConditions.salonId = salonId;
+  }
+
+  const [counters, total] = await Promise.all([
+    prisma.counter.findMany({
+      where: whereConditions,
+      skip,
+      take: Number(limit),
+      include: {
+        salon: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.counter.count({ where: whereConditions }),
+  ]);
+
+  return {
+    meta: {
+      page: Number(page),
+      limit: Number(limit),
+      total,
+    },
+    data: counters,
+  };
+};
+
+const getCounterById = async (id: string) => {
+  const counter = await prisma.counter.findUnique({
+    where: { id },
+    include: {
+      salon: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  if (!counter) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Counter not found");
+  }
+
+  return counter;
+};
+
 export const CounterService = {
   createCounter,
+  getAllCounters,
+  getCounterById,
 };

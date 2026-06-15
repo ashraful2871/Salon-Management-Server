@@ -17,6 +17,33 @@ const createCounters = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const getAllCounters = catchAsync(async (req: Request, res: Response) => {
+  const result = await CounterService.getAllCounters(req.query);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Counters retrieved successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
+const getCounterById = catchAsync(async (req: Request, res: Response) => {
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+  const result = await CounterService.getCounterById(id);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Counter retrieved successfully",
+    data: result,
+  });
+});
+
 export const CounterController = {
   createCounters,
+  getAllCounters,
+  getCounterById,
 };

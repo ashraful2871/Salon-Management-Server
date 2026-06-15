@@ -3,6 +3,7 @@ import { AppointmentController } from "./appointment.controller";
 import auth from "../../middlewares/auth";
 import validateRequest from "../../middlewares/validateRequest";
 import { AppointmentValidation } from "./appointment.validation";
+import { UserRole } from "@prisma/client";
 
 const router = express.Router();
 
@@ -10,38 +11,38 @@ router.post(
   "/",
   auth("CUSTOMER"),
   validateRequest(AppointmentValidation.bookAppointmentValidation),
-  AppointmentController.bookAppointment
+  AppointmentController.bookAppointment,
 );
 
 router.get(
   "/",
-  auth("ADMIN", "SALON_OWNER", "STAFF", "CUSTOMER"),
-  AppointmentController.getAllAppointments
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF, UserRole.CUSTOMER),
+  AppointmentController.getAllAppointments,
 );
 
 router.get(
   "/my-appointments",
-  auth("CUSTOMER"),
-  AppointmentController.getMyAppointments
+  auth(UserRole.CUSTOMER),
+  AppointmentController.getMyAppointments,
 );
 
 router.get(
   "/:id",
-  auth("ADMIN", "SALON_OWNER", "STAFF", "CUSTOMER"),
-  AppointmentController.getAppointmentById
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF, UserRole.CUSTOMER),
+  AppointmentController.getAppointmentById,
 );
 
 router.patch(
   "/:id/status",
-  auth("ADMIN", "SALON_OWNER", "STAFF", "CUSTOMER"),
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF, UserRole.CUSTOMER),
   validateRequest(AppointmentValidation.updateAppointmentStatusValidation),
-  AppointmentController.updateAppointmentStatus
+  AppointmentController.updateAppointmentStatus,
 );
 
 router.delete(
   "/:id",
-  auth("CUSTOMER"),
-  AppointmentController.cancelAppointment
+  auth(UserRole.CUSTOMER, UserRole.SALON_OWNER),
+  AppointmentController.cancelAppointment,
 );
 
 export const AppointmentRoutes = router;
