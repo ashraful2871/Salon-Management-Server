@@ -163,6 +163,7 @@ const getCustomerDashboardStats = async (userId: string) => {
     upcomingAppointments,
     totalSpent,
     recentAppointments,
+    appointmentsByStatus,
   ] = await Promise.all([
     prisma.appointment.count({
       where: { customerId: userId },
@@ -204,6 +205,11 @@ const getCustomerDashboardStats = async (userId: string) => {
         },
       },
     }),
+    prisma.appointment.groupBy({
+      by: ["status"],
+      _count: true,
+      where: { customerId: userId },
+    }),
   ]);
 
   return {
@@ -212,6 +218,7 @@ const getCustomerDashboardStats = async (userId: string) => {
     upcomingAppointments,
     totalSpent: totalSpent._sum.amount || 0,
     recentAppointments,
+    appointmentsByStatus,
   };
 };
 
