@@ -9,30 +9,36 @@ const router = express.Router();
 router.get("/", auth("ADMIN"), UserController.getAllUsers);
 
 router.get(
+  "/my-customers",
+  auth("SALON_OWNER"),
+  UserController.getMyCustomers,
+);
+
+router.get(
   "/:id",
   auth("ADMIN", "SALON_OWNER", "CUSTOMER", "STAFF"),
-  UserController.getUserById
+  UserController.getUserById,
 );
 
 router.patch(
   "/:id",
   auth("ADMIN", "SALON_OWNER", "CUSTOMER", "STAFF"),
   validateRequest(UserValidation.updateUserValidation),
-  UserController.updateUser
+  UserController.updateUser,
 );
 
 router.patch(
   "/:id/status",
   auth("ADMIN"),
   validateRequest(UserValidation.updateUserStatusValidation),
-  UserController.updateUserStatus
+  UserController.updateUserStatus,
 );
 
 router.patch(
   "/:id/role",
   auth("ADMIN"),
   validateRequest(UserValidation.updateUserRoleValidation),
-  UserController.updateUserRole
+  UserController.updateUserRole,
 );
 
 router.delete("/:id", auth("ADMIN"), UserController.deleteUser);

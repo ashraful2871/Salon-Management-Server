@@ -380,7 +380,7 @@ const deleteSalon = async (
   // Check ownership if not admin
   if (userRole !== "ADMIN") {
     const salonOwner = await prisma.salonOwner.findUnique({
-      where: { id: userId },
+      where: { userId },
     });
 
     if (!salonOwner || salon.ownerId !== salonOwner.id) {

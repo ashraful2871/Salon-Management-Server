@@ -52,24 +52,32 @@ const getAdminDashboardStats = async () => {
 
 const getSalonOwnerDashboardStats = async (userId: string) => {
   const salonOwner = await prisma.salonOwner.findUnique({
-    where: { id: userId },
+    where: { userId },
     include: { salons: { select: { id: true } } },
   });
 
   if (!salonOwner) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can access this route"
+      "Only salon owners can access this route",
     );
   }
 
   const salonIds = salonOwner.salons.map((s: any) => s.id);
+
+  // Get today's date range for "today" stats
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
 
   const [
     totalSalons,
     totalServices,
     totalStaff,
     totalAppointments,
+    todayAppointments,
+    pendingAppointments,
     totalRevenue,
     recentAppointments,
     appointmentsByStatus,
@@ -86,6 +94,18 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
     prisma.appointment.count({
       where: { salonId: { in: salonIds } },
     }),
+    prisma.appointment.count({
+      where: {
+        salonId: { in: salonIds },
+        appointmentDate: { gte: todayStart, lte: todayEnd },
+      },
+    }),
+    prisma.appointment.count({
+      where: {
+        salonId: { in: salonIds },
+        status: "PENDING",
+      },
+    }),
     prisma.payment.aggregate({
       where: {
         status: "COMPLETED",
@@ -100,6 +120,9 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
       include: {
         customer: {
           select: { name: true, email: true, phone: true },
+        },
+        salon: {
+          select: { name: true },
         },
         service: {
           select: { name: true, price: true },
@@ -125,6 +148,8 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
     totalServices,
     totalStaff,
     totalAppointments,
+    todayAppointments,
+    pendingAppointments,
     totalRevenue: totalRevenue._sum.amount || 0,
     recentAppointments,
     appointmentsByStatus,

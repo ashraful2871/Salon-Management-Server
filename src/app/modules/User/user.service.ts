@@ -61,6 +61,87 @@ const getAllUsers = async (query: any) => {
   };
 };
 
+const getMyCustomers = async (userId: string, query: any) => {
+  const { page = 1, limit = 10, searchTerm } = query;
+  const skip = (Number(page) - 1) * Number(limit);
+
+  // Find the salon owner and their salons
+  const salonOwner = await prisma.salonOwner.findUnique({
+    where: { userId },
+    include: { salons: { select: { id: true } } },
+  });
+
+  if (!salonOwner) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only salon owners can access this route",
+    );
+  }
+
+  const salonIds = salonOwner.salons.map((s) => s.id);
+
+  // Find distinct customers who booked at these salons
+  const appointments = await prisma.appointment.findMany({
+    where: { salonId: { in: salonIds } },
+    select: { customerId: true },
+    distinct: ["customerId"],
+  });
+
+  const customerIds = appointments.map((a) => a.customerId);
+
+  if (customerIds.length === 0) {
+    return {
+      meta: { page: Number(page), limit: Number(limit), total: 0 },
+      data: [],
+    };
+  }
+
+  const whereConditions: any = {
+    id: { in: customerIds },
+    isDeleted: false,
+  };
+
+  if (searchTerm) {
+    whereConditions.OR = [
+      { name: { contains: searchTerm, mode: "insensitive" } },
+      { email: { contains: searchTerm, mode: "insensitive" } },
+      { phone: { contains: searchTerm, mode: "insensitive" } },
+    ];
+  }
+
+  const [users, total] = await Promise.all([
+    prisma.user.findMany({
+      where: whereConditions,
+      skip,
+      take: Number(limit),
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        status: true,
+        phone: true,
+        profilePhoto: true,
+        gender: true,
+        dateOfBirth: true,
+        address: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.user.count({ where: whereConditions }),
+  ]);
+
+  return {
+    meta: {
+      page: Number(page),
+      limit: Number(limit),
+      total,
+    },
+    data: users,
+  };
+};
+
 const getUserById = async (id: string) => {
   const user = await prisma.user.findUnique({
     where: {
@@ -210,7 +291,7 @@ const updateUserRole = async (id: string, role: string) => {
       }
 
       return updatedUser;
-    }
+    },
   );
 
   return result;
@@ -243,6 +324,7 @@ const deleteUser = async (id: string) => {
 
 export const UserService = {
   getAllUsers,
+  getMyCustomers,
   getUserById,
   updateUser,
   updateUserStatus,
