@@ -21,7 +21,7 @@ const createPayment = async (payload: any) => {
   if (existingPayment) {
     throw new ApiError(
       StatusCodes.CONFLICT,
-      "Payment already exists for this appointment"
+      "Payment already exists for this appointment",
     );
   }
 
@@ -70,7 +70,7 @@ const getAllPayments = async (userId: string, userRole: string, query: any) => {
   // Filter based on role
   if (userRole === "SALON_OWNER") {
     const salonOwner = await prisma.salonOwner.findUnique({
-      where: { id: userId },
+      where: { userId },
       include: { salons: { select: { id: true } } },
     });
     if (salonOwner) {

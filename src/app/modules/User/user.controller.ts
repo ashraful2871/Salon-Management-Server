@@ -16,6 +16,19 @@ const getAllUsers = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const getMyCustomers = catchAsync(async (req: Request, res: Response) => {
+  const userId = req.user?.userId;
+  const result = await UserService.getMyCustomers(userId, req.query);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Customers retrieved successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
 const getUserById = catchAsync(async (req: Request, res: Response) => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const result = await UserService.getUserById(id);
@@ -78,6 +91,7 @@ const deleteUser = catchAsync(async (req: Request, res: Response) => {
 
 export const UserController = {
   getAllUsers,
+  getMyCustomers,
   getUserById,
   updateUser,
   updateUserStatus,
