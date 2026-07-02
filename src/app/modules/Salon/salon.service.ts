@@ -20,6 +20,9 @@ const createSalon = async (userId: string, payload: any) => {
       name: payload.name,
       description: payload.description,
       address: payload.address,
+      area: payload.area,
+      district: payload.district,
+      division: payload.division,
       city: payload.city,
       state: payload.state,
       zipCode: payload.zipCode,
@@ -34,13 +37,23 @@ const createSalon = async (userId: string, payload: any) => {
   return salon;
 };
 
-const getAllSalons = async (query: any) => {
+const getAllSalons = async (query: any, user?: any) => {
   const { page = 1, limit = 10, searchTerm, city, status } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
   const whereConditions: any = {
     isDeleted: false,
   };
+
+  // Agent filtering
+  if (user?.role === "AGENT") {
+    const agent = await prisma.agent.findUnique({
+      where: { userId: user.userId },
+    });
+    if (agent) {
+      whereConditions.area = agent.area;
+    }
+  }
 
   if (searchTerm) {
     whereConditions.OR = [
@@ -341,7 +354,7 @@ const updateSalon = async (userId: string, salonId: string, payload: any) => {
   return result;
 };
 
-const updateSalonStatus = async (salonId: string, status: string) => {
+const updateSalonStatus = async (salonId: string, status: string, user?: any) => {
   const salon = await prisma.salon.findUnique({
     where: {
       id: salonId,
@@ -351,6 +364,15 @@ const updateSalonStatus = async (salonId: string, status: string) => {
 
   if (!salon) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
+  }
+
+  if (user?.role === "AGENT") {
+    const agent = await prisma.agent.findUnique({
+      where: { userId: user.userId },
+    });
+    if (!agent || agent.area !== salon.area) {
+      throw new ApiError(StatusCodes.FORBIDDEN, "You can only manage salons in your assigned area");
+    }
   }
 
   const result = await prisma.salon.update({

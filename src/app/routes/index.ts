@@ -10,6 +10,7 @@ import { ReviewRoutes } from "../modules/Review/review.routes";
 import { DashboardStatsRoutes } from "../modules/DashboardStats/dashboardStats.routes";
 import { SalonOwnerRoutes } from "../modules/BecomeASalonWoner/salonOwner.route";
 import { CounterRoutes } from "../modules/Counter/counter.route";
+import { AgentRoutes } from "../modules/Agent/agent.routes";
 
 const router = express.Router();
 
@@ -57,6 +58,10 @@ const moduleRoutes = [
   {
     path: "/become-salon-owner",
     route: SalonOwnerRoutes,
+  },
+  {
+    path: "/agents",
+    route: AgentRoutes,
   },
 ];
 

@@ -217,6 +217,26 @@ const getAllAppointments = async (
 
   // Admin can see all (no extra role filter)
   // else if (userRole === UserRole.ADMIN) { }
+  else if (userRole === "AGENT") {
+    const agent = await prisma.agent.findUnique({
+      where: { userId },
+      select: { area: true },
+    });
+    
+    if (!agent) {
+      return { meta: { page: pageNum, limit: limitNum, total: 0 }, data: [] };
+    }
+    
+    // Find all salons in this agent's area
+    const salonsInArea = await prisma.salon.findMany({
+      where: { area: agent.area, isDeleted: false },
+      select: { id: true },
+    });
+    
+    whereConditions.salonId = {
+      in: salonsInArea.map((s: any) => s.id),
+    };
+  }
 
   // -------------------------
   // Additional query filters

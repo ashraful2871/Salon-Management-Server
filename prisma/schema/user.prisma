@@ -14,10 +14,10 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  // Relations
   admin        Admin?
   salonOwner   SalonOwner?
   staff        Staff?
+  agent        Agent?
   appointments Appointment[]
   reviews      Review[]
 
@@ -61,4 +61,18 @@ model SalonOwner {
   salons Salon[]
 
   @@map("salon_owners")
+}
+
+model Agent {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  division  String
+  district  String
+  area      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("agents")
 }

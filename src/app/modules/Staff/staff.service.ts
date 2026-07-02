@@ -109,13 +109,24 @@ const addStaff = async (ownerId: string, payload: any) => {
   return result;
 };
 
-const getAllStaff = async (query: any) => {
+const getAllStaff = async (query: any, user?: any) => {
   const { page = 1, limit = 10, salonId, status } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
   const whereConditions: any = {
     isDeleted: false,
   };
+
+  if (user?.role === "AGENT") {
+    const agent = await prisma.agent.findUnique({
+      where: { userId: user.userId },
+      select: { area: true },
+    });
+    
+    if (agent) {
+      whereConditions.salon = { area: agent.area };
+    }
+  }
 
   if (salonId) {
     whereConditions.salonId = salonId;

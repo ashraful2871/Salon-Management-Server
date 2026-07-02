@@ -28,7 +28,7 @@ router.patch(
 
 router.patch(
   "/:id/status",
-  auth("ADMIN"),
+  auth("ADMIN", "AGENT"),
   validateRequest(SalonValidation.updateSalonStatusValidation),
   SalonController.updateSalonStatus,
 );

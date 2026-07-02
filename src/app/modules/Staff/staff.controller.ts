@@ -18,7 +18,7 @@ const addStaff = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getAllStaff = catchAsync(async (req: Request, res: Response) => {
-  const result = await StaffService.getAllStaff(req.query);
+  const result = await StaffService.getAllStaff(req.query, req.user);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
