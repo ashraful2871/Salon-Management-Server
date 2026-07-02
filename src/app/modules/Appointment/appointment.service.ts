@@ -472,11 +472,19 @@ const updateAppointmentStatus = async (
     }
   }
 
+  if (payload.staffId && userRole !== UserRole.SALON_OWNER && userRole !== UserRole.ADMIN) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only salon owners can assign staff to appointments",
+    );
+  }
+
   const result = await prisma.appointment.update({
     where: { id: appointmentId },
     data: {
       status: payload.status,
       cancellationReason: payload.cancellationReason,
+      ...(payload.staffId && { staffId: payload.staffId }),
     },
   });
 
