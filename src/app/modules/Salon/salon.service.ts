@@ -38,7 +38,7 @@ const createSalon = async (userId: string, payload: any) => {
 };
 
 const getAllSalons = async (query: any, user?: any) => {
-  const { page = 1, limit = 10, searchTerm, city, status } = query;
+  const { page = 1, limit = 10, searchTerm, city, area, division, district, status } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
   const whereConditions: any = {
@@ -65,6 +65,18 @@ const getAllSalons = async (query: any, user?: any) => {
 
   if (city) {
     whereConditions.city = { contains: city, mode: "insensitive" };
+  }
+
+  if (division) {
+    whereConditions.division = { contains: division, mode: "insensitive" };
+  }
+
+  if (district) {
+    whereConditions.district = { contains: district, mode: "insensitive" };
+  }
+
+  if (area) {
+    whereConditions.area = { contains: area, mode: "insensitive" };
   }
 
   if (status) {
