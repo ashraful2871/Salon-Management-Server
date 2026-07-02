@@ -71,14 +71,16 @@ const getAllSalons = async (query: any, user?: any) => {
     whereConditions.status = status;
   } else {
     // By default, only show active salons to public
-    whereConditions.status = "ACTIVE";
+    if (user?.role !== "ADMIN" && user?.role !== "AGENT") {
+      whereConditions.status = "ACTIVE";
+    }
   }
 
   const [salons, total] = await Promise.all([
     prisma.salon.findMany({
-      // where: whereConditions,
-      // skip,
-      // take: Number(limit),
+      where: whereConditions,
+      skip,
+      take: Number(limit),
       include: {
         owner: {
           include: {
