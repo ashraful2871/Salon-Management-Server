@@ -18,7 +18,7 @@ const createSalon = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getAllSalons = catchAsync(async (req: Request, res: Response) => {
-  const result = await SalonService.getAllSalons(req.query);
+  const result = await SalonService.getAllSalons(req.query, req.user);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -74,7 +74,7 @@ const updateSalon = catchAsync(async (req: Request, res: Response) => {
 const updateSalonStatus = catchAsync(async (req: Request, res: Response) => {
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
-  const result = await SalonService.updateSalonStatus(id, req.body.status);
+  const result = await SalonService.updateSalonStatus(id, req.body.status, req.user);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

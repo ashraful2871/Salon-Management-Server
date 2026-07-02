@@ -3,6 +3,7 @@ enum UserRole {
   STAFF
   SALON_OWNER
   ADMIN
+  AGENT
 }
 
 enum UserStatus {

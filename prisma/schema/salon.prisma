@@ -4,6 +4,9 @@ model Salon {
   description    String?
   website        String?
   address        String
+  area           String      @default("N/A")
+  district       String      @default("N/A")
+  division       String      @default("N/A")
   city           String
   state          String?
   zipCode        String?

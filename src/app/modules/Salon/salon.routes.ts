@@ -4,6 +4,8 @@ import auth from "../../middlewares/auth";
 import validateRequest from "../../middlewares/validateRequest";
 import { SalonValidation } from "./salon.validation";
 
+import optionalAuth from "../../middlewares/optionalAuth";
+
 const router = express.Router();
 
 router.post(
@@ -13,7 +15,7 @@ router.post(
   SalonController.createSalon,
 );
 
-router.get("/", SalonController.getAllSalons);
+router.get("/", optionalAuth(), SalonController.getAllSalons);
 
 router.get("/my-salons", auth("SALON_OWNER"), SalonController.getMySalons);
 
@@ -28,7 +30,7 @@ router.patch(
 
 router.patch(
   "/:id/status",
-  auth("ADMIN"),
+  auth("ADMIN", "AGENT"),
   validateRequest(SalonValidation.updateSalonStatusValidation),
   SalonController.updateSalonStatus,
 );
