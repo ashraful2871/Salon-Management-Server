@@ -319,7 +319,7 @@ const getAllAppointments = async (
 };
 
 const getMyAppointments = async (userId: string, query: any) => {
-  const { page = 1, limit = 10, status } = query;
+  const { page = 1, limit = 10, status, salonId } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
   const whereConditions: any = {
@@ -328,6 +328,10 @@ const getMyAppointments = async (userId: string, query: any) => {
 
   if (status) {
     whereConditions.status = status;
+  }
+
+  if (salonId) {
+    whereConditions.salonId = salonId;
   }
 
   const [appointments, total] = await Promise.all([
@@ -365,6 +369,7 @@ const getMyAppointments = async (userId: string, query: any) => {
           },
         },
         payment: true,
+        review: true,
       },
       orderBy: { appointmentDate: "desc" },
     }),
@@ -472,11 +477,19 @@ const updateAppointmentStatus = async (
     }
   }
 
+  if (payload.staffId && userRole !== UserRole.SALON_OWNER && userRole !== UserRole.ADMIN) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "Only salon owners can assign staff to appointments",
+    );
+  }
+
   const result = await prisma.appointment.update({
     where: { id: appointmentId },
     data: {
       status: payload.status,
       cancellationReason: payload.cancellationReason,
+      ...(payload.staffId && { staffId: payload.staffId }),
     },
   });
 

@@ -25,6 +25,7 @@ const updateAppointmentStatusValidation = z.object({
       "NO_SHOW",
     ]),
     cancellationReason: z.string().optional(),
+    staffId: z.string().optional(),
   }),
 });
 

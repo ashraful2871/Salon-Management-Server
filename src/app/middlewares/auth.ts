@@ -43,11 +43,13 @@ const auth = (...requiredRoles: string[]) => {
         );
       }
 
-      if (requiredRoles.length && !requiredRoles.includes(verifiedUser.role)) {
+      // ✅ Use user.role from the database instead of the potentially stale token role
+      if (requiredRoles.length && !requiredRoles.includes(user.role)) {
         throw new ApiError(StatusCodes.FORBIDDEN, "Forbidden!");
       }
 
-      req.user = verifiedUser;
+      // Update the request user with the fresh role from DB
+      req.user = { ...verifiedUser, role: user.role };
       next();
     } catch (error) {
       next(error);
