@@ -2,14 +2,19 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import prisma from "../../shared/prisma";
 import ApiError from "../../Error/error";
 import { StatusCodes } from "http-status-codes";
+import { json } from "zod";
 
 const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
 const embeddingModel = genai.getGenerativeModel({
-  model: "text-embedding-004",
+  model: "embedding-001",
 });
 export const aiService = {
   async generetEmbedding(text: string): Promise<number[]> {
-    const result = await embeddingModel.embedContent(text);
+    const result = await embeddingModel.embedContent({
+      content: { role: "user", parts: [{ text }] },
+      outputDimensionality: 768, // This tells Google to compress it to fit our database!
+    });
+
     const embedding = result.embedding;
     return embedding.values;
   },
@@ -46,5 +51,42 @@ export const aiService = {
         `;
 
     return { message: `AI Embedding saved successfully for ${salon.name}` };
+  },
+  async searchSalon(userPrompt: string) {
+    const searchVectorArray = await this.generetEmbedding(userPrompt);
+
+    const searchVectorString = `[${searchVectorArray.join(",")}]`;
+
+    const matchingSalon = await prisma.$executeRaw<any[]>`
+    
+    SELECT id, name, address, area, city, rating, description
+
+    fROM salons
+    WHERE "isDeleted"= false AND embedding IS NOT NULL 
+    ORDER BY embedding <=> ${searchVectorString}::vector
+    LIMIT 3
+    `;
+
+    if (matchingSalon.length === 0) {
+      return {
+        aiResponse:
+          "I couldn't find any salons matching your request right now.",
+      };
+    }
+    const chatModel = genai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const promptToGemini = `
+    
+    The User Asked: "${userPrompt}"
+ Here are the top 3 salons we found in our database that match their request: ${JSON.stringify(matchingSalon, null, 2)}
+
+ Act as a friendly Salon Assistant. Write a short, helpful response recommending these salons to the user based on what they asked for.
+    `;
+
+    const chatResult = await chatModel.generateContent(promptToGemini);
+    const aiResponseText = chatResult.response.text();
+    return {
+      aiResponse: aiResponseText,
+      salons: matchingSalon,
+    };
   },
 };

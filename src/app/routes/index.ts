@@ -11,6 +11,7 @@ import { DashboardStatsRoutes } from "../modules/DashboardStats/dashboardStats.r
 import { SalonOwnerRoutes } from "../modules/BecomeASalonWoner/salonOwner.route";
 import { CounterRoutes } from "../modules/Counter/counter.route";
 import { AgentRoutes } from "../modules/Agent/agent.routes";
+import { AiRoutes } from "../modules/AI-Suggestion/ai.route";
 
 const router = express.Router();
 
@@ -62,6 +63,10 @@ const moduleRoutes = [
   {
     path: "/agents",
     route: AgentRoutes,
+  },
+  {
+    path: "/ai",
+    route: AiRoutes,
   },
 ];
 
