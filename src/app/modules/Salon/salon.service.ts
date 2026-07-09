@@ -1,6 +1,7 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { aiService } from "../AI-Suggestion/ai.service";
 
 const createSalon = async (userId: string, payload: any) => {
   // Check if user is salon owner
@@ -33,6 +34,9 @@ const createSalon = async (userId: string, payload: any) => {
       ownerId: salonOwner.id,
     },
   });
+
+  // Automatically generate AI embedding in the background
+  aiService.generateAndSaveSaloneEmbedding(salon.id).catch(console.error);
 
   return salon;
 };
@@ -364,6 +368,9 @@ const updateSalon = async (userId: string, salonId: string, payload: any) => {
     where: { id: salonId },
     data: payload,
   });
+
+  // Automatically regenerate AI embedding when a salon is updated
+  aiService.generateAndSaveSaloneEmbedding(salonId).catch(console.error);
 
   return result;
 };
