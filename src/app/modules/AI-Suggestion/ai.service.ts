@@ -6,7 +6,7 @@ import { json } from "zod";
 
 const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
 const embeddingModel = genai.getGenerativeModel({
-  model: "embedding-001",
+  model: "gemini-embedding-2",
 });
 export const aiService = {
   async generetEmbedding(text: string): Promise<number[]> {
@@ -57,7 +57,7 @@ export const aiService = {
 
     const searchVectorString = `[${searchVectorArray.join(",")}]`;
 
-    const matchingSalon = await prisma.$executeRaw<any[]>`
+    const matchingSalon = await prisma.$queryRaw<any[]>`
     
     SELECT id, name, address, area, city, rating, description
 
@@ -73,7 +73,7 @@ export const aiService = {
           "I couldn't find any salons matching your request right now.",
       };
     }
-    const chatModel = genai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const chatModel = genai.getGenerativeModel({ model: "gemini-2.5-flash" });
     const promptToGemini = `
     
     The User Asked: "${userPrompt}"
