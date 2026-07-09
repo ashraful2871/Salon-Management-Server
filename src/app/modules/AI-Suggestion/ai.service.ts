@@ -12,6 +12,7 @@ export const aiService = {
   async generetEmbedding(text: string): Promise<number[]> {
     const result = await embeddingModel.embedContent({
       content: { role: "user", parts: [{ text }] },
+      // @ts-ignore - outputDimensionality is supported by the API but missing in the SDK types
       outputDimensionality: 768, // This tells Google to compress it to fit our database!
     });
 
