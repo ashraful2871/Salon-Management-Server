@@ -14,9 +14,10 @@ app.use(
       "http://localhost:3000",
       "http://localhost:5173",
       "https://salon-management-frontend-kappa.vercel.app",
+      "https://salon-management-frontend-fawn.vercel.app",
     ],
     credentials: true,
-  })
+  }),
 );
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
