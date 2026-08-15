@@ -15,6 +15,7 @@ app.use(
       "http://localhost:5173",
       "https://salon-management-frontend-kappa.vercel.app",
       "https://salon-management-frontend-fawn.vercel.app",
+      "https://salon.ashrafulash.com",
     ],
     credentials: true,
   }),
