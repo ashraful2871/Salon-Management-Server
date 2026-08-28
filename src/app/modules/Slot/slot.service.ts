@@ -1,7 +1,7 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
-import { UserRole } from "@prisma/client";
+import { UserRole, SlotStatus } from "@prisma/client";
 
 const bulkCreateSlots = async (userId: string, userRole: string, payload: any) => {
   if (userRole !== UserRole.SALON_OWNER) {
@@ -60,9 +60,7 @@ const bulkCreateSlots = async (userId: string, userRole: string, payload: any) =
       date: targetDate,
       startTime: formatTime(currentStart),
       endTime: formatTime(currentEnd),
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      status: "AVAILABLE",
+      status: SlotStatus.AVAILABLE,
     });
 
     currentStart = new Date(currentEnd.getTime() + (breakDuration || 0) * 60000);
@@ -148,9 +146,7 @@ const updateSlotStatus = async (userId: string, userRole: string, slotId: string
 
   const updatedSlot = await prisma.slot.update({
     where: { id: slotId },
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    data: { status: payload.status },
+    data: { status: payload.status as SlotStatus },
   });
 
   return updatedSlot;
