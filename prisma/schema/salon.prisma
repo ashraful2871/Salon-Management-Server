@@ -30,6 +30,7 @@ model Salon {
   counters     Counter[]
   appointments Appointment[]
   reviews      Review[]
+  slots        Slot[]
 
   @@map("salons")
 }

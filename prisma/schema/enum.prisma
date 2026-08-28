@@ -77,3 +77,11 @@ enum OwnerApplicationStatus {
   APPROVED
   REJECTED
 }
+
+enum SlotStatus {
+  AVAILABLE
+  BOOKED
+  BLOCKED
+  CANCELLED
+  COMPLETED
+}

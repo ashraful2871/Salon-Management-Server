@@ -12,6 +12,7 @@ import { SalonOwnerRoutes } from "../modules/BecomeASalonWoner/salonOwner.route"
 import { CounterRoutes } from "../modules/Counter/counter.route";
 import { AgentRoutes } from "../modules/Agent/agent.routes";
 import { AiRoutes } from "../modules/AI-Suggestion/ai.route";
+import { SlotRoutes } from "../modules/Slot/slot.route";
 
 const router = express.Router();
 
@@ -67,6 +68,10 @@ const moduleRoutes = [
   {
     path: "/ai",
     route: AiRoutes,
+  },
+  {
+    path: "/slots",
+    route: SlotRoutes,
   },
 ];
 

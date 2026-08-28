@@ -6,10 +6,7 @@ const bookAppointmentValidation = z.object({
     serviceId: z.string().nonempty({ message: "Service ID is required" }),
     staffId: z.string().optional(),
     counterId: z.string().nonempty({ message: "Counter ID is required" }),
-    appointmentDate: z
-      .string()
-      .nonempty({ message: "Appointment date is required" }),
-    startTime: z.string().nonempty({ message: "Start time is required" }),
+    slotId: z.string().nonempty({ message: "Slot ID is required" }),
     notes: z.string().optional(),
   }),
 });

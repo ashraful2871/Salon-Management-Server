@@ -13,6 +13,7 @@ model Appointment {
   cancellationReason String?
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
+  slotId             String?
 
   // Relations
   customer User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -22,6 +23,7 @@ model Appointment {
   counter  Counter? @relation(fields: [counterId], references: [id])
   payment  Payment?
   review   Review?
+  slot     Slot?    @relation(fields: [slotId], references: [id])
 
   @@map("appointments")
 }
