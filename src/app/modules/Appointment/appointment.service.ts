@@ -2,6 +2,8 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { SalonStatus, UserRole } from "@prisma/client";
+import { sendEmail } from "../../utils/emailSender";
+import { getBookingConfirmationTemplate } from "../../utils/emailTemplates";
 
 const bookAppointment = async (userId: string, payload: any) => {
   // Verify user is customer
@@ -9,7 +11,12 @@ const bookAppointment = async (userId: string, payload: any) => {
     where: { id: userId },
   });
 
-  if (!user || (user.role !== UserRole.CUSTOMER && user.role !== UserRole.SALON_OWNER && user.role !== UserRole.ADMIN)) {
+  if (
+    !user ||
+    (user.role !== UserRole.CUSTOMER &&
+      user.role !== UserRole.SALON_OWNER &&
+      user.role !== UserRole.ADMIN)
+  ) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
       "Only customers can book appointments",
@@ -24,7 +31,7 @@ const bookAppointment = async (userId: string, payload: any) => {
   if (!slot || slot.status !== "AVAILABLE" || slot.isBooked) {
     throw new ApiError(
       StatusCodes.CONFLICT,
-      "This slot is no longer available. Please select another time."
+      "This slot is no longer available. Please select another time.",
     );
   }
 
@@ -91,7 +98,7 @@ const bookAppointment = async (userId: string, payload: any) => {
     if (updatedSlot.count === 0) {
       throw new ApiError(
         StatusCodes.CONFLICT,
-        "Sorry, this slot has just been booked by another customer. Please select another available slot."
+        "Sorry, this slot has just been booked by another customer. Please select another available slot.",
       );
     }
 
@@ -142,6 +149,24 @@ const bookAppointment = async (userId: string, payload: any) => {
 
     return createdAppointment;
   });
+
+  // Send email notification asynchronously
+  if (user?.email) {
+    const formattedDate = new Date(
+      appointment.appointmentDate,
+    ).toLocaleDateString();
+    const emailHtml = getBookingConfirmationTemplate(
+      user.name || "Customer",
+      appointment.salon.name,
+      appointment.service.name,
+      formattedDate,
+      appointment.startTime,
+      appointment.service.price,
+    );
+
+    // Call without await so it doesn't block the API response
+    sendEmail(user.email, "Booking Confirmation - Salon Management", emailHtml);
+  }
 
   return appointment;
 };
@@ -219,17 +244,17 @@ const getAllAppointments = async (
       where: { userId },
       select: { area: true },
     });
-    
+
     if (!agent) {
       return { meta: { page: pageNum, limit: limitNum, total: 0 }, data: [] };
     }
-    
+
     // Find all salons in this agent's area
     const salonsInArea = await prisma.salon.findMany({
       where: { area: agent.area, isDeleted: false },
       select: { id: true },
     });
-    
+
     whereConditions.salonId = {
       in: salonsInArea.map((s: any) => s.id),
     };
@@ -494,7 +519,11 @@ const updateAppointmentStatus = async (
     }
   }
 
-  if (payload.staffId && userRole !== UserRole.SALON_OWNER && userRole !== UserRole.ADMIN) {
+  if (
+    payload.staffId &&
+    userRole !== UserRole.SALON_OWNER &&
+    userRole !== UserRole.ADMIN
+  ) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
       "Only salon owners can assign staff to appointments",
