@@ -1,12 +1,12 @@
 model Salon {
-  id             String      @id @default(uuid())
+  id             String                      @id @default(uuid())
   name           String
   description    String?
   website        String?
   address        String
-  area           String      @default("N/A")
-  district       String      @default("N/A")
-  division       String      @default("N/A")
+  area           String                      @default("N/A")
+  district       String                      @default("N/A")
+  division       String                      @default("N/A")
   city           String
   state          String?
   zipCode        String?
@@ -14,14 +14,14 @@ model Salon {
   email          String?
   images         String[]
   operatingHours Json?
-  status         SalonStatus @default(PENDING_APPROVAL)
-  rating         Float       @default(0)
-  totalReviews   Int         @default(0)
+  status         SalonStatus                 @default(PENDING_APPROVAL)
+  rating         Float                       @default(0)
+  totalReviews   Int                         @default(0)
   ownerId        String
-  isDeleted      Boolean     @default(false)
+  isDeleted      Boolean                     @default(false)
   embedding      Unsupported("vector(768)")?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
 
   // Relations
   owner        SalonOwner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
@@ -30,6 +30,7 @@ model Salon {
   counters     Counter[]
   appointments Appointment[]
   reviews      Review[]
+  slots        Slot[]
 
   @@map("salons")
 }

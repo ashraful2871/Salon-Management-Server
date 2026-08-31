@@ -2,6 +2,8 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { SalonStatus, UserRole } from "@prisma/client";
+import { sendEmail } from "../../utils/emailSender";
+import { getBookingConfirmationTemplate } from "../../utils/emailTemplates";
 
 const bookAppointment = async (userId: string, payload: any) => {
   // Verify user is customer
@@ -9,10 +11,27 @@ const bookAppointment = async (userId: string, payload: any) => {
     where: { id: userId },
   });
 
-  if (!user || user.role !== UserRole.CUSTOMER) {
+  if (
+    !user ||
+    (user.role !== UserRole.CUSTOMER &&
+      user.role !== UserRole.SALON_OWNER &&
+      user.role !== UserRole.ADMIN)
+  ) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
       "Only customers can book appointments",
+    );
+  }
+
+  // Verify slot first
+  const slot = await prisma.slot.findUnique({
+    where: { id: payload.slotId },
+  });
+
+  if (!slot || slot.status !== "AVAILABLE" || slot.isBooked) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "This slot is no longer available. Please select another time.",
     );
   }
 
@@ -53,8 +72,6 @@ const bookAppointment = async (userId: string, payload: any) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "Counter not found");
   }
 
-  // Optional but recommended:
-  // make sure staff belongs to this salon
   if (staff && staff.salonId !== payload.salonId) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
@@ -62,89 +79,94 @@ const bookAppointment = async (userId: string, payload: any) => {
     );
   }
 
-  // Prevent duplicate booking on same counter/date/time
-  const existingCounterBooking = await prisma.appointment.findFirst({
-    where: {
-      salonId: payload.salonId,
-      counterId: payload.counterId,
-      appointmentDate: new Date(payload.appointmentDate),
-      startTime: payload.startTime,
-      status: {
-        in: ["PENDING", "CONFIRMED"], // block active bookings
-      },
-    },
-  });
-
-  if (existingCounterBooking) {
-    throw new ApiError(
-      StatusCodes.CONFLICT,
-      "This counter is already booked for the selected date and time",
-    );
-  }
-
-  // (Optional) also prevent same staff double booking
-  if (payload.staffId) {
-    const existingStaffBooking = await prisma.appointment.findFirst({
+  // Transaction for double booking prevention
+  const appointment = await prisma.$transaction(async (tx) => {
+    const updatedSlot = await tx.slot.updateMany({
       where: {
-        staffId: payload.staffId,
-        appointmentDate: new Date(payload.appointmentDate),
-        startTime: payload.startTime,
-        status: {
-          in: ["PENDING", "CONFIRMED"],
-        },
+        id: payload.slotId,
+        status: "AVAILABLE",
+        isBooked: false,
+      },
+      data: {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore
+        status: "BOOKED",
+        isBooked: true,
       },
     });
 
-    if (existingStaffBooking) {
+    if (updatedSlot.count === 0) {
       throw new ApiError(
         StatusCodes.CONFLICT,
-        "This staff member is already booked for the selected date and time",
+        "Sorry, this slot has just been booked by another customer. Please select another available slot.",
       );
     }
-  }
-  // Create appointment
-  const appointment = await prisma.appointment.create({
-    data: {
-      customerId: userId,
-      salonId: payload.salonId,
-      serviceId: payload.serviceId,
-      staffId: payload.staffId || null,
-      counterId: payload.counterId,
-      appointmentDate: new Date(payload.appointmentDate),
-      startTime: payload.startTime,
-      notes: payload.notes,
-    },
-    include: {
-      salon: {
-        select: {
-          id: true,
-          name: true,
-          address: true,
-          phone: true,
-        },
+
+    const createdAppointment = await tx.appointment.create({
+      data: {
+        customerId: userId,
+        salonId: payload.salonId,
+        serviceId: payload.serviceId,
+        staffId: payload.staffId || null,
+        counterId: payload.counterId,
+        appointmentDate: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        notes: payload.notes,
+        slotId: slot.id,
       },
-      service: {
-        select: {
-          id: true,
-          name: true,
-          price: true,
-          duration: true,
+      include: {
+        salon: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+            phone: true,
+          },
         },
-      },
-      staff: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              profilePhoto: true,
+        service: {
+          select: {
+            id: true,
+            name: true,
+            price: true,
+            duration: true,
+          },
+        },
+        staff: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                profilePhoto: true,
+              },
             },
           },
         },
+        counter: true,
       },
-      counter: true,
-    },
+    });
+
+    return createdAppointment;
   });
+
+  // Send email notification asynchronously
+  if (user?.email) {
+    const formattedDate = new Date(
+      appointment.appointmentDate,
+    ).toLocaleDateString();
+    const emailHtml = getBookingConfirmationTemplate(
+      user.name || "Customer",
+      appointment.salon.name,
+      appointment.service.name,
+      formattedDate,
+      appointment.startTime,
+      appointment.service.price,
+    );
+
+    // Call without await so it doesn't block the API response
+    sendEmail(user.email, "Booking Confirmation - Salon Management", emailHtml);
+  }
 
   return appointment;
 };
@@ -222,17 +244,17 @@ const getAllAppointments = async (
       where: { userId },
       select: { area: true },
     });
-    
+
     if (!agent) {
       return { meta: { page: pageNum, limit: limitNum, total: 0 }, data: [] };
     }
-    
+
     // Find all salons in this agent's area
     const salonsInArea = await prisma.salon.findMany({
       where: { area: agent.area, isDeleted: false },
       select: { id: true },
     });
-    
+
     whereConditions.salonId = {
       in: salonsInArea.map((s: any) => s.id),
     };
@@ -497,7 +519,11 @@ const updateAppointmentStatus = async (
     }
   }
 
-  if (payload.staffId && userRole !== UserRole.SALON_OWNER && userRole !== UserRole.ADMIN) {
+  if (
+    payload.staffId &&
+    userRole !== UserRole.SALON_OWNER &&
+    userRole !== UserRole.ADMIN
+  ) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
       "Only salon owners can assign staff to appointments",
@@ -512,6 +538,15 @@ const updateAppointmentStatus = async (
       ...(payload.staffId && { staffId: payload.staffId }),
     },
   });
+
+  if (payload.status === "CANCELLED" && appointment.slotId) {
+    await prisma.slot.update({
+      where: { id: appointment.slotId },
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      data: { status: "AVAILABLE", isBooked: false },
+    });
+  }
 
   return result;
 };
@@ -543,6 +578,15 @@ const cancelAppointment = async (userId: string, appointmentId: string) => {
     where: { id: appointmentId },
     data: { status: "CANCELLED" },
   });
+
+  if (appointment.slotId) {
+    await prisma.slot.update({
+      where: { id: appointment.slotId },
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      data: { status: "AVAILABLE", isBooked: false },
+    });
+  }
 
   return result;
 };
