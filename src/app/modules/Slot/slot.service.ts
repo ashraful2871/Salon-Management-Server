@@ -24,7 +24,15 @@ const bulkCreateSlots = async (userId: string, userRole: string, payload: any) =
     throw new ApiError(StatusCodes.FORBIDDEN, "You do not own this salon");
   }
 
-  const { date, startTime, endTime, duration, breakDuration } = payload;
+  const { date, startTime, endTime, duration, breakDuration, serviceId } = payload;
+  
+  const service = await prisma.service.findFirst({
+    where: { id: serviceId, salonId: payload.salonId }
+  });
+
+  if (!service) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Service not found or does not belong to this salon");
+  }
   
   const targetDate = new Date(date);
   if (isNaN(targetDate.getTime())) {
@@ -57,6 +65,7 @@ const bulkCreateSlots = async (userId: string, userRole: string, payload: any) =
     
     slotsToCreate.push({
       salonId: payload.salonId,
+      serviceId: serviceId,
       date: targetDate,
       startTime: formatTime(currentStart),
       endTime: formatTime(currentEnd),
@@ -73,6 +82,7 @@ const bulkCreateSlots = async (userId: string, userRole: string, payload: any) =
   const existingSlots = await prisma.slot.findMany({
     where: {
       salonId: payload.salonId,
+      serviceId: serviceId,
       date: targetDate,
     },
   });
@@ -101,7 +111,7 @@ const bulkCreateSlots = async (userId: string, userRole: string, payload: any) =
 };
 
 const getSlots = async (query: any) => {
-  const { salonId, date, status } = query;
+  const { salonId, date, status, serviceId } = query;
 
   const whereConditions: any = {};
   if (salonId) whereConditions.salonId = salonId;
@@ -109,9 +119,18 @@ const getSlots = async (query: any) => {
     whereConditions.date = new Date(date);
   }
   if (status) whereConditions.status = status;
+  if (serviceId) whereConditions.serviceId = serviceId;
 
   const slots = await prisma.slot.findMany({
     where: whereConditions,
+    include: {
+      service: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
     orderBy: { startTime: 'asc' },
   });
 
@@ -185,9 +204,49 @@ const deleteSlot = async (userId: string, userRole: string, slotId: string) => {
   return { message: "Slot deleted successfully" };
 };
 
+const deleteBulkSlots = async (userId: string, userRole: string, slotIds: string[]) => {
+  if (userRole !== UserRole.SALON_OWNER) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "Only salon owners can delete slots");
+  }
+
+  const salonOwner = await prisma.salonOwner.findUnique({
+    where: { userId },
+  });
+
+  if (!salonOwner) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Salon owner profile not found");
+  }
+
+  // Verify ownership of the slots and that they are not booked
+  const slotsToDelete = await prisma.slot.findMany({
+    where: {
+      id: { in: slotIds },
+      salon: {
+        ownerId: salonOwner.id,
+      },
+      isBooked: false, // Ensure we only delete unbooked slots
+    },
+  });
+
+  if (slotsToDelete.length === 0) {
+    return { message: "No valid unbooked slots found to delete." };
+  }
+
+  const validSlotIds = slotsToDelete.map(slot => slot.id);
+
+  await prisma.slot.deleteMany({
+    where: {
+      id: { in: validSlotIds },
+    },
+  });
+
+  return { message: `${validSlotIds.length} slot(s) deleted successfully` };
+};
+
 export const SlotService = {
   bulkCreateSlots,
   getSlots,
   updateSlotStatus,
   deleteSlot,
+  deleteBulkSlots,
 };

@@ -1,16 +1,18 @@
 model Slot {
-  id        String     @id @default(uuid())
+  id        String          @id @default(uuid())
   salonId   String
+  serviceId String?
   date      DateTime
   startTime String
   endTime   String
-  status    SlotStatus @default(AVAILABLE)
-  isBooked  Boolean    @default(false)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  status    SlotStatus      @default(AVAILABLE)
+  isBooked  Boolean         @default(false)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 
   // Relations
   salon        Salon         @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  service      Service?      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   appointments Appointment[]
 
   @@map("slots")

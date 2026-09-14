@@ -16,6 +16,7 @@ model Service {
   salon         Salon          @relation(fields: [salonId], references: [id], onDelete: Cascade)
   staffServices StaffService[]
   appointments  Appointment[]
+  slots         Slot[]
 
   @@map("services")
 }

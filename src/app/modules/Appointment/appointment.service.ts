@@ -345,7 +345,7 @@ const getAllAppointments = async (
         },
         payment: true,
       },
-      orderBy: [{ appointmentDate: "desc" }, { startTime: "asc" }],
+      orderBy: { createdAt: "desc" },
     }),
     prisma.appointment.count({ where: whereConditions }),
   ]);
@@ -413,7 +413,7 @@ const getMyAppointments = async (userId: string, query: any) => {
         payment: true,
         review: true,
       },
-      orderBy: { appointmentDate: "desc" },
+      orderBy: { createdAt: "desc" },
     }),
     prisma.appointment.count({ where: whereConditions }),
   ]);
