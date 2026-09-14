@@ -2,7 +2,7 @@
 # exit on error
 set -o errexit
 
-npm install
+npm install --include=dev
 
 # 1. Generate the client FIRST so TypeScript can see the types
 npx prisma generate
