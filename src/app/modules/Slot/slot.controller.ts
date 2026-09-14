@@ -53,9 +53,22 @@ const deleteSlot = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const deleteBulkSlots = catchAsync(async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const result = await SlotService.deleteBulkSlots(user.userId, user.role, req.body.slotIds);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Slots deleted successfully!",
+    data: result,
+  });
+});
+
 export const SlotController = {
   bulkCreateSlots,
   getSlots,
   updateSlotStatus,
   deleteSlot,
+  deleteBulkSlots,
 };

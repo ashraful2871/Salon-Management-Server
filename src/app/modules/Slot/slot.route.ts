@@ -1,7 +1,7 @@
 import express from "express";
 import auth from "../../middlewares/auth";
-import { UserRole } from "@prisma/client";
 import validateRequest from "../../middlewares/validateRequest";
+import { UserRole } from "@prisma/client";
 import { SlotController } from "./slot.controller";
 import { SlotValidation } from "./slot.validation";
 
@@ -14,10 +14,7 @@ router.post(
   SlotController.bulkCreateSlots
 );
 
-router.get(
-  "/",
-  SlotController.getSlots
-);
+router.get("/", SlotController.getSlots);
 
 router.patch(
   "/:id/status",
@@ -26,10 +23,13 @@ router.patch(
   SlotController.updateSlotStatus
 );
 
-router.delete(
-  "/:id",
+router.post(
+  "/bulk-delete",
   auth(UserRole.SALON_OWNER),
-  SlotController.deleteSlot
+  validateRequest(SlotValidation.deleteBulkSlotsValidation),
+  SlotController.deleteBulkSlots
 );
+
+router.delete("/:id", auth(UserRole.SALON_OWNER), SlotController.deleteSlot);
 
 export const SlotRoutes = router;
