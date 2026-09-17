@@ -85,3 +85,8 @@ enum SlotStatus {
   CANCELLED
   COMPLETED
 }
+
+enum TokenType {
+  PASSWORD_RESET
+  EMAIL_VERIFY
+}

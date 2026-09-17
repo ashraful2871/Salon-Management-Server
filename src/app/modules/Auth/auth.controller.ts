@@ -106,6 +106,53 @@ const getMyProfile = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const forgotPassword = catchAsync(async (req: Request, res: Response) => {
+  await AuthService.forgotPassword(req.body);
+
+  // Deliberately identical whether or not the address is registered.
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      'If an account exists for that email, a password reset link has been sent.',
+    data: null,
+  });
+});
+
+const resetPassword = catchAsync(async (req: Request, res: Response) => {
+  await AuthService.resetPassword(req.body);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: 'Password reset successfully. You can now sign in.',
+    data: null,
+  });
+});
+
+const verifyEmail = catchAsync(async (req: Request, res: Response) => {
+  await AuthService.verifyEmail(req.body);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: 'Email verified successfully',
+    data: null,
+  });
+});
+
+const resendVerification = catchAsync(async (req: Request, res: Response) => {
+  await AuthService.resendVerification(req.body);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      'If that account exists and is not yet verified, a new verification link has been sent.',
+    data: null,
+  });
+});
+
 export const AuthController = {
   register,
   login,
@@ -113,4 +160,8 @@ export const AuthController = {
   changePassword,
   logout,
   getMyProfile,
+  forgotPassword,
+  resetPassword,
+  verifyEmail,
+  resendVerification,
 };

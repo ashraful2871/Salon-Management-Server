@@ -9,7 +9,8 @@ model User {
   profilePhoto String?
   gender       Gender?
   dateOfBirth  DateTime?
-  address      String?
+  address       String?
+  emailVerified Boolean   @default(false)
   isDeleted    Boolean    @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
@@ -20,8 +21,24 @@ model User {
   agent        Agent?
   appointments Appointment[]
   reviews      Review[]
+  verificationTokens VerificationToken[]
 
   @@map("users")
+}
+
+model VerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique // sha256 of the token that was emailed
+  type      TokenType
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@map("verification_tokens")
 }
 
 model Admin {

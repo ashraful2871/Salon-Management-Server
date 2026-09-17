@@ -13,6 +13,7 @@ interface Config {
     refresh_token_secret: string;
     refresh_token_expires_in: string;
   };
+  frontend_url: string;
   cloudinary: {
     cloud_name: string | undefined;
     api_key: string | undefined;
@@ -25,6 +26,7 @@ export default {
   env: process.env.NODE_ENV,
   port: process.env.PORT,
   database_url: process.env.DATABASE_URL,
+  frontend_url: process.env.FRONTEND_URL || "http://localhost:3000",
   jwt: {
     jwt_secret: process.env.JWT_SECRET || "",
     expires_in: process.env.EXPIRES_IN || "1h",
