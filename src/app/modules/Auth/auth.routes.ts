@@ -10,13 +10,14 @@ const router = express.Router();
 router.post(
   "/register",
   validateRequest(AuthValidation.registerValidation),
-  AuthController.register
+  AuthController.register,
 );
 
 router.post(
   "/login",
+  authLimiter,
   validateRequest(AuthValidation.loginValidation),
-  AuthController.login
+  AuthController.login,
 );
 
 router.post("/logout", AuthController.logout);
@@ -24,48 +25,48 @@ router.post("/logout", AuthController.logout);
 router.post(
   "/refresh-token",
   validateRequest(AuthValidation.refreshTokenValidation),
-  AuthController.refreshToken
+  AuthController.refreshToken,
 );
 
 router.post(
   "/change-password",
   auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN"),
   validateRequest(AuthValidation.changePasswordValidation),
-  AuthController.changePassword
+  AuthController.changePassword,
 );
 
 router.get(
   "/me",
   auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN"),
-  AuthController.getMyProfile
+  AuthController.getMyProfile,
 );
 
 router.post(
   "/forgot-password",
   authLimiter,
   validateRequest(AuthValidation.forgotPasswordValidation),
-  AuthController.forgotPassword
+  AuthController.forgotPassword,
 );
 
 router.post(
   "/reset-password",
   authLimiter,
   validateRequest(AuthValidation.resetPasswordValidation),
-  AuthController.resetPassword
+  AuthController.resetPassword,
 );
 
 router.post(
   "/verify-email",
   authLimiter,
   validateRequest(AuthValidation.verifyEmailValidation),
-  AuthController.verifyEmail
+  AuthController.verifyEmail,
 );
 
 router.post(
   "/resend-verification",
   authLimiter,
   validateRequest(AuthValidation.resendVerificationValidation),
-  AuthController.resendVerification
+  AuthController.resendVerification,
 );
 
 export const AuthRoutes = router;
