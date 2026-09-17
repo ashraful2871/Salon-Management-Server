@@ -15,3 +15,18 @@ export const authLimiter = rateLimit({
     message: "Too many attempts. Try again in 15 minutes.",
   },
 });
+
+/**
+ * AI search is public but every call spends Gemini quota on two model requests,
+ * so it gets a tighter budget than an ordinary read endpoint.
+ */
+export const aiSearchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many searches. Please wait a minute and try again.",
+  },
+});
