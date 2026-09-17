@@ -7,12 +7,20 @@ import { AuthService } from "./auth.service";
 const register = catchAsync(async (req: Request, res: Response) => {
   const result = await AuthService.register(req.body);
 
-  // Set refresh token in HTTP-only cookie
+  // Registration signs the user straight in, so it hands back the same cookie
+  // and token pair as login rather than sending them to the login screen.
   res.cookie("refreshToken", result.refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
     maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
+  });
+
+  res.cookie("accessToken", result.accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
 
   sendResponse(res, {
@@ -22,6 +30,7 @@ const register = catchAsync(async (req: Request, res: Response) => {
     data: {
       user: result.user,
       accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
     },
   });
 });
