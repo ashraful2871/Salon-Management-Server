@@ -3,7 +3,7 @@ model Service {
   name        String
   description String?
   category    ServiceCategory
-  price       Float
+  priceMinor  Int // poisha. BDT 150.00 = 15000
   duration    Int
   salonId     String
   images      String[]

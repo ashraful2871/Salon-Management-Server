@@ -5,3 +5,7 @@ uploads/*
 !uploads/.gitkeep
 .vercel
 .env*.local
+
+# Claude Code: personal overrides only; .claude/settings.json is shared
+.claude/settings.local.json
+.claude/worktrees/

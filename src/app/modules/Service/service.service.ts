@@ -1,6 +1,17 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { toMinor } from "../../utils/money";
+
+/**
+ * The API takes and returns taka, the column holds integer poisha. Converting
+ * on the way in keeps the public contract unchanged; `sendResponse` puts the
+ * taka field back on the way out.
+ */
+const withMinorPrice = (payload: any) => {
+  const { price, ...rest } = payload ?? {};
+  return price === undefined ? rest : { ...rest, priceMinor: toMinor(price) };
+};
 
 const createService = async (userId: string, payload: any) => {
   // Verify salon ownership
@@ -34,7 +45,7 @@ const createService = async (userId: string, payload: any) => {
   }
 
   const service = await prisma.service.create({
-    data: payload,
+    data: withMinorPrice(payload),
   });
 
   return service;
@@ -166,7 +177,7 @@ const updateService = async (
 
   const result = await prisma.service.update({
     where: { id: serviceId },
-    data: payload,
+    data: withMinorPrice(payload),
   });
 
   return result;

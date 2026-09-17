@@ -22,6 +22,8 @@ model User {
   appointments Appointment[]
   reviews      Review[]
   verificationTokens VerificationToken[]
+  wallet             Wallet?
+  paymentIntents     PaymentIntent[]
 
   @@map("users")
 }

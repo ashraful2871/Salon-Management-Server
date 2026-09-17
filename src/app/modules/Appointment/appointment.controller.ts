@@ -103,6 +103,63 @@ const cancelAppointment = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+/** Shown before the confirm button so a forfeit is never a surprise. */
+const getCancellationPreview = catchAsync(
+  async (req: Request, res: Response) => {
+    const idParam = req.params.id;
+    const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+    const result = await AppointmentService.getCancellationPreview(
+      req.user!.userId,
+      id,
+    );
+
+    sendResponse(res, {
+      statusCode: StatusCodes.OK,
+      success: true,
+      message: "Cancellation preview retrieved successfully",
+      data: result,
+    });
+  },
+);
+
+const appealNoShow = catchAsync(async (req: Request, res: Response) => {
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+  const result = await AppointmentService.appealNoShow(
+    req.user!.userId,
+    id,
+    req.body.reason,
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Appeal submitted. An admin will review it shortly.",
+    data: result,
+  });
+});
+
+const resolveAppeal = catchAsync(async (req: Request, res: Response) => {
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+  const result = await AppointmentService.resolveAppeal(req.user!.userId, id, {
+    approve: req.body.approve,
+    note: req.body.note,
+  });
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: req.body.approve
+      ? "Appeal upheld and the deposit returned"
+      : "Appeal rejected",
+    data: result,
+  });
+});
+
 export const AppointmentController = {
   bookAppointment,
   getAllAppointments,
@@ -110,4 +167,7 @@ export const AppointmentController = {
   getAppointmentById,
   updateAppointmentStatus,
   cancelAppointment,
+  getCancellationPreview,
+  appealNoShow,
+  resolveAppeal,
 };

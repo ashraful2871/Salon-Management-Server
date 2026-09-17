@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI, TaskType } from "@google/generative-ai";
 import prisma from "../../shared/prisma";
+import { toTaka } from "../../utils/money";
 import ApiError from "../../Error/error";
 import { StatusCodes } from "http-status-codes";
 
@@ -99,20 +100,24 @@ export const aiService = {
     services: Array<{
       name: string;
       category: string;
-      price: number;
+      priceMinor: number;
       duration: number;
     }>;
   }): string {
+    // Prices are rendered in taka, exactly as they were when they were Floats,
+    // so moving storage to poisha did not change a single embedded character
+    // and existing vectors stay comparable.
     const services = salon.services.length
       ? salon.services
           .map(
-            (s) => `${s.name} (${s.category}, ${s.duration} min, BDT ${s.price})`
+            (s) =>
+              `${s.name} (${s.category}, ${s.duration} min, BDT ${toTaka(s.priceMinor)})`
           )
           .join("; ")
       : "No services listed";
 
     const prices = salon.services
-      .map((s) => s.price)
+      .map((s) => toTaka(s.priceMinor))
       .filter((p) => Number.isFinite(p));
 
     const priceRange = prices.length
@@ -225,8 +230,8 @@ export const aiService = {
           json_agg(
             json_build_object(
               'id', sv.id, 'name', sv.name, 'category', sv.category,
-              'price', sv.price, 'duration', sv.duration
-            ) ORDER BY sv.price
+              'price', (sv."priceMinor" / 100.0)::float8, 'duration', sv.duration
+            ) ORDER BY sv."priceMinor"
           ) FILTER (WHERE sv.id IS NOT NULL),
           '[]'
         ) AS services

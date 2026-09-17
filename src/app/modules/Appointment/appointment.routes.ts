@@ -39,6 +39,28 @@ router.patch(
   AppointmentController.updateAppointmentStatus,
 );
 
+router.get(
+  "/:id/cancellation-preview",
+  auth(UserRole.CUSTOMER),
+  AppointmentController.getCancellationPreview,
+);
+
+// A forfeited deposit is appealable for 48 hours. Publishing that is what
+// stops the no-show mechanic feeling arbitrary.
+router.post(
+  "/:id/appeal",
+  auth(UserRole.CUSTOMER),
+  validateRequest(AppointmentValidation.appealNoShowValidation),
+  AppointmentController.appealNoShow,
+);
+
+router.patch(
+  "/:id/appeal",
+  auth(UserRole.ADMIN),
+  validateRequest(AppointmentValidation.resolveAppealValidation),
+  AppointmentController.resolveAppeal,
+);
+
 router.delete(
   "/:id",
   auth(UserRole.CUSTOMER, UserRole.SALON_OWNER),

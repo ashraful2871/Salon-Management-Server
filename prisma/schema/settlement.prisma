@@ -1,0 +1,68 @@
+/// How much the platform charges for a booking. A rule with a null salonId is
+/// the platform default; a salon-specific rule overrides it. The rule that wins
+/// is the most specific one whose amount band and scope match the booking.
+model CommissionRule {
+  id             String          @id @default(uuid())
+  salonId        String? // null = platform default
+  minAmountMinor Int             @default(0)
+  maxAmountMinor Int?
+  flatFeeMinor   Int? // e.g. 1000 = BDT 10
+  percentBps     Int? // basis points. 800 = 8%
+  appliesTo      CommissionScope
+  isActive       Boolean         @default(true)
+  priority       Int             @default(0) // higher wins among equally specific rules
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  salon Salon? @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@index([salonId, isActive])
+  @@map("commission_rules")
+}
+
+/// Double-entry record of who is owed what. Every appointment's entries must
+/// sum to zero across accounts - that identity is the reconciliation test.
+model LedgerEntry {
+  id            String        @id @default(uuid())
+  appointmentId String?
+  salonId       String?
+  account       LedgerAccount
+  amountMinor   Int // signed
+  description   String
+  payoutId      String?
+  createdAt     DateTime      @default(now())
+
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  salon       Salon?       @relation(fields: [salonId], references: [id], onDelete: SetNull)
+  payout      Payout?      @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+
+  @@index([salonId, createdAt])
+  @@index([payoutId])
+  @@index([appointmentId])
+  @@map("ledger_entries")
+}
+
+/// A batch settlement to one salon, rolling up its unpaid SALON_PAYABLE rows.
+model Payout {
+  id              String       @id @default(uuid())
+  salonId         String
+  periodStart     DateTime
+  periodEnd       DateTime
+  grossMinor      Int
+  commissionMinor Int
+  netMinor        Int
+  status          PayoutStatus @default(PENDING)
+  method          String? // BKASH | BANK
+  reference       String?
+  failureReason   String?
+  paidAt          DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  salon   Salon         @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  entries LedgerEntry[]
+
+  @@index([salonId, status])
+  @@index([status, createdAt])
+  @@map("payouts")
+}

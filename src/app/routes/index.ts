@@ -13,6 +13,8 @@ import { CounterRoutes } from "../modules/Counter/counter.route";
 import { AgentRoutes } from "../modules/Agent/agent.routes";
 import { AiRoutes } from "../modules/AI-Suggestion/ai.route";
 import { SlotRoutes } from "../modules/Slot/slot.route";
+import { WalletRoutes } from "../modules/Wallet/wallet.routes";
+import { SettlementRoutes } from "../modules/Settlement/settlement.routes";
 
 const router = express.Router();
 
@@ -72,6 +74,14 @@ const moduleRoutes = [
   {
     path: "/slots",
     route: SlotRoutes,
+  },
+  {
+    path: "/wallet",
+    route: WalletRoutes,
+  },
+  {
+    path: "/settlements",
+    route: SettlementRoutes,
   },
 ];
 

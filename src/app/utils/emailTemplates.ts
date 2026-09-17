@@ -4,7 +4,7 @@ export const getBookingConfirmationTemplate = (
   serviceName: string,
   date: string,
   time: string,
-  price: number
+  price: string
 ) => {
   return `
   <!DOCTYPE html>
@@ -114,7 +114,7 @@ export const getBookingConfirmationTemplate = (
             </tr>
             <tr>
               <td class="detail-label" style="padding: 5px 0;">Price</td>
-              <td class="detail-value" style="padding: 5px 0;">$${price}</td>
+              <td class="detail-value" style="padding: 5px 0;">${price}</td>
             </tr>
           </table>
         </div>
@@ -262,4 +262,59 @@ export const getEmailVerificationTemplate = (
     "Verify Email",
     verifyUrl,
     "If you did not create a Salon Management account, you can safely ignore this email."
+  );
+
+const moneyLayout = (heading: string, body: string) => `
+  <!DOCTYPE html>
+  <html>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+  <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333333; background-color: #f4f7f6; margin: 0; padding: 0;">
+    <div style="max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+      <div style="background-color: #2c3e50; color: #ffffff; padding: 30px 20px; text-align: center;">
+        <h1 style="margin: 0; font-size: 22px;">${heading}</h1>
+      </div>
+      <div style="padding: 30px 25px;">${body}</div>
+      <div style="background-color: #f4f7f6; padding: 18px; text-align: center; font-size: 12px; color: #7f8c8d;">
+        Salon Management
+      </div>
+    </div>
+  </body>
+  </html>
+`;
+
+export const getWalletTopupTemplate = (
+  customerName: string,
+  amount: string,
+  availableBalance: string
+) =>
+  moneyLayout(
+    "Top-up successful",
+    `<p>Hi ${customerName},</p>
+     <p><strong>${amount}</strong> has been added to your wallet.</p>
+     <p>Available balance: <strong>${availableBalance}</strong></p>
+     <p style="color:#7f8c8d;font-size:13px;">Your balance is used to hold booking deposits. Nothing is charged until you complete or miss an appointment.</p>`
+  );
+
+export const getDepositReleasedTemplate = (
+  customerName: string,
+  amount: string,
+  salonName: string
+) =>
+  moneyLayout(
+    "Deposit returned",
+    `<p>Hi ${customerName},</p>
+     <p><strong>${amount}</strong> has been returned to your wallet for your cancelled booking at ${salonName}.</p>
+     <p style="color:#7f8c8d;font-size:13px;">It is available to spend straight away.</p>`
+  );
+
+export const getDepositForfeitedTemplate = (
+  customerName: string,
+  amount: string,
+  salonName: string
+) =>
+  moneyLayout(
+    "Deposit forfeited",
+    `<p>Hi ${customerName},</p>
+     <p>Your booking at ${salonName} was marked as a no-show, and the <strong>${amount}</strong> deposit has been forfeited.</p>
+     <p>Think this is wrong? You can appeal within <strong>48 hours</strong> from your bookings page and an admin will review it.</p>`
   );

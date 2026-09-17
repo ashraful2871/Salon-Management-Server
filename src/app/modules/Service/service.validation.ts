@@ -18,9 +18,15 @@ const createServiceValidation = z.object({
       "MASSAGE",
       "OTHER",
     ]),
-    price: z.number().refine((val) => val > 0, {
-      message: "Price is required and must be positive",
-    }),
+    price: z
+      .number()
+      .refine((val) => val > 0, {
+        message: "Price is required and must be positive",
+      })
+      // Stored as integer poisha, so anything finer would be silently rounded.
+      .refine((val) => Math.abs(val * 100 - Math.round(val * 100)) < 1e-9, {
+        message: "Price cannot be smaller than one poisha (0.01)",
+      }),
     duration: z.number().refine((val) => val > 0, {
       message: "Duration is required and must be positive",
     }),
@@ -49,7 +55,13 @@ const updateServiceValidation = z.object({
         "OTHER",
       ])
       .optional(),
-    price: z.number().positive().optional(),
+    price: z
+      .number()
+      .positive()
+      .refine((val) => Math.abs(val * 100 - Math.round(val * 100)) < 1e-9, {
+        message: "Price cannot be smaller than one poisha (0.01)",
+      })
+      .optional(),
     duration: z.number().positive().optional(),
     images: z.array(z.string()).optional(),
     isActive: z.boolean().optional(),

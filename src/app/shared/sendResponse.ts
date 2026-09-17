@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { addTakaFields } from '../utils/money';
 
 type TResponse<T> = {
   statusCode: number;
@@ -17,7 +18,9 @@ const sendResponse = <T>(res: Response, data: TResponse<T>) => {
     success: data.success,
     message: data.message,
     meta: data.meta,
-    data: data.data,
+    // Money lives in the database as integer poisha. Clients have always read
+    // taka, so every `<name>Minor` integer goes out with a `<name>` twin.
+    data: addTakaFields(data.data),
   });
 };
 

@@ -10,7 +10,8 @@
     "build": "tsc",
     "start": "node ./dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only ./src/server.ts",
-    "backfill:embeddings": "ts-node-dev --transpile-only ./src/scripts/backfillEmbeddings.ts"
+    "backfill:embeddings": "ts-node-dev --transpile-only ./src/scripts/backfillEmbeddings.ts",
+    "verify:payments": "ts-node-dev --transpile-only ./src/scripts/verifyPayments.ts"
   },
   "keywords": [
     "salon",

@@ -16,7 +16,7 @@ const getAdminDashboardStats = async () => {
     prisma.appointment.count(),
     prisma.payment.aggregate({
       where: { status: "COMPLETED" },
-      _sum: { amount: true },
+      _sum: { amountMinor: true },
     }),
     prisma.appointment.findMany({
       take: 10,
@@ -29,7 +29,7 @@ const getAdminDashboardStats = async () => {
           select: { name: true },
         },
         service: {
-          select: { name: true, price: true },
+          select: { name: true, priceMinor: true },
         },
       },
     }),
@@ -44,7 +44,7 @@ const getAdminDashboardStats = async () => {
     totalUsers,
     totalSalons,
     totalAppointments,
-    totalRevenue: totalRevenue._sum.amount || 0,
+    totalRevenueMinor: totalRevenue._sum.amountMinor || 0,
     recentAppointments,
     salonsByStatus,
   };
@@ -111,7 +111,7 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
         status: "COMPLETED",
         appointment: { salonId: { in: salonIds } },
       },
-      _sum: { amount: true },
+      _sum: { amountMinor: true },
     }),
     prisma.appointment.findMany({
       where: { salonId: { in: salonIds } },
@@ -125,7 +125,7 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
           select: { name: true },
         },
         service: {
-          select: { name: true, price: true },
+          select: { name: true, priceMinor: true },
         },
         staff: {
           include: {
@@ -150,7 +150,7 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
     totalAppointments,
     todayAppointments,
     pendingAppointments,
-    totalRevenue: totalRevenue._sum.amount || 0,
+    totalRevenueMinor: totalRevenue._sum.amountMinor || 0,
     recentAppointments,
     appointmentsByStatus,
   };
@@ -183,7 +183,7 @@ const getCustomerDashboardStats = async (userId: string) => {
         status: "COMPLETED",
         appointment: { customerId: userId },
       },
-      _sum: { amount: true },
+      _sum: { amountMinor: true },
     }),
     prisma.appointment.findMany({
       where: { customerId: userId },
@@ -194,7 +194,7 @@ const getCustomerDashboardStats = async (userId: string) => {
           select: { name: true, address: true },
         },
         service: {
-          select: { name: true, price: true, category: true },
+          select: { name: true, priceMinor: true, category: true },
         },
         staff: {
           include: {
@@ -216,7 +216,7 @@ const getCustomerDashboardStats = async (userId: string) => {
     totalAppointments,
     completedAppointments,
     upcomingAppointments,
-    totalSpent: totalSpent._sum.amount || 0,
+    totalSpentMinor: totalSpent._sum.amountMinor || 0,
     recentAppointments,
     appointmentsByStatus,
   };
