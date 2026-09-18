@@ -3,6 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { toMinor } from "../../utils/money";
+import { SettlementEarnings } from "./settlement.earnings";
 import { CommissionAdmin, SettlementService } from "./settlement.service";
 
 const runPayoutBatch = catchAsync(async (req: Request, res: Response) => {
@@ -59,6 +60,33 @@ const getMyPayouts = catchAsync(async (req: Request, res: Response) => {
     message: "Payouts retrieved successfully",
     meta: result.meta,
     data: { payouts: result.data, balances: result.balances },
+  });
+});
+
+/** A salon owner's full earnings view: totals, payouts, balances, line items. */
+const getMyEarnings = catchAsync(async (req: Request, res: Response) => {
+  const result = await SettlementService.getMyEarnings(
+    req.user!.userId,
+    req.query,
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Earnings retrieved successfully",
+    data: result,
+  });
+});
+
+/** The platform's own earnings, for the admin dashboard. */
+const getPlatformEarnings = catchAsync(async (_req: Request, res: Response) => {
+  const result = await SettlementEarnings.getPlatformEarnings();
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Platform earnings retrieved successfully",
+    data: result,
   });
 });
 
@@ -150,6 +178,8 @@ export const SettlementController = {
   getAllPayouts,
   updatePayoutStatus,
   getMyPayouts,
+  getMyEarnings,
+  getPlatformEarnings,
   getSalonBalance,
   getLedgerAudit,
   getCommissionRules,

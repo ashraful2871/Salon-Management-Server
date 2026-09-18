@@ -755,7 +755,7 @@ model CommissionRule {
   minAmountMinor Int      @default(0)
   maxAmountMinor Int?
   flatFeeMinor   Int?                 // e.g. 1000 = ৳10
-  percentBps     Int?                 // basis points. 800 = 8%
+  percentBps     Int?                 // basis points. 500 = 5%
   appliesTo      CommissionScope      // NEW_CUSTOMER | OFF_PEAK | ALL
   isActive       Boolean  @default(true)
 }
@@ -767,7 +767,7 @@ Platform defaults:
 | --------------------------- | ---------------------------------- |
 | Salon's own repeat customer | **0**                              |
 | New customer under ৳500     | flat ৳10                           |
-| New customer ৳500+          | 8%                                 |
+| New customer ৳500+          | 5%                                 |
 | Off-peak fill               | flat ৳10 or 5%, whichever is lower |
 
 > **The 0% on repeat customers rule is the reason salons will sign.** It changes your pitch from _"give me a cut of your business"_ to _"pay me only for money I brought you."_ Requires `Appointment.source` and a first-booking check against that salon — implement both here.

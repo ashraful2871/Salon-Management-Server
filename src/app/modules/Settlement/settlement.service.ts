@@ -8,6 +8,7 @@ import {
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { getSalonEarnings } from "./settlement.earnings";
 
 /**
  * Who is owed what, and why.
@@ -22,18 +23,18 @@ import prisma from "../../shared/prisma";
 // ---------------------------------------------------------------------------
 
 /**
- * Platform defaults, used when no CommissionRule row matches. These encode the
- * pitch: we charge for customers we brought, and nothing for the salon's own.
+ * One rate, every booking: the platform takes 10% of the bill.
  *
- *   salon's own repeat customer   0
- *   new customer                  8% of the bill
- *   off-peak fill                 5% of the bill
+ * There is no peak / off-peak split, no new-versus-repeat customer distinction
+ * and no exemption for a salon-direct booking - every completed appointment is
+ * commissioned identically, so a salon can read its own cut straight off the
+ * bill and the dashboard only ever has one number to state.
  *
  * Always a share of the bill, never a flat fee. A flat BDT 10 is a third of a
  * BDT 30 trim and a rounding error on a BDT 5,000 bridal package, so it lands
  * hardest on exactly the cheap bookings the platform wants flowing. Tune with
- * PLATFORM_COMMISSION_PERCENT / OFF_PEAK_COMMISSION_PERCENT - percent, not
- * basis points, and fractions are allowed (7.5 is valid).
+ * PLATFORM_COMMISSION_PERCENT - percent, not basis points, and fractions are
+ * allowed (7.5 is valid).
  */
 const percentToBps = (value: string | undefined, fallbackBps: number) => {
   if (value === undefined || value.trim() === "") return fallbackBps;
@@ -43,123 +44,22 @@ const percentToBps = (value: string | undefined, fallbackBps: number) => {
 };
 
 /** Read on use, not at import: dotenv runs after this module is first loaded. */
-const defaultPercentBps = () =>
-  percentToBps(process.env.PLATFORM_COMMISSION_PERCENT, 800); // 8%
-
-const offPeakPercentBps = () =>
-  percentToBps(process.env.OFF_PEAK_COMMISSION_PERCENT, 500); // 5%
+const commissionPercentBps = () =>
+  percentToBps(process.env.PLATFORM_COMMISSION_PERCENT, 1000); // 10%
 
 const bps = (amountMinor: number, basisPoints: number) =>
   Math.round((amountMinor * basisPoints) / 10000);
 
 /**
- * Off-peak is the quiet part of the Bangladeshi working week - a slot the salon
- * would most likely not have sold at all. Tune the window with OFF_PEAK_START_HOUR
- * and OFF_PEAK_END_HOUR; Friday and Saturday are always peak.
+ * What the platform charges on a completed booking. CommissionRule rows are
+ * deliberately not consulted: the rate is flat for every salon and every
+ * customer, so there is nothing left to look up per booking.
  */
-export const isOffPeak = (startsAt: Date): boolean => {
-  const day = startsAt.getDay(); // 0 Sun ... 5 Fri, 6 Sat
-  if (day === 5 || day === 6) return false;
+export const resolveCommissionMinor = (amountMinor: number): number => {
+  if (amountMinor <= 0) return 0;
 
-  // Read on use, for the same reason as the percentages above.
-  const startHour = Number(process.env.OFF_PEAK_START_HOUR ?? 11);
-  const endHour = Number(process.env.OFF_PEAK_END_HOUR ?? 16);
-
-  const hour = startsAt.getHours();
-  return hour >= startHour && hour < endHour;
-};
-
-/**
- * Has this customer completed a booking at this salon before? A salon's repeat
- * customer is never commissioned, so this decides whether we earn anything.
- */
-export const isNewCustomerForSalon = async (
-  customerId: string,
-  salonId: string,
-  excludeAppointmentId: string,
-  db: Prisma.TransactionClient = prisma,
-): Promise<boolean> => {
-  const previous = await db.appointment.findFirst({
-    where: {
-      customerId,
-      salonId,
-      status: "COMPLETED",
-      id: { not: excludeAppointmentId },
-    },
-    select: { id: true },
-  });
-
-  return previous === null;
-};
-
-const feeFromRule = (
-  rule: { flatFeeMinor: number | null; percentBps: number | null },
-  amountMinor: number,
-): number => {
-  const flat = rule.flatFeeMinor ?? null;
-  const percent =
-    rule.percentBps === null ? null : bps(amountMinor, rule.percentBps);
-
-  // Both set means "whichever is lower" - that is how the off-peak rule reads.
-  if (flat !== null && percent !== null) return Math.min(flat, percent);
-  if (flat !== null) return flat;
-  if (percent !== null) return percent;
-  return 0;
-};
-
-export const resolveCommissionMinor = async (args: {
-  salonId: string;
-  amountMinor: number;
-  isNewCustomer: boolean;
-  offPeak: boolean;
-  source: "PLATFORM" | "SALON_DIRECT";
-  db?: Prisma.TransactionClient;
-}): Promise<number> => {
-  const db = args.db ?? prisma;
-
-  // The rule that sells the platform: their own customer, their own money.
-  if (args.source === "SALON_DIRECT" || !args.isNewCustomer) return 0;
-  if (args.amountMinor <= 0) return 0;
-
-  const scopes: CommissionScope[] = [CommissionScope.ALL];
-  if (args.isNewCustomer) scopes.push(CommissionScope.NEW_CUSTOMER);
-  if (args.offPeak) scopes.push(CommissionScope.OFF_PEAK);
-
-  const rules = await db.commissionRule.findMany({
-    where: {
-      isActive: true,
-      OR: [{ salonId: args.salonId }, { salonId: null }],
-      appliesTo: { in: scopes },
-      minAmountMinor: { lte: args.amountMinor },
-      AND: [
-        {
-          OR: [
-            { maxAmountMinor: null },
-            { maxAmountMinor: { gte: args.amountMinor } },
-          ],
-        },
-      ],
-    },
-    orderBy: [{ priority: "desc" }, { minAmountMinor: "desc" }],
-  });
-
-  // A salon-specific rule always beats the platform default.
-  const winner =
-    rules.find((rule) => rule.salonId === args.salonId) ?? rules[0];
-
-  if (winner) {
-    return Math.max(0, Math.min(feeFromRule(winner, args.amountMinor), args.amountMinor));
-  }
-
-  // No configured rule - fall back to the documented platform defaults. Both
-  // bands are a straight percentage of the bill, so the fee scales with the
-  // booking instead of landing hardest on the cheapest one.
-  const fallback = bps(
-    args.amountMinor,
-    args.offPeak ? offPeakPercentBps() : defaultPercentBps(),
-  );
-
-  return Math.max(0, Math.min(fallback, args.amountMinor));
+  const fee = bps(amountMinor, commissionPercentBps());
+  return Math.max(0, Math.min(fee, amountMinor));
 };
 
 // ---------------------------------------------------------------------------
@@ -573,10 +473,103 @@ export const recordGoodwillCredit = async (
     },
   ]);
 };
+/**
+ * The whole money picture for one salon owner: the derived totals, the payouts
+ * that have been raised, what each salon is owed right now, and the bookings
+ * the most recent commission was charged on.
+ *
+ * It is one call because the earnings screen needs all four together and the
+ * frontend caches on a single tag - splitting it would let the cards and the
+ * table disagree after a payout run.
+ */
+const getMyEarnings = async (userId: string, query: any = {}) => {
+  const owner = await prisma.salonOwner.findUnique({
+    where: { userId },
+    include: { salons: { select: { id: true, name: true } } },
+  });
+
+  if (!owner) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "Only salon owners have earnings");
+  }
+
+  const salons = owner.salons;
+  const salonIds = salons.map((salon) => salon.id);
+
+  const limit = Math.min(Number(query?.limit ?? 20) || 20, 100);
+
+  if (salonIds.length === 0) {
+    return {
+      summary: await getSalonEarnings([]),
+      payouts: [],
+      balances: [],
+      salons: [],
+      recentBookings: [],
+    };
+  }
+
+  const [summary, payouts, balances, recentBookings] = await Promise.all([
+    getSalonEarnings(salonIds),
+    prisma.payout.findMany({
+      where: { salonId: { in: salonIds } },
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      include: { salon: { select: { id: true, name: true } } },
+    }),
+    Promise.all(salonIds.map((salonId) => getSalonBalance(salonId))),
+    // The line items behind the totals, so an owner can see which booking a
+    // commission came from rather than being asked to trust a single number.
+    prisma.appointment.findMany({
+      where: { salonId: { in: salonIds }, status: "COMPLETED" },
+      take: limit,
+      orderBy: { appointmentDate: "desc" },
+      select: {
+        id: true,
+        appointmentDate: true,
+        startTime: true,
+        totalMinor: true,
+        depositMinor: true,
+        depositStatus: true,
+        source: true,
+        customer: { select: { name: true } },
+        service: { select: { name: true } },
+        salon: { select: { id: true, name: true } },
+        ledgerEntries: {
+          where: { account: LedgerAccount.PLATFORM_REVENUE },
+          select: { amountMinor: true },
+        },
+      },
+    }),
+  ]);
+
+  const balanceBySalon = new Map(
+    balances.map((balance) => [balance.salonId, balance.payableMinor]),
+  );
+
+  return {
+    summary,
+    payouts,
+    balances,
+    salons: salons.map((salon) => ({
+      ...salon,
+      payableMinor: balanceBySalon.get(salon.id) ?? 0,
+    })),
+    recentBookings: recentBookings.map(({ ledgerEntries, ...booking }) => {
+      const commissionMinor = ledgerEntries.reduce(
+        (total, entry) => total + entry.amountMinor,
+        0,
+      );
+
+      return {
+        ...booking,
+        commissionMinor,
+        netMinor: booking.totalMinor - commissionMinor,
+      };
+    }),
+  };
+};
+
 export const SettlementService = {
   resolveCommissionMinor,
-  isNewCustomerForSalon,
-  isOffPeak,
   recordCompletedBooking,
   recordForfeitedDeposit,
   reverseForfeitedDeposit,
@@ -585,6 +578,7 @@ export const SettlementService = {
   getAllPayouts,
   updatePayoutStatus,
   getMyPayouts,
+  getMyEarnings,
   findUnbalancedAppointments,
   recordGoodwillCredit,
 };
@@ -592,6 +586,11 @@ export const SettlementService = {
 // ---------------------------------------------------------------------------
 // Commission rule administration
 // ---------------------------------------------------------------------------
+//
+// NOTE: these rows no longer affect what a booking is charged. The rate is a
+// flat PLATFORM_COMMISSION_PERCENT for every salon and every customer, and
+// resolveCommissionMinor does not read this table. The CRUD stays so existing
+// rows and admin screens keep working, but editing a rule changes nothing.
 
 const getCommissionRules = async (query: any) => {
   const where: Prisma.CommissionRuleWhereInput = {};

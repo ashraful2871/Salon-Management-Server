@@ -129,7 +129,8 @@ const notify = (
 
 /**
  * Completed: the deposit comes off the bill and becomes money owed to the
- * salon, less our commission. The customer pays the remainder at the counter.
+ * salon, less our flat 10% commission. The customer pays the remainder at
+ * the counter.
  */
 export const settleCompleted = async (appointmentId: string) => {
   await prisma.$transaction(
@@ -154,21 +155,9 @@ export const settleCompleted = async (appointmentId: string) => {
         });
       }
 
-      const isNewCustomer = await SettlementService.isNewCustomerForSalon(
-        appointment.customerId,
-        appointment.salonId,
-        appointment.id,
-        tx,
+      const commissionMinor = SettlementService.resolveCommissionMinor(
+        appointment.totalMinor,
       );
-
-      const commissionMinor = await SettlementService.resolveCommissionMinor({
-        salonId: appointment.salonId,
-        amountMinor: appointment.totalMinor,
-        isNewCustomer,
-        offPeak: SettlementService.isOffPeak(appointmentStartsAt(appointment)),
-        source: appointment.source,
-        db: tx,
-      });
 
       await SettlementService.recordCompletedBooking(
         tx,

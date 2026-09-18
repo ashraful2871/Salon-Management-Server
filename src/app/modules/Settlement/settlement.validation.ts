@@ -29,7 +29,7 @@ const commissionRuleBody = {
   minAmount: takaAmount.nonnegative().optional(),
   maxAmount: takaAmount.nonnegative().optional(),
   flatFee: takaAmount.nonnegative().optional(),
-  // Basis points, not money: 800 = 8%.
+  // Basis points, not money: 500 = 5%.
   percentBps: z.number().int().min(0).max(10000).nullable().optional(),
   appliesTo: z.enum(["NEW_CUSTOMER", "OFF_PEAK", "ALL"]),
   priority: z.number().int().optional(),

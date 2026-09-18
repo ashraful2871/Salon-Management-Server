@@ -14,9 +14,23 @@ router.get(
   SettlementController.getMyPayouts,
 );
 
+// The same money, with the derived totals and the bookings behind them. This is
+// what the owner's Earnings screen reads.
+router.get(
+  "/my-earnings",
+  auth(UserRole.SALON_OWNER),
+  SettlementController.getMyEarnings,
+);
+
 // ---------------------------------------------------------------------------
 // Admin
 // ---------------------------------------------------------------------------
+router.get(
+  "/platform-earnings",
+  auth(UserRole.ADMIN),
+  SettlementController.getPlatformEarnings,
+);
+
 router.get("/payouts", auth(UserRole.ADMIN), SettlementController.getAllPayouts);
 
 router.post(

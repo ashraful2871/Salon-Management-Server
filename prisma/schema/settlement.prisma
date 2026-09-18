@@ -7,7 +7,7 @@ model CommissionRule {
   minAmountMinor Int             @default(0)
   maxAmountMinor Int?
   flatFeeMinor   Int? // e.g. 1000 = BDT 10
-  percentBps     Int? // basis points. 800 = 8%
+  percentBps     Int? // basis points. 500 = 5%
   appliesTo      CommissionScope
   isActive       Boolean         @default(true)
   priority       Int             @default(0) // higher wins among equally specific rules
