@@ -506,6 +506,7 @@ const getAppointmentById = async (id: string) => {
           },
         },
       },
+      counter: true,
       payment: true,
       review: true,
     },
