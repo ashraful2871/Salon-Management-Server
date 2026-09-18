@@ -2,11 +2,15 @@ import { Server } from "http";
 import app from "./app";
 import config from "./config";
 import { seedAdmin } from "./app/seed/admin.seed";
+import { startBackgroundJobs } from "./app/jobs/scheduler";
 
 async function main() {
   try {
     // Seed admin user
     await seedAdmin();
+
+    // Reconciliation, auto no-show and wallet drift checks
+    startBackgroundJobs();
 
     const server: Server = app.listen(config.port, () => {
       console.log(`Server is running on port ${config.port}`);

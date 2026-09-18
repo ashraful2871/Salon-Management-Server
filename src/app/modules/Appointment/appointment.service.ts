@@ -1,9 +1,12 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
-import { SalonStatus, UserRole } from "@prisma/client";
+import { DepositStatus, SalonStatus, UserRole } from "@prisma/client";
 import { sendEmail } from "../../utils/emailSender";
 import { getBookingConfirmationTemplate } from "../../utils/emailTemplates";
+import { formatBDT } from "../../utils/money";
+import { WalletService } from "../Wallet/wallet.service";
+import { AppointmentDeposit } from "./appointment.deposit";
 
 const bookAppointment = async (userId: string, payload: any) => {
   // Verify user is customer
@@ -79,76 +82,122 @@ const bookAppointment = async (userId: string, payload: any) => {
     );
   }
 
-  // Transaction for double booking prevention
-  const appointment = await prisma.$transaction(async (tx) => {
-    const updatedSlot = await tx.slot.updateMany({
-      where: {
-        id: payload.slotId,
-        status: "AVAILABLE",
-        isBooked: false,
-      },
-      data: {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        status: "BOOKED",
-        isBooked: true,
-      },
-    });
+  // What this booking costs, and what it costs to not turn up. Both are frozen
+  // onto the appointment now, so a later price or policy change cannot rewrite
+  // a deal the customer already agreed to.
+  const totalMinor = service.priceMinor;
+  const depositMinor = AppointmentDeposit.resolveDepositMinor(
+    salon,
+    totalMinor,
+  );
 
-    if (updatedSlot.count === 0) {
-      throw new ApiError(
-        StatusCodes.CONFLICT,
-        "Sorry, this slot has just been booked by another customer. Please select another available slot.",
-      );
-    }
+  // Transaction for double booking prevention. The deposit hold lives in here
+  // too: if the customer cannot cover it the whole thing rolls back and the
+  // slot is released, rather than leaving a booking nobody has paid to keep.
+  const appointment = await prisma
+    .$transaction(
+      async (tx) => {
+        const updatedSlot = await tx.slot.updateMany({
+          where: {
+            id: payload.slotId,
+            status: "AVAILABLE",
+            isBooked: false,
+          },
+          data: {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-ignore
+            status: "BOOKED",
+            isBooked: true,
+          },
+        });
 
-    const createdAppointment = await tx.appointment.create({
-      data: {
-        customerId: userId,
-        salonId: payload.salonId,
-        serviceId: payload.serviceId,
-        staffId: payload.staffId || null,
-        counterId: payload.counterId,
-        appointmentDate: slot.date,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        notes: payload.notes,
-        slotId: slot.id,
-      },
-      include: {
-        salon: {
-          select: {
-            id: true,
-            name: true,
-            address: true,
-            phone: true,
+        if (updatedSlot.count === 0) {
+          throw new ApiError(
+            StatusCodes.CONFLICT,
+            "Sorry, this slot has just been booked by another customer. Please select another available slot.",
+          );
+        }
+
+        const createdAppointment = await tx.appointment.create({
+          data: {
+            customerId: userId,
+            salonId: payload.salonId,
+            serviceId: payload.serviceId,
+            staffId: payload.staffId || null,
+            counterId: payload.counterId,
+            appointmentDate: slot.date,
+            startTime: slot.startTime,
+            endTime: slot.endTime,
+            notes: payload.notes,
+            slotId: slot.id,
+            totalMinor,
+            depositMinor,
+            depositStatus:
+              depositMinor > 0 ? DepositStatus.HELD : DepositStatus.NONE,
           },
-        },
-        service: {
-          select: {
-            id: true,
-            name: true,
-            price: true,
-            duration: true,
-          },
-        },
-        staff: {
           include: {
-            user: {
+            salon: {
               select: {
                 id: true,
                 name: true,
-                profilePhoto: true,
+                address: true,
+                phone: true,
               },
             },
+            service: {
+              select: {
+                id: true,
+                name: true,
+                priceMinor: true,
+                duration: true,
+              },
+            },
+            staff: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    profilePhoto: true,
+                  },
+                },
+              },
+            },
+            counter: true,
           },
-        },
-        counter: true,
-      },
-    });
+        });
 
-    return createdAppointment;
-  });
+        if (depositMinor > 0) {
+          await WalletService.holdDeposit(
+            userId,
+            depositMinor,
+            createdAppointment.id,
+            tx,
+          );
+        }
+
+        return createdAppointment;
+      },
+      { timeout: 15000, maxWait: 10000 },
+    )
+    .catch(async (error) => {
+      // An empty wallet is not a server error - it is a prompt to top up.
+      if (
+        error instanceof ApiError &&
+        error.statusCode === StatusCodes.BAD_REQUEST &&
+        error.message.startsWith("Insufficient")
+      ) {
+        const wallet = await WalletService.getWalletSummary(userId);
+        const shortfall = Math.max(depositMinor - wallet.availableMinor, 0);
+
+        throw new ApiError(
+          StatusCodes.PAYMENT_REQUIRED,
+          `Add ${formatBDT(shortfall)} to your wallet to confirm this booking. A ${formatBDT(depositMinor)} deposit is held and returned when you turn up.`,
+        );
+      }
+
+      throw error;
+    });
 
   // Send email notification asynchronously
   if (user?.email) {
@@ -161,7 +210,9 @@ const bookAppointment = async (userId: string, payload: any) => {
       appointment.service.name,
       formattedDate,
       appointment.startTime,
-      appointment.service.price,
+      depositMinor > 0
+        ? `${formatBDT(totalMinor)} (${formatBDT(depositMinor)} deposit held, ${formatBDT(totalMinor - depositMinor)} due at the salon)`
+        : formatBDT(totalMinor),
     );
 
     // Call without await so it doesn't block the API response
@@ -320,7 +371,7 @@ const getAllAppointments = async (
           select: {
             id: true,
             name: true,
-            price: true,
+            priceMinor: true,
             duration: true,
             category: true,
           },
@@ -394,7 +445,7 @@ const getMyAppointments = async (userId: string, query: any) => {
           select: {
             id: true,
             name: true,
-            price: true,
+            priceMinor: true,
             duration: true,
             category: true,
           },
@@ -530,6 +581,12 @@ const updateAppointmentStatus = async (
     );
   }
 
+  // A no-show forfeits real money, so it is the one transition with its own
+  // guard: only the salon or an admin, and only once the slot has passed.
+  if (payload.status === "NO_SHOW") {
+    AppointmentDeposit.assertCanMarkNoShow(userRole, appointment);
+  }
+
   const result = await prisma.appointment.update({
     where: { id: appointmentId },
     data: {
@@ -548,12 +605,38 @@ const updateAppointmentStatus = async (
     });
   }
 
+  // Resolve the deposit against the outcome. Each branch is idempotent by
+  // appointment id, so a retried request cannot charge or refund twice.
+  if (payload.status === "COMPLETED") {
+    await AppointmentDeposit.settleCompleted(appointmentId);
+  } else if (payload.status === "NO_SHOW") {
+    await AppointmentDeposit.settleForfeited(appointmentId);
+  } else if (payload.status === "CANCELLED") {
+    if (userRole === UserRole.CUSTOMER) {
+      // Cancelling too late is the same cost to the salon as not turning up.
+      const inTime = AppointmentDeposit.isWithinFreeCancellation(
+        appointment,
+        appointment.salon,
+      );
+      await (inTime
+        ? AppointmentDeposit.settleReleased(appointmentId)
+        : AppointmentDeposit.settleForfeited(appointmentId));
+    } else {
+      // The salon or an admin cancelled: the customer is made whole and gets a
+      // salon-funded credit for the trouble.
+      await AppointmentDeposit.settleReleased(appointmentId, {
+        goodwill: true,
+      });
+    }
+  }
+
   return result;
 };
 
 const cancelAppointment = async (userId: string, appointmentId: string) => {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
+    include: { salon: true },
   });
 
   if (!appointment) {
@@ -574,6 +657,11 @@ const cancelAppointment = async (userId: string, appointmentId: string) => {
     );
   }
 
+  const inTime = AppointmentDeposit.isWithinFreeCancellation(
+    appointment,
+    appointment.salon,
+  );
+
   const result = await prisma.appointment.update({
     where: { id: appointmentId },
     data: { status: "CANCELLED" },
@@ -588,8 +676,63 @@ const cancelAppointment = async (userId: string, appointmentId: string) => {
     });
   }
 
-  return result;
+  // Inside the cancellation window the slot is too late to resell, so the
+  // deposit is forfeited exactly as it would be for a no-show.
+  await (inTime
+    ? AppointmentDeposit.settleReleased(appointmentId)
+    : AppointmentDeposit.settleForfeited(appointmentId));
+
+  return {
+    ...result,
+    depositRefunded: inTime,
+    cancellationWindowMin: appointment.salon.cancellationWindowMin,
+  };
 };
+
+/**
+ * What cancelling right now would cost. The frontend shows this before the
+ * confirm button, so a forfeit is never a surprise.
+ */
+const getCancellationPreview = async (
+  userId: string,
+  appointmentId: string,
+) => {
+  const appointment = await prisma.appointment.findUnique({
+    where: { id: appointmentId },
+    include: { salon: true },
+  });
+
+  if (!appointment || appointment.customerId !== userId) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
+  }
+
+  const inTime = AppointmentDeposit.isWithinFreeCancellation(
+    appointment,
+    appointment.salon,
+  );
+
+  return {
+    appointmentId,
+    startsAt: AppointmentDeposit.appointmentStartsAt(appointment),
+    cancellationWindowMin: appointment.salon.cancellationWindowMin,
+    depositMinor: appointment.depositMinor,
+    freeCancellation: inTime,
+    refundMinor: inTime ? appointment.depositMinor : 0,
+    forfeitMinor: inTime ? 0 : appointment.depositMinor,
+  };
+};
+
+const appealNoShow = async (
+  userId: string,
+  appointmentId: string,
+  reason: string,
+) => AppointmentDeposit.appealNoShow(userId, appointmentId, reason);
+
+const resolveAppeal = async (
+  adminUserId: string,
+  appointmentId: string,
+  payload: { approve: boolean; note?: string },
+) => AppointmentDeposit.resolveAppeal(adminUserId, appointmentId, payload);
 
 export const AppointmentService = {
   bookAppointment,
@@ -598,4 +741,7 @@ export const AppointmentService = {
   getAppointmentById,
   updateAppointmentStatus,
   cancelAppointment,
+  getCancellationPreview,
+  appealNoShow,
+  resolveAppeal,
 };

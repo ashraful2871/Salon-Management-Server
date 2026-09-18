@@ -1,0 +1,43 @@
+/// A customer's prepaid balance, in poisha. `balance` is a cache of the sum of
+/// this wallet's transactions and must always agree with it; the reconciliation
+/// job alerts on drift. Nothing writes here except WalletService.mutate.
+model Wallet {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  balance     Int      @default(0) // poisha, total
+  heldBalance Int      @default(0) // poisha, reserved by active deposits
+  currency    String   @default("BDT")
+  isFrozen    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+/// Append-only ledger. Rows are never updated or deleted - a correction is a
+/// new compensating row, so the history of how a balance was reached survives.
+model WalletTransaction {
+  id             String       @id @default(uuid())
+  walletId       String
+  type           WalletTxType
+  amount         Int // SIGNED poisha. credits +, debits -
+  balanceAfter   Int // running balance, for audit
+  heldAfter      Int
+  description    String
+  referenceType  String? // "APPOINTMENT" | "TOPUP" | "PAYOUT"
+  referenceId    String?
+  /// Derived from the thing being paid for (`hold:<appointmentId>`), so a
+  /// retry, a double-click or a replayed webhook can never apply twice.
+  idempotencyKey String?      @unique
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt])
+  @@index([referenceType, referenceId])
+  @@map("wallet_transactions")
+}

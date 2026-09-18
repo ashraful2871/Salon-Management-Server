@@ -20,17 +20,29 @@ model Salon {
   ownerId        String
   isDeleted      Boolean                     @default(false)
   embedding      Unsupported("vector(768)")?
-  createdAt      DateTime                    @default(now())
-  updatedAt      DateTime                    @updatedAt
+
+  // Deposit policy. `depositPercent` wins when set, otherwise `depositMinor`;
+  // either way the result is clamped to the platform min/max in
+  // appointment.deposit.ts. A deposit is what makes a no-show cost something.
+  depositMinor          Int  @default(3000) // BDT 30
+  depositPercent        Int? // of the service price, when a flat fee is too blunt
+  cancellationWindowMin Int  @default(120) // free cancellation up to 2h before
+  noShowSalonSharePct   Int  @default(70) // salon's cut of a forfeited deposit
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  owner        SalonOwner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  services     Service[]
-  staff        Staff[]
-  counters     Counter[]
-  appointments Appointment[]
-  reviews      Review[]
-  slots        Slot[]
+  owner           SalonOwner       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  services        Service[]
+  staff           Staff[]
+  counters        Counter[]
+  appointments    Appointment[]
+  reviews         Review[]
+  slots           Slot[]
+  commissionRules CommissionRule[]
+  ledgerEntries   LedgerEntry[]
+  payouts         Payout[]
 
   @@map("salons")
 }

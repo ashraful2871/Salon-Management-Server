@@ -1,10 +1,47 @@
 import bcrypt from 'bcryptjs';
 import { StatusCodes } from 'http-status-codes';
-import { Prisma } from '@prisma/client';
+import { Prisma, TokenType } from '@prisma/client';
 import ApiError from '../../Error/error';
 import prisma from '../../shared/prisma';
 import { jwtHelpers } from '../../helper/jwtHelper';
 import config from '../../../config';
+import { sendEmail } from '../../utils/emailSender';
+import {
+  getEmailVerificationTemplate,
+  getPasswordResetTemplate,
+} from '../../utils/emailTemplates';
+import {
+  EMAIL_VERIFY_TTL_HOURS,
+  PASSWORD_RESET_TTL_MINUTES,
+  RESEND_COOLDOWN_SECONDS,
+  consumeToken,
+  isWithinCooldown,
+  issueToken,
+} from '../../utils/verificationToken';
+
+/**
+ * Issues an EMAIL_VERIFY token and emails the link. Never throws — a dead SMTP
+ * server must not fail the registration it is attached to.
+ */
+const sendVerificationEmail = async (user: { id: string; email: string; name: string }) => {
+  try {
+    const rawToken = await issueToken(
+      user.id,
+      TokenType.EMAIL_VERIFY,
+      EMAIL_VERIFY_TTL_HOURS * 60 * 60 * 1000
+    );
+
+    const verifyUrl = `${config.frontend_url}/verify-email?token=${rawToken}`;
+
+    await sendEmail(
+      user.email,
+      'Verify your email - Salon Management',
+      getEmailVerificationTemplate(user.name, verifyUrl, EMAIL_VERIFY_TTL_HOURS)
+    );
+  } catch (error) {
+    console.error('Failed to send verification email:', error);
+  }
+};
 
 const register = async (payload: any) => {
   // Check if user already exists
@@ -77,6 +114,8 @@ const register = async (payload: any) => {
     config.jwt.refresh_token_secret as string,
     config.jwt.refresh_token_expires_in as string
   );
+
+  await sendVerificationEmail(result);
 
   return {
     user: result,
@@ -234,6 +273,7 @@ const getMyProfile = async (userId: string) => {
       gender: true,
       dateOfBirth: true,
       address: true,
+      emailVerified: true,
       createdAt: true,
       updatedAt: true,
       admin: true,
@@ -257,10 +297,125 @@ const getMyProfile = async (userId: string) => {
   return user;
 };
 
+/**
+ * Always resolves, whether or not the email belongs to an account. The
+ * controller returns the same 200 either way, so this endpoint cannot be used
+ * to discover which addresses are registered.
+ */
+const forgotPassword = async (payload: { email: string }) => {
+  const user = await prisma.user.findUnique({
+    where: { email: payload.email },
+  });
+
+  if (!user || user.isDeleted || user.status !== 'ACTIVE') {
+    return null;
+  }
+
+  // Same 60s throttle as resend — stops the endpoint being used as a mail bomb.
+  if (await isWithinCooldown(user.id, TokenType.PASSWORD_RESET)) {
+    return null;
+  }
+
+  const rawToken = await issueToken(
+    user.id,
+    TokenType.PASSWORD_RESET,
+    PASSWORD_RESET_TTL_MINUTES * 60 * 1000
+  );
+
+  const resetUrl = `${config.frontend_url}/reset-password?token=${rawToken}`;
+
+  await sendEmail(
+    user.email,
+    'Reset your password - Salon Management',
+    getPasswordResetTemplate(user.name, resetUrl, PASSWORD_RESET_TTL_MINUTES)
+  );
+
+  return null;
+};
+
+const resetPassword = async (payload: { token: string; newPassword: string }) => {
+  const userId = await consumeToken(payload.token, TokenType.PASSWORD_RESET);
+
+  if (!userId) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      'This reset link is invalid or has expired. Please request a new one.'
+    );
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId, isDeleted: false },
+  });
+
+  if (!user) {
+    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+  }
+
+  const hashedPassword = await bcrypt.hash(payload.newPassword, 12);
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { password: hashedPassword },
+  });
+
+  return null;
+};
+
+const verifyEmail = async (payload: { token: string }) => {
+  const userId = await consumeToken(payload.token, TokenType.EMAIL_VERIFY);
+
+  if (!userId) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      'This verification link is invalid or has expired. Please request a new one.'
+    );
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { emailVerified: true },
+  });
+
+  return null;
+};
+
+/** Like forgotPassword, this resolves silently for unknown or already-verified addresses. */
+const resendVerification = async (payload: { email: string }) => {
+  const user = await prisma.user.findUnique({
+    where: { email: payload.email },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      status: true,
+      isDeleted: true,
+      emailVerified: true,
+    },
+  });
+
+  if (!user || user.isDeleted || user.status !== 'ACTIVE' || user.emailVerified) {
+    return null;
+  }
+
+  // Drop the request rather than answering 429: a distinct status here would
+  // tell an attacker the address exists and is unverified.
+  if (await isWithinCooldown(user.id, TokenType.EMAIL_VERIFY, RESEND_COOLDOWN_SECONDS)) {
+    return null;
+  }
+
+  await sendVerificationEmail(user);
+
+  return null;
+};
+
 export const AuthService = {
   register,
   login,
   refreshToken,
   changePassword,
   getMyProfile,
+  forgotPassword,
+  resetPassword,
+  verifyEmail,
+  resendVerification,
 };

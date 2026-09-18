@@ -4,7 +4,7 @@ export const getBookingConfirmationTemplate = (
   serviceName: string,
   date: string,
   time: string,
-  price: number
+  price: string
 ) => {
   return `
   <!DOCTYPE html>
@@ -114,7 +114,7 @@ export const getBookingConfirmationTemplate = (
             </tr>
             <tr>
               <td class="detail-label" style="padding: 5px 0;">Price</td>
-              <td class="detail-value" style="padding: 5px 0;">$${price}</td>
+              <td class="detail-value" style="padding: 5px 0;">${price}</td>
             </tr>
           </table>
         </div>
@@ -130,3 +130,191 @@ export const getBookingConfirmationTemplate = (
   </html>
   `;
 };
+
+const baseLayout = (
+  heading: string,
+  body: string,
+  ctaLabel: string,
+  ctaUrl: string,
+  footerNote: string
+) => `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${heading}</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333333;
+        background-color: #f4f7f6;
+        margin: 0;
+        padding: 0;
+      }
+      .container {
+        max-width: 600px;
+        margin: 40px auto;
+        background-color: #ffffff;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+      }
+      .header {
+        background-color: #2c3e50;
+        color: #ffffff;
+        padding: 30px 20px;
+        text-align: center;
+      }
+      .header h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 600;
+        letter-spacing: 1px;
+      }
+      .content {
+        padding: 40px 30px;
+      }
+      .button {
+        display: inline-block;
+        padding: 12px 24px;
+        background-color: #3498db;
+        color: #ffffff;
+        text-decoration: none;
+        border-radius: 4px;
+        font-weight: 600;
+        margin: 20px 0;
+      }
+      .fallback {
+        word-break: break-all;
+        font-size: 13px;
+        color: #555555;
+        background-color: #f8f9fa;
+        border-left: 4px solid #3498db;
+        padding: 12px 16px;
+        border-radius: 0 4px 4px 0;
+      }
+      .footer {
+        text-align: center;
+        padding: 20px;
+        font-size: 14px;
+        color: #888888;
+        background-color: #fdfdfd;
+        border-top: 1px solid #eeeeee;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>${heading}</h1>
+      </div>
+      <div class="content">
+        ${body}
+        <p style="text-align:center;">
+          <a class="button" href="${ctaUrl}">${ctaLabel}</a>
+        </p>
+        <p style="font-size:14px;color:#555555;">
+          If the button does not work, copy and paste this link into your browser:
+        </p>
+        <p class="fallback">${ctaUrl}</p>
+      </div>
+      <div class="footer">
+        ${footerNote}
+      </div>
+    </div>
+  </body>
+  </html>
+`;
+
+export const getPasswordResetTemplate = (
+  userName: string,
+  resetUrl: string,
+  expiresInMinutes: number
+) =>
+  baseLayout(
+    "Reset Your Password",
+    `
+      <p style="font-size:18px;">Hi ${userName},</p>
+      <p>We received a request to reset the password for your Salon Management account.
+      Click the button below to choose a new one.</p>
+      <p><strong>This link expires in ${expiresInMinutes} minutes and can only be used once.</strong></p>
+    `,
+    "Reset Password",
+    resetUrl,
+    "If you did not request a password reset, you can safely ignore this email — your password will not change."
+  );
+
+export const getEmailVerificationTemplate = (
+  userName: string,
+  verifyUrl: string,
+  expiresInHours: number
+) =>
+  baseLayout(
+    "Verify Your Email",
+    `
+      <p style="font-size:18px;">Hi ${userName},</p>
+      <p>Welcome to Salon Management! Please confirm your email address so we can
+      keep your account secure and send you booking updates.</p>
+      <p><strong>This link expires in ${expiresInHours} hours and can only be used once.</strong></p>
+    `,
+    "Verify Email",
+    verifyUrl,
+    "If you did not create a Salon Management account, you can safely ignore this email."
+  );
+
+const moneyLayout = (heading: string, body: string) => `
+  <!DOCTYPE html>
+  <html>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+  <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333333; background-color: #f4f7f6; margin: 0; padding: 0;">
+    <div style="max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+      <div style="background-color: #2c3e50; color: #ffffff; padding: 30px 20px; text-align: center;">
+        <h1 style="margin: 0; font-size: 22px;">${heading}</h1>
+      </div>
+      <div style="padding: 30px 25px;">${body}</div>
+      <div style="background-color: #f4f7f6; padding: 18px; text-align: center; font-size: 12px; color: #7f8c8d;">
+        Salon Management
+      </div>
+    </div>
+  </body>
+  </html>
+`;
+
+export const getWalletTopupTemplate = (
+  customerName: string,
+  amount: string,
+  availableBalance: string
+) =>
+  moneyLayout(
+    "Top-up successful",
+    `<p>Hi ${customerName},</p>
+     <p><strong>${amount}</strong> has been added to your wallet.</p>
+     <p>Available balance: <strong>${availableBalance}</strong></p>
+     <p style="color:#7f8c8d;font-size:13px;">Your balance is used to hold booking deposits. Nothing is charged until you complete or miss an appointment.</p>`
+  );
+
+export const getDepositReleasedTemplate = (
+  customerName: string,
+  amount: string,
+  salonName: string
+) =>
+  moneyLayout(
+    "Deposit returned",
+    `<p>Hi ${customerName},</p>
+     <p><strong>${amount}</strong> has been returned to your wallet for your cancelled booking at ${salonName}.</p>
+     <p style="color:#7f8c8d;font-size:13px;">It is available to spend straight away.</p>`
+  );
+
+export const getDepositForfeitedTemplate = (
+  customerName: string,
+  amount: string,
+  salonName: string
+) =>
+  moneyLayout(
+    "Deposit forfeited",
+    `<p>Hi ${customerName},</p>
+     <p>Your booking at ${salonName} was marked as a no-show, and the <strong>${amount}</strong> deposit has been forfeited.</p>
+     <p>Think this is wrong? You can appeal within <strong>48 hours</strong> from your bookings page and an admin will review it.</p>`
+  );

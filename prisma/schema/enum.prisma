@@ -85,3 +85,75 @@ enum SlotStatus {
   CANCELLED
   COMPLETED
 }
+
+enum TokenType {
+  PASSWORD_RESET
+  EMAIL_VERIFY
+}
+
+enum WalletTxType {
+  TOPUP // + gateway top-up
+  TOPUP_REVERSAL // - failed or charged-back top-up
+  DEPOSIT_HOLD // 0 net; moves balance -> heldBalance
+  DEPOSIT_RELEASE // 0 net; moves heldBalance -> balance
+  DEPOSIT_APPLIED // - deposit consumed against a completed booking
+  DEPOSIT_FORFEIT // - deposit lost to a no-show
+  REFUND // + platform or salon initiated refund
+  CASHBACK // + loyalty reward
+  GOODWILL_CREDIT // + compensation when a salon cancels
+  ADJUSTMENT // +/- manual admin correction, always with a reason
+  WITHDRAWAL // - cash-out, if it is ever allowed
+}
+
+enum IntentPurpose {
+  WALLET_TOPUP
+  BOOKING
+}
+
+enum IntentStatus {
+  INITIATED
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum DepositStatus {
+  NONE
+  HELD
+  RELEASED
+  APPLIED
+  FORFEITED
+}
+
+enum AppealStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AppointmentSource {
+  PLATFORM // discovered and booked through us - commission may apply
+  SALON_DIRECT // the salon's own customer - never commissioned
+}
+
+enum LedgerAccount {
+  SALON_PAYABLE
+  PLATFORM_REVENUE
+  CUSTOMER_WALLET
+  GATEWAY_CLEARING
+}
+
+enum CommissionScope {
+  NEW_CUSTOMER
+  OFF_PEAK
+  ALL
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}

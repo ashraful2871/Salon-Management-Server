@@ -45,9 +45,47 @@ const refreshTokenValidation = z.object({
   }),
 });
 
+const forgotPasswordValidation = z.object({
+  body: z.object({
+    email: z
+      .string()
+      .nonempty({ message: 'Email is required' })
+      .email('Invalid email format'),
+  }),
+});
+
+const resetPasswordValidation = z.object({
+  body: z.object({
+    token: z.string().nonempty({ message: 'Reset token is required' }),
+    newPassword: z
+      .string()
+      .nonempty({ message: 'New password is required' })
+      .min(6, 'Password must be at least 6 characters'),
+  }),
+});
+
+const verifyEmailValidation = z.object({
+  body: z.object({
+    token: z.string().nonempty({ message: 'Verification token is required' }),
+  }),
+});
+
+const resendVerificationValidation = z.object({
+  body: z.object({
+    email: z
+      .string()
+      .nonempty({ message: 'Email is required' })
+      .email('Invalid email format'),
+  }),
+});
+
 export const AuthValidation = {
   registerValidation,
   loginValidation,
   changePasswordValidation,
   refreshTokenValidation,
+  forgotPasswordValidation,
+  resetPasswordValidation,
+  verifyEmailValidation,
+  resendVerificationValidation,
 };

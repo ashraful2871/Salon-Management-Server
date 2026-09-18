@@ -26,7 +26,26 @@ const updateAppointmentStatusValidation = z.object({
   }),
 });
 
+const appealNoShowValidation = z.object({
+  body: z.object({
+    reason: z
+      .string()
+      .trim()
+      .nonempty({ message: "Tell us what happened" })
+      .max(1000),
+  }),
+});
+
+const resolveAppealValidation = z.object({
+  body: z.object({
+    approve: z.boolean(),
+    note: z.string().max(1000).optional(),
+  }),
+});
+
 export const AppointmentValidation = {
   bookAppointmentValidation,
   updateAppointmentStatusValidation,
+  appealNoShowValidation,
+  resolveAppealValidation,
 };

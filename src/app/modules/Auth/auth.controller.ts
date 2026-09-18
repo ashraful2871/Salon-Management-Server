@@ -7,12 +7,20 @@ import { AuthService } from "./auth.service";
 const register = catchAsync(async (req: Request, res: Response) => {
   const result = await AuthService.register(req.body);
 
-  // Set refresh token in HTTP-only cookie
+  // Registration signs the user straight in, so it hands back the same cookie
+  // and token pair as login rather than sending them to the login screen.
   res.cookie("refreshToken", result.refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
     maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
+  });
+
+  res.cookie("accessToken", result.accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
 
   sendResponse(res, {
@@ -22,6 +30,7 @@ const register = catchAsync(async (req: Request, res: Response) => {
     data: {
       user: result.user,
       accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
     },
   });
 });
@@ -106,6 +115,53 @@ const getMyProfile = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const forgotPassword = catchAsync(async (req: Request, res: Response) => {
+  await AuthService.forgotPassword(req.body);
+
+  // Deliberately identical whether or not the address is registered.
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      'If an account exists for that email, a password reset link has been sent.',
+    data: null,
+  });
+});
+
+const resetPassword = catchAsync(async (req: Request, res: Response) => {
+  await AuthService.resetPassword(req.body);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: 'Password reset successfully. You can now sign in.',
+    data: null,
+  });
+});
+
+const verifyEmail = catchAsync(async (req: Request, res: Response) => {
+  await AuthService.verifyEmail(req.body);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: 'Email verified successfully',
+    data: null,
+  });
+});
+
+const resendVerification = catchAsync(async (req: Request, res: Response) => {
+  await AuthService.resendVerification(req.body);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      'If that account exists and is not yet verified, a new verification link has been sent.',
+    data: null,
+  });
+});
+
 export const AuthController = {
   register,
   login,
@@ -113,4 +169,8 @@ export const AuthController = {
   changePassword,
   logout,
   getMyProfile,
+  forgotPassword,
+  resetPassword,
+  verifyEmail,
+  resendVerification,
 };

@@ -1,7 +1,7 @@
 model Payment {
   id            String        @id @default(uuid())
   appointmentId String        @unique
-  amount        Float
+  amountMinor   Int // poisha
   paymentMethod PaymentMethod
   status        PaymentStatus @default(PENDING)
   transactionId String?
@@ -13,4 +13,32 @@ model Payment {
   appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 
   @@map("payments")
+}
+
+/// Created before the customer leaves for the gateway, so a payment that comes
+/// back has something to be matched against. `transactionId` is our id and is
+/// what we send as SSLCommerz's `tran_id`; `gatewayRef` is theirs.
+model PaymentIntent {
+  id            String        @id @default(uuid())
+  transactionId String        @unique
+  userId        String
+  purpose       IntentPurpose
+  amountMinor   Int
+  status        IntentStatus  @default(INITIATED)
+  provider      String        @default("SSLCOMMERZ")
+  gatewayRef    String?
+  method        String?
+  sessionKey    String?
+  rawResponse   Json?
+  referenceId   String? // appointmentId when purpose = BOOKING
+  failureReason String?
+  completedAt   DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("payment_intents")
 }
