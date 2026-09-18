@@ -26,14 +26,28 @@ import prisma from "../../shared/prisma";
  * pitch: we charge for customers we brought, and nothing for the salon's own.
  *
  *   salon's own repeat customer   0
- *   new customer under BDT 500    flat BDT 10
- *   new customer BDT 500+         8%
- *   off-peak fill                 flat BDT 10 or 5%, whichever is lower
+ *   new customer                  8% of the bill
+ *   off-peak fill                 5% of the bill
+ *
+ * Always a share of the bill, never a flat fee. A flat BDT 10 is a third of a
+ * BDT 30 trim and a rounding error on a BDT 5,000 bridal package, so it lands
+ * hardest on exactly the cheap bookings the platform wants flowing. Tune with
+ * PLATFORM_COMMISSION_PERCENT / OFF_PEAK_COMMISSION_PERCENT - percent, not
+ * basis points, and fractions are allowed (7.5 is valid).
  */
-const DEFAULT_FLAT_FEE_MINOR = 1000; // BDT 10
-const DEFAULT_PERCENT_BPS = 800; // 8%
-const NEW_CUSTOMER_BAND_MINOR = 50000; // BDT 500
-const OFF_PEAK_PERCENT_BPS = 500; // 5%
+const percentToBps = (value: string | undefined, fallbackBps: number) => {
+  if (value === undefined || value.trim() === "") return fallbackBps;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return fallbackBps;
+  return Math.round(parsed * 100);
+};
+
+/** Read on use, not at import: dotenv runs after this module is first loaded. */
+const defaultPercentBps = () =>
+  percentToBps(process.env.PLATFORM_COMMISSION_PERCENT, 800); // 8%
+
+const offPeakPercentBps = () =>
+  percentToBps(process.env.OFF_PEAK_COMMISSION_PERCENT, 500); // 5%
 
 const bps = (amountMinor: number, basisPoints: number) =>
   Math.round((amountMinor * basisPoints) / 10000);
@@ -43,15 +57,16 @@ const bps = (amountMinor: number, basisPoints: number) =>
  * would most likely not have sold at all. Tune the window with OFF_PEAK_START_HOUR
  * and OFF_PEAK_END_HOUR; Friday and Saturday are always peak.
  */
-const OFF_PEAK_START_HOUR = Number(process.env.OFF_PEAK_START_HOUR ?? 11);
-const OFF_PEAK_END_HOUR = Number(process.env.OFF_PEAK_END_HOUR ?? 16);
-
 export const isOffPeak = (startsAt: Date): boolean => {
   const day = startsAt.getDay(); // 0 Sun ... 5 Fri, 6 Sat
   if (day === 5 || day === 6) return false;
 
+  // Read on use, for the same reason as the percentages above.
+  const startHour = Number(process.env.OFF_PEAK_START_HOUR ?? 11);
+  const endHour = Number(process.env.OFF_PEAK_END_HOUR ?? 16);
+
   const hour = startsAt.getHours();
-  return hour >= OFF_PEAK_START_HOUR && hour < OFF_PEAK_END_HOUR;
+  return hour >= startHour && hour < endHour;
 };
 
 /**
@@ -136,15 +151,13 @@ export const resolveCommissionMinor = async (args: {
     return Math.max(0, Math.min(feeFromRule(winner, args.amountMinor), args.amountMinor));
   }
 
-  // No configured rule - fall back to the documented platform defaults.
-  const fallback = args.offPeak
-    ? Math.min(
-        DEFAULT_FLAT_FEE_MINOR,
-        bps(args.amountMinor, OFF_PEAK_PERCENT_BPS),
-      )
-    : args.amountMinor < NEW_CUSTOMER_BAND_MINOR
-      ? DEFAULT_FLAT_FEE_MINOR
-      : bps(args.amountMinor, DEFAULT_PERCENT_BPS);
+  // No configured rule - fall back to the documented platform defaults. Both
+  // bands are a straight percentage of the bill, so the fee scales with the
+  // booking instead of landing hardest on the cheapest one.
+  const fallback = bps(
+    args.amountMinor,
+    args.offPeak ? offPeakPercentBps() : defaultPercentBps(),
+  );
 
   return Math.max(0, Math.min(fallback, args.amountMinor));
 };

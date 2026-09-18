@@ -229,6 +229,9 @@ const holdDeposit = (
       referenceType: "APPOINTMENT",
       referenceId: appointmentId,
       idempotencyKey: `hold:${appointmentId}`,
+      // A hold moves money into heldBalance without changing the total, so
+      // the row carries amount 0. Record the delta or the ledger shows ৳0.
+      metadata: { holdDeltaMinor: amountMinor },
     },
     tx,
   );
@@ -249,6 +252,7 @@ const releaseDeposit = (
       referenceType: "APPOINTMENT",
       referenceId: appointmentId,
       idempotencyKey: `release:${appointmentId}`,
+      metadata: { holdDeltaMinor: -amountMinor },
     },
     tx,
   );
