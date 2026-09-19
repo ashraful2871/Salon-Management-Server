@@ -178,13 +178,45 @@ All of them go through `sendEmail`, so all of them are fixed by this change:
 | What you see | What it means | Fix |
 |---|---|---|
 | `[email] no email provider is configured` | Neither `RESEND_API_KEY` nor `SMTP_HOST`+`SMTP_USER` is set. | Set `RESEND_API_KEY` on the host. Check for a typo in the variable name. |
-| `FAILED ... via resend: API key is invalid` | Key wrong, revoked, or copied with whitespace. | Regenerate in Resend, re-paste. |
+| `FAILED ... via resend: API key is invalid` | Resend does not recognise the string at all — revoked, regenerated, truncated on paste, or from a different Resend account. | See [5.1](#51-api-key-is-invalid-in-production-but-fine-locally). |
 | `FAILED ... via resend: The <domain> domain is not verified` | `EMAIL_FROM` uses a domain Resend does not own yet. | Finish Step 2, or use `onboarding@resend.dev` temporarily. |
 | `FAILED ... via resend: You can only send testing emails to your own email address` | You are on `onboarding@resend.dev` and sent to someone else. | Verify your own domain. |
 | `FAILED ... via resend: HTTP 429` | Rate limit (2 requests/second on free). Already retried three times with backoff. | Usually transient. If constant, upgrade the Resend plan. |
 | `FAILED ... via smtp: ETIMEDOUT ... (port 587 appears to be blocked from this host)` | You are on SMTP in production. | Set `RESEND_API_KEY` / `EMAIL_PROVIDER=resend`. |
 | `ENETUNREACH ... 2607:f8b0:...` | The old IPv6 fallback. Should not reappear — SMTP is now pinned to IPv4. | Confirm the deploy actually picked up the new code. |
 | Send reports OK but nothing arrives | Accepted by the provider, lost after. | Check the spam folder, then Resend's **Emails** log — it shows delivered / bounced / complained per message. |
+
+### 5.1 `API key is invalid` in production but fine locally
+
+The same code sending the same email works from a laptop and is refused on
+Render. That difference is the key itself, never the code — the request reached
+Resend over HTTPS and Resend answered `401`.
+
+The boot log now prints a fingerprint of the key it loaded:
+
+```
+[email] sending through resend as Salon Management <no-reply@salon.ashrafulash.com> with key re_ab12c...7f3d (36 chars)
+```
+
+Compare it with the key in **Resend → API Keys**, which is masked the same way.
+
+| Fingerprint says | What happened | Fix |
+|---|---|---|
+| `not set` | The variable never reached the process. | Check the spelling on Render — it is `RESEND_API_KEY`, and env changes only apply to a **new deploy**. |
+| A prefix that is not the one in Resend | The deployed key is a different, older key. | Paste the current one, or create a new key and use that. |
+| Noticeably shorter than the local key | The paste was truncated. | Re-copy the whole value. Resend shows a key once, so if it is gone, create a new one. |
+| Matches, still rejected | The key was revoked, or belongs to a different Resend account than the verified domain. | Create a fresh key **in the account that owns `salon.ashrafulash.com`**. |
+
+Two things the code now handles so they stop being candidates: a value pasted
+with surrounding quotes or a trailing newline is trimmed by `src/config/index.ts`
+(with a `[config]` warning, because other tools reading that variable will not
+clean it), and a value that does not start with `re_` is called out at boot
+rather than on the first send.
+
+Worth knowing while you are in the Render dashboard: **editing an environment
+variable triggers a redeploy, and the running instance keeps the old value until
+that deploy finishes.** A key fixed two minutes ago and a failure logged one
+minute ago are not a contradiction.
 
 ### Checking whether a port is blocked
 

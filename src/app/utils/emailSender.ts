@@ -1,5 +1,5 @@
 import config from "../../config";
-import { resendProvider } from "./email/resend.provider";
+import { keyFingerprint, resendProvider } from "./email/resend.provider";
 import { smtpProvider } from "./email/smtp.provider";
 import { EmailProvider, EmailResult } from "./email/types";
 
@@ -56,7 +56,31 @@ const activeProvider = () => {
     resolved = selectProvider();
 
     if (resolved) {
-      console.log(`[email] sending through ${resolved.name} as ${config.email.from}`);
+      console.log(
+        `[email] sending through ${resolved.name} as ${config.email.from}${
+          resolved.name === "resend" ? ` with key ${keyFingerprint()}` : ""
+        }`,
+      );
+
+      // Said at boot rather than on the first send, because a key of the wrong
+      // shape is a deploy mistake and the person who can fix it is watching the
+      // deploy log, not the wallet top-up that fails an hour later.
+      if (
+        resolved.name === "resend" &&
+        !config.email.resendApiKey.startsWith("re_")
+      ) {
+        console.error(
+          `[email] RESEND_API_KEY does not start with "re_" - that is not a Resend API key. Check the value on the host; a truncated paste or the wrong variable pasted in will be rejected as "API key is invalid".`,
+        );
+      }
+
+      const fromAddress = config.email.from.match(/<([^>]+)>/)?.[1] ?? config.email.from;
+
+      if (resolved.name === "resend" && fromAddress.endsWith("@resend.dev")) {
+        console.warn(
+          `[email] sending from ${fromAddress} - Resend's shared test sender only delivers to the address that owns the Resend account. Set EMAIL_FROM to an address on your verified domain.`,
+        );
+      }
     } else {
       console.error(
         "[email] no email provider is configured - set RESEND_API_KEY (recommended) or the SMTP_* variables. Emails will be skipped.",

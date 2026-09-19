@@ -73,7 +73,9 @@ Appointments are booked against a pre-generated `Slot`, never a raw time. `bookA
 
 ## Rate limiting
 
-`authLimiter` (10 / 15 min / IP) guards every credential and token endpoint; `aiSearchLimiter` (15 / min / IP) guards `POST /ai/search` because each call spends Gemini quota twice. Both live in `src/app/middlewares/rateLimiter.ts`.
+`authLimiter` (10 / 15 min / IP) guards every credential and token endpoint; `aiSearchLimiter` (15 / min / IP) guards `POST /ai/search` because each call spends Gemini quota twice; `paymentLimiter` (20 / 15 min / IP) guards the wallet and payment routes. All three live in `src/app/middlewares/rateLimiter.ts`.
+
+All of them key on `req.ip`, which only resolves to the real client because `src/app.ts` sets `trust proxy` to `1` — Render forwards over plain HTTP and puts the client in `X-Forwarded-For`. Without it every visitor shares one bucket and express-rate-limit logs `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on every request. Keep it at `1` (one hop); `true` would let a client spoof the header and get a fresh bucket per request.
 
 ## Email
 

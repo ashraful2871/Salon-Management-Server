@@ -42,8 +42,42 @@ interface Config {
 }
 //
 
-const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-const apiUrl = process.env.API_URL || "http://localhost:5000";
+/**
+ * Reads an env var the way a dashboard actually hands it over.
+ *
+ * `dotenv` already trims and unquotes what it parses out of a `.env` file, but
+ * nothing does that for a variable typed into Render's Environment tab. A value
+ * pasted there keeps whatever came with it - a trailing space or newline from
+ * the clipboard, or the surrounding quotes copied along with a `.env` line - and
+ * that is the difference between a secret that works locally and the same
+ * secret rejected in production. `Bearer "re_abc "` is not `Bearer re_abc`.
+ */
+const env = (name: string): string => {
+  const raw = process.env[name];
+
+  if (raw === undefined) return "";
+
+  const trimmed = raw.trim();
+
+  // Only a matched pair, so an API key that legitimately contains a quote in
+  // the middle is left alone.
+  const unquoted =
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+      ? trimmed.slice(1, -1).trim()
+      : trimmed;
+
+  if (unquoted !== raw) {
+    console.warn(
+      `[config] ${name} had surrounding whitespace or quotes; using the cleaned value. Fix it at the source - other tools reading this variable will not clean it.`,
+    );
+  }
+
+  return unquoted;
+};
+
+const frontendUrl = env("FRONTEND_URL") || "http://localhost:3000";
+const apiUrl = env("API_URL") || "http://localhost:5000";
 
 /**
  * Production always sets EMAIL_FROM. The fallbacks only keep a developer who
@@ -52,9 +86,9 @@ const apiUrl = process.env.API_URL || "http://localhost:5000";
  * Resend's shared test sender is the equivalent for the API.
  */
 const emailFrom =
-  process.env.EMAIL_FROM ||
-  (process.env.SMTP_USER && !process.env.RESEND_API_KEY
-    ? `Salon Management <${process.env.SMTP_USER}>`
+  env("EMAIL_FROM") ||
+  (env("SMTP_USER") && !env("RESEND_API_KEY")
+    ? `Salon Management <${env("SMTP_USER")}>`
     : "Salon Management <onboarding@resend.dev>");
 
 export default {
@@ -86,14 +120,16 @@ export default {
    * delivers to the account owner's own address.
    */
   email: {
-    provider: process.env.EMAIL_PROVIDER || "",
+    provider: env("EMAIL_PROVIDER"),
     from: emailFrom,
-    resendApiKey: process.env.RESEND_API_KEY || "",
+    resendApiKey: env("RESEND_API_KEY"),
     smtp: {
-      host: process.env.SMTP_HOST || "",
-      port: Number(process.env.SMTP_PORT) || 587,
-      user: process.env.SMTP_USER || "",
-      pass: process.env.SMTP_PASS || "",
+      host: env("SMTP_HOST"),
+      port: Number(env("SMTP_PORT")) || 587,
+      user: env("SMTP_USER"),
+      // Gmail app passwords are shown in four groups of four; the spaces are
+      // display only and are rejected if they are sent.
+      pass: env("SMTP_PASS").replace(/\s+/g, ""),
     },
   },
 

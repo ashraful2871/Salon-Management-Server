@@ -28,6 +28,32 @@ const isRetryable = (status: number) => status === 429 || status >= 500;
 
 const backoffMs = (attempt: number) => 400 * 2 ** attempt;
 
+/**
+ * Enough of the key to tell two of them apart in a log, never enough to use.
+ * Resend's dashboard masks stored keys the same way, so the two can be compared
+ * side by side - which is the only way to answer "is the key I pasted into
+ * Render the key I am looking at in Resend?" without printing a secret.
+ */
+export const keyFingerprint = () => {
+  const key = config.email.resendApiKey;
+
+  if (!key) return "not set";
+
+  return `${key.slice(0, 7)}...${key.slice(-4)} (${key.length} chars)`;
+};
+
+/**
+ * 401 and 403 are never about this request - the same key will fail the same
+ * way forever - so say what to go and look at instead of leaving four words in
+ * the log. `API key is invalid` in particular means Resend does not recognise
+ * the string at all, which is nearly always a key that was revoked, regenerated
+ * after the deploy, or truncated when it was pasted.
+ */
+const authHint = (status: number) =>
+  status === 401 || status === 403
+    ? ` [key ${keyFingerprint()}, from "${config.email.from}"] - Resend rejected the credential itself. Compare that fingerprint with the key shown in Resend -> API Keys: if it does not match, the deployed RESEND_API_KEY is stale or was pasted incompletely. If it does match, the key was revoked or belongs to a different Resend account than the verified domain.`
+    : "";
+
 const readError = async (response: Response) => {
   try {
     const body = (await response.json()) as { message?: string; name?: string };
@@ -71,7 +97,7 @@ export const resendProvider: EmailProvider = {
           return { ok: true, provider: "resend", id: body?.id };
         }
 
-        lastError = await readError(response);
+        lastError = `${await readError(response)}${authHint(response.status)}`;
 
         if (!isRetryable(response.status)) {
           return { ok: false, provider: "resend", error: lastError };
