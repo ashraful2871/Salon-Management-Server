@@ -45,7 +45,7 @@ route  →  auth("ROLE",…) | optionalAuth()  →  validateRequest(zodSchema)  
 
 Login and register both set `accessToken` and `refreshToken` as httpOnly cookies *and* return them in the body. Access tokens are signed with `JWT_SECRET`, refresh tokens with `REFRESH_TOKEN_SECRET`; the `ACCESS_TOKEN_SECRET` / `ACCESS_TOKEN_EXPIRES_IN` entries in `.env.example` are not read by `src/config/index.ts`.
 
-Password-reset and email-verify tokens (`src/app/utils/verificationToken.ts`): random 32 bytes emailed once, only the sha256 persisted in `verification_tokens`; issuing a token consumes all outstanding tokens of that type for the user, and `consumeToken` marks used via a conditional `updateMany` so concurrent redemptions cannot both win. `sendEmail` swallows its own errors by design — SMTP failure must never fail the registration or booking it is attached to.
+Password-reset and email-verify tokens (`src/app/utils/verificationToken.ts`): random 32 bytes emailed once, only the sha256 persisted in `verification_tokens`; issuing a token consumes all outstanding tokens of that type for the user, and `consumeToken` marks used via a conditional `updateMany` so concurrent redemptions cannot both win. `sendEmail` never throws by design — a mail failure must never fail the registration or booking it is attached to; it logs loudly and returns `{ ok, provider, error }` instead (see **Email** below).
 
 Roles are `CUSTOMER | STAFF | SALON_OWNER | ADMIN | AGENT`. **AGENT** is an area-scoped moderator (created by ADMIN via `POST /agents/create`, carries division/district/area) who can approve salon status within their area; it predates and is missing from `README.md`/`functionality.md`.
 
@@ -75,8 +75,16 @@ Appointments are booked against a pre-generated `Slot`, never a raw time. `bookA
 
 `authLimiter` (10 / 15 min / IP) guards every credential and token endpoint; `aiSearchLimiter` (15 / min / IP) guards `POST /ai/search` because each call spends Gemini quota twice. Both live in `src/app/middlewares/rateLimiter.ts`.
 
+## Email
+
+One entry point, `sendEmail(to, subject, html)` in `src/app/utils/emailSender.ts`, over a provider interface in `src/app/utils/email/`: `resend.provider.ts` (HTTPS API) and `smtp.provider.ts` (nodemailer). `EMAIL_PROVIDER` pins one; left empty, the first provider with credentials wins, which prefers Resend.
+
+**Production cannot use SMTP here.** Render blocks outbound port 587, so nodemailer fails with `ETIMEDOUT` and then `ENETUNREACH` on the IPv6 fallback — an HTTPS API on 443 is the only transport that gets out. SMTP is for local development. `EMAIL_FROM` must be an address on a domain verified with the provider.
+
+`npm run test:email -- you@example.com` sends one real email and reports which provider handled it; run it on the deployed host before debugging anything else. `EMAIL_SETUP.md` is the full setup and troubleshooting guide.
+
 ## Environment
 
-`src/config/index.ts` loads `.env` from `process.cwd()` and exposes `env`, `port`, `database_url`, `frontend_url`, `jwt.*`, `cloudinary.*`. Several values are read directly from `process.env` elsewhere instead of through config: all `SMTP_*`, all `GEMINI_*`/`AI_SEARCH_*`, and `NODE_ENV` in cookie and error-stack logic.
+`src/config/index.ts` loads `.env` from `process.cwd()` and exposes `env`, `port`, `database_url`, `frontend_url`, `jwt.*`, `cloudinary.*`, `email.*`, `sslcz.*`. Several values are still read directly from `process.env` elsewhere instead of through config: all `GEMINI_*`/`AI_SEARCH_*`, and `NODE_ENV` in cookie and error-stack logic.
 
 Cloudinary credentials are wired into config but **no upload code exists yet** — `multer` and `cloudinary` are installed and unused. Image fields (`Salon.images`, `User.profilePhoto`) are plain URL strings supplied by the client.
