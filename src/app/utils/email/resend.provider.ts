@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import config from "../../../config";
 import { EmailMessage, EmailProvider, EmailResult } from "./types";
 
@@ -39,20 +40,39 @@ export const keyFingerprint = () => {
 
   if (!key) return "not set";
 
-  return `${key.slice(0, 7)}...${key.slice(-4)} (${key.length} chars)`;
+  // The hash covers the middle of the key, which the visible ends do not: two
+  // keys can share a prefix and a suffix and still differ where it counts.
+  // `npm run check:email` prints the same hash, so a laptop and a deploy can be
+  // compared byte for byte without either of them printing a secret.
+  const hash = crypto.createHash("sha256").update(key).digest("hex").slice(0, 8);
+
+  return `${key.slice(0, 7)}...${key.slice(-4)} (${key.length} chars) #${hash}`;
 };
 
 /**
- * 401 and 403 are never about this request - the same key will fail the same
- * way forever - so say what to go and look at instead of leaving four words in
- * the log. `API key is invalid` in particular means Resend does not recognise
- * the string at all, which is nearly always a key that was revoked, regenerated
- * after the deploy, or truncated when it was pasted.
+ * 401 and 403 are never about this request - the same key fails the same way
+ * forever - so name the next step instead of leaving four words in the log.
+ *
+ * The two are different problems and the distinction is worth keeping:
+ *   401  Resend does not recognise the string at all. Deleted, regenerated, or
+ *        never copied in full - a key is shown once, at creation, and the API
+ *        Keys list afterwards only shows a masked version of it.
+ *   403  The key is real; it is not allowed to send this. Usually EMAIL_FROM is
+ *        on a domain verified in a different Resend account than the key's.
  */
-const authHint = (status: number) =>
-  status === 401 || status === 403
-    ? ` [key ${keyFingerprint()}, from "${config.email.from}"] - Resend rejected the credential itself. Compare that fingerprint with the key shown in Resend -> API Keys: if it does not match, the deployed RESEND_API_KEY is stale or was pasted incompletely. If it does match, the key was revoked or belongs to a different Resend account than the verified domain.`
-    : "";
+const authHint = (status: number) => {
+  const context = ` [key ${keyFingerprint()}, from "${config.email.from}"]`;
+
+  if (status === 401) {
+    return `${context} - Resend does not recognise this key, so it no longer exists in any account. Create a new one (Resend -> API Keys -> Create API Key), copy it from the creation dialog, verify it with "npm run check:email -- <key>", then set RESEND_API_KEY on the host.`;
+  }
+
+  if (status === 403) {
+    return `${context} - the key is valid but not permitted to send this. Check that EMAIL_FROM's domain is verified in the same Resend account the key belongs to.`;
+  }
+
+  return "";
+};
 
 const readError = async (response: Response) => {
   try {

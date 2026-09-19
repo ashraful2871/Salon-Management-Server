@@ -46,7 +46,8 @@ API now sends through an HTTP email API and keeps SMTP only for local use.
 | `src/app/utils/email/resend.provider.ts` | Resend over its HTTPS API. Plain `fetch`, no SDK dependency. Retries 429 and 5xx three times with backoff. |
 | `src/app/utils/email/smtp.provider.ts` | Nodemailer, kept for local development. Now pinned to IPv4, with 10s connect timeouts instead of nodemailer's 2-minute default, and one pooled transporter instead of a new one per email. |
 | `src/config/index.ts` | New `email` block; `SMTP_*` now reads through config like everything else. |
-| `src/scripts/testEmail.ts` | `npm run test:email -- you@example.com` |
+| `src/scripts/testEmail.ts` | `npm run test:email -- you@example.com` — sends one real email through whichever provider the environment selects. |
+| `src/scripts/checkEmailKey.ts` | `npm run check:email [-- re_xxx]` — asks Resend whether a key is alive and which domains it may send as. Sends nothing. |
 
 Two behaviours worth knowing:
 
@@ -188,35 +189,60 @@ All of them go through `sendEmail`, so all of them are fixed by this change:
 
 ### 5.1 `API key is invalid` in production but fine locally
 
-The same code sending the same email works from a laptop and is refused on
-Render. That difference is the key itself, never the code — the request reached
-Resend over HTTPS and Resend answered `401`.
+Read that sentence carefully before debugging it: **"fine locally" usually means
+local is not using Resend at all.** With no `RESEND_API_KEY` in `.env`, provider
+selection falls through to SMTP, so a laptop sends over Gmail and only the
+deploy ever exercises the Resend path. The two environments are not running the
+same code path, and the Resend key has never actually been proven anywhere.
 
-The boot log now prints a fingerprint of the key it loaded:
+Check which transport each side picked — it is the first `[email]` line at boot:
 
 ```
-[email] sending through resend as Salon Management <no-reply@salon.ashrafulash.com> with key re_ab12c...7f3d (36 chars)
+[email] sending through smtp   as Salon Management <you@gmail.com>                      <- local
+[email] sending through resend as Salon Management <no-reply@salon.ashrafulash.com> with key re_ab12c...7f3d (36 chars) #9f4e21a0   <- Render
 ```
 
-Compare it with the key in **Resend → API Keys**, which is masked the same way.
+Then verify the key itself, which takes one request and sends nothing:
 
-| Fingerprint says | What happened | Fix |
+```bash
+npm run check:email -- re_xxxxxxxxxxxx
+```
+
+| It prints | What happened | Fix |
 |---|---|---|
-| `not set` | The variable never reached the process. | Check the spelling on Render — it is `RESEND_API_KEY`, and env changes only apply to a **new deploy**. |
-| A prefix that is not the one in Resend | The deployed key is a different, older key. | Paste the current one, or create a new key and use that. |
-| Noticeably shorter than the local key | The paste was truncated. | Re-copy the whole value. Resend shows a key once, so if it is gone, create a new one. |
-| Matches, still rejected | The key was revoked, or belongs to a different Resend account than the verified domain. | Create a fresh key **in the account that owns `salon.ashrafulash.com`**. |
+| `DEAD - Resend does not recognise this key` | The key was deleted, regenerated, or never copied in full. **A key is shown once, in the creation dialog** — the API Keys list afterwards shows a masked version that is not a usable credential. | Create a new key and copy it from that dialog. |
+| `ALIVE` + the domain is missing from the list | The key belongs to a different Resend account than the one that verified the domain. | Create the key in the account that owns `salon.ashrafulash.com`. |
+| `ALIVE` + the domain is `pending` | DNS is not finished. | Complete the records from Step 2. |
+| `Ready: this key may send as ...` | The credential is good. | Set it on Render. A remaining failure is delivery, not auth — check Resend's **Emails** log. |
 
-Two things the code now handles so they stop being candidates: a value pasted
-with surrounding quotes or a trailing newline is trimmed by `src/config/index.ts`
-(with a `[config]` warning, because other tools reading that variable will not
-clean it), and a value that does not start with `re_` is called out at boot
-rather than on the first send.
+A fingerprint of `not set` in the boot line means the variable never reached the
+process: check the spelling (`RESEND_API_KEY`), and remember that **an
+environment change on Render only takes effect on the next deploy** — the
+running instance keeps the old value until then. The `#hash` is the first eight
+hex of the key's SHA-256; `check:email` prints the same one, so a laptop and a
+deploy can be compared byte for byte without either printing a secret.
 
-Worth knowing while you are in the Render dashboard: **editing an environment
-variable triggers a redeploy, and the running instance keeps the old value until
-that deploy finishes.** A key fixed two minutes ago and a failure logged one
-minute ago are not a contradiction.
+Two causes the code now rules out on its own: a value pasted with surrounding
+quotes or a trailing newline is cleaned by `src/config/index.ts` (with a
+`[config]` warning, since other tools reading that variable will not clean it),
+and a value that does not start with `re_` is called out at boot rather than on
+the first send an hour later.
+
+#### Proving it end to end before you deploy
+
+Resend failures are slow to debug through Render because every attempt costs a
+deploy. Do it locally instead — temporarily, in `.env`:
+
+```bash
+EMAIL_PROVIDER=resend
+EMAIL_FROM=Salon Management <no-reply@salon.ashrafulash.com>
+RESEND_API_KEY=re_xxxxxxxxxxxx
+```
+
+`npm run test:email -- you@example.com` now takes the same path Render takes.
+Once that arrives, the key and the domain are both proven and the only thing
+left to do is paste the key into Render. Remove `EMAIL_PROVIDER=resend` locally
+afterwards if you prefer Gmail for development.
 
 ### Checking whether a port is blocked
 
