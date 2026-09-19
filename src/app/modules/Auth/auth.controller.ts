@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
+import ApiError from "../../Error/error";
+import { clearAuthCookies, setAuthCookies } from "../../utils/authCookies";
 import { AuthService } from "./auth.service";
 
 const register = catchAsync(async (req: Request, res: Response) => {
@@ -9,19 +11,7 @@ const register = catchAsync(async (req: Request, res: Response) => {
 
   // Registration signs the user straight in, so it hands back the same cookie
   // and token pair as login rather than sending them to the login screen.
-  res.cookie("refreshToken", result.refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
-  });
-
-  res.cookie("accessToken", result.accessToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  });
+  setAuthCookies(res, result);
 
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,
@@ -38,20 +28,7 @@ const register = catchAsync(async (req: Request, res: Response) => {
 const login = catchAsync(async (req: Request, res: Response) => {
   const result = await AuthService.login(req.body);
 
-  // Set refresh token in HTTP-only cookie
-  res.cookie("refreshToken", result.refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
-  });
-  // Set access token in HTTP-only cookie
-  res.cookie("accessToken", result.accessToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  });
+  setAuthCookies(res, result);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -64,10 +41,30 @@ const login = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+/**
+ * The token is looked for in the cookie first and the body second.
+ *
+ * `req.body || req.cookies` - what this used to do - never reached the cookie:
+ * `express.json()` leaves `req.body` as an object on every request, and an
+ * object is truthy, so a browser-only caller always destructured `undefined`
+ * out of an empty body. Both sources are supported on purpose: the browser
+ * sends the cookie, while the Next.js server holds the token itself and posts
+ * it in the body.
+ */
 const refreshToken = catchAsync(async (req: Request, res: Response) => {
-  const { refreshToken } = req.body || req.cookies;
+  const token: unknown =
+    req.cookies?.refreshToken ?? req.body?.refreshToken ?? null;
 
-  const result = await AuthService.refreshToken(refreshToken);
+  if (typeof token !== "string" || !token.trim()) {
+    throw new ApiError(
+      StatusCodes.UNAUTHORIZED,
+      "Refresh token is required. Please sign in again.",
+    );
+  }
+
+  const result = await AuthService.refreshToken(token.trim());
+
+  setAuthCookies(res, result);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -91,7 +88,9 @@ const changePassword = catchAsync(async (req: Request, res: Response) => {
 });
 
 const logout = catchAsync(async (_req: Request, res: Response) => {
-  res.clearCookie("refreshToken");
+  // Both cookies, with the same options they were written with - clearing only
+  // the refresh token left a still-valid access token behind for up to an hour.
+  clearAuthCookies(res);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

@@ -177,33 +177,48 @@ const login = async (payload: { email: string; password: string }) => {
   };
 };
 
+/**
+ * Trades a refresh token for a fresh pair.
+ *
+ * Both tokens are reissued, not just the access token, so a session slides
+ * forward for as long as the user keeps using the site instead of dying on a
+ * fixed 90-day wall. The claims are rebuilt from the database row rather than
+ * copied out of the old token, so a role or email changed since sign-in is
+ * picked up on the next refresh.
+ *
+ * Every failure here is a 401: the caller's only sensible response to "this
+ * session is over" is to drop the cookies and show the signed-out UI, and a
+ * 403 or 404 would have it report a different kind of problem to the user.
+ */
 const refreshToken = async (token: string) => {
-  // Verify token
-  const verifiedUser = jwtHelpers.verifyToken(
-    token,
-    config.jwt.refresh_token_secret as string
-  );
+  let verifiedUser;
 
-  // Check if user exists
-  const user = await prisma.user.findUnique({
+  try {
+    verifiedUser = jwtHelpers.verifyToken(
+      token,
+      config.jwt.refresh_token_secret as string
+    );
+  } catch {
+    throw new ApiError(
+      StatusCodes.UNAUTHORIZED,
+      'Your session has expired. Please sign in again.'
+    );
+  }
+
+  const user = await prisma.user.findFirst({
     where: {
       id: verifiedUser.userId,
       isDeleted: false,
     },
   });
 
-  if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
-  }
-
-  if (user.status !== 'ACTIVE') {
+  if (!user || user.status !== 'ACTIVE') {
     throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      `User account is ${user.status.toLowerCase()}`
+      StatusCodes.UNAUTHORIZED,
+      'Your session is no longer valid. Please sign in again.'
     );
   }
 
-  // Generate new access token
   const jwtPayload = {
     userId: user.id,
     email: user.email,
@@ -216,8 +231,21 @@ const refreshToken = async (token: string) => {
     config.jwt.expires_in as string
   );
 
+  const newRefreshToken = jwtHelpers.createToken(
+    jwtPayload,
+    config.jwt.refresh_token_secret as string,
+    config.jwt.refresh_token_expires_in as string
+  );
+
   return {
     accessToken,
+    refreshToken: newRefreshToken,
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    },
   };
 };
 

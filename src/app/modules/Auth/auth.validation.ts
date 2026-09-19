@@ -39,10 +39,18 @@ const changePasswordValidation = z.object({
   }),
 });
 
+/**
+ * Optional, because the token is just as likely to arrive in the `refreshToken`
+ * cookie as in the body. Requiring it here rejected every browser-only refresh
+ * with a 400 before the controller ever looked at the cookie; the controller
+ * now answers 401 when neither source has one.
+ */
 const refreshTokenValidation = z.object({
-  body: z.object({
-    refreshToken: z.string().nonempty({ message: "Refresh token is required" }),
-  }),
+  body: z
+    .object({
+      refreshToken: z.string().optional(),
+    })
+    .optional(),
 });
 
 const forgotPasswordValidation = z.object({
