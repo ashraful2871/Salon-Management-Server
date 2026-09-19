@@ -282,18 +282,59 @@ const moneyLayout = (heading: string, body: string) => `
   </html>
 `;
 
-export const getWalletTopupTemplate = (
-  customerName: string,
-  amount: string,
-  availableBalance: string
-) =>
-  moneyLayout(
-    "Top-up successful",
-    `<p>Hi ${customerName},</p>
-     <p><strong>${amount}</strong> has been added to your wallet.</p>
-     <p>Available balance: <strong>${availableBalance}</strong></p>
-     <p style="color:#7f8c8d;font-size:13px;">Your balance is used to hold booking deposits. Nothing is charged until you complete or miss an appointment.</p>`
+/**
+ * The top-up receipt. This is the customer's proof of payment, so every field
+ * they might have to quote to support belongs on it - above all the
+ * transaction id, which is the same string the wallet page shows and the only
+ * handle either side has on a gateway payment.
+ */
+export const getWalletTopupInvoiceTemplate = (invoice: {
+  customerName: string;
+  transactionId: string;
+  amount: string;
+  availableBalance: string;
+  method: string;
+  gatewayRef: string | null;
+  paidAt: Date;
+  provider: string;
+}) => {
+  const paidAt = invoice.paidAt.toLocaleString("en-GB", {
+    timeZone: "Asia/Dhaka",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  const row = (label: string, value: string, mono = false) => `
+    <tr>
+      <td style="padding:10px 0;color:#7f8c8d;font-size:13px;border-bottom:1px solid #eef1f3;">${label}</td>
+      <td style="padding:10px 0;text-align:right;font-size:13px;color:#2c3e50;border-bottom:1px solid #eef1f3;${
+        mono ? "font-family:'Courier New',monospace;word-break:break-all;" : ""
+      }">${value}</td>
+    </tr>`;
+
+  return moneyLayout(
+    "Payment receipt",
+    `<p>Hi ${invoice.customerName},</p>
+     <p>We have received your payment. <strong>${invoice.amount}</strong> has been added to your wallet.</p>
+
+     <div style="background:#f8f9fa;border:1px solid #e8ecef;border-radius:6px;padding:18px 20px;margin:22px 0;">
+       <p style="margin:0 0 6px;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7f8c8d;">Amount paid</p>
+       <p style="margin:0;font-size:28px;font-weight:bold;color:#27ae60;">${invoice.amount}</p>
+     </div>
+
+     <table style="width:100%;border-collapse:collapse;border-top:1px solid #eef1f3;">
+       ${row("Transaction ID", invoice.transactionId, true)}
+       ${row("Gateway reference", invoice.gatewayRef || "&mdash;", true)}
+       ${row("Payment method", invoice.method)}
+       ${row("Paid via", invoice.provider)}
+       ${row("Date", paidAt)}
+       ${row("Status", '<span style="color:#27ae60;font-weight:bold;">PAID</span>')}
+       ${row("Available balance", `<strong>${invoice.availableBalance}</strong>`)}
+     </table>
+
+     <p style="color:#7f8c8d;font-size:13px;margin-top:22px;">Keep the transaction ID &mdash; it is what support needs to trace this payment. Your balance is used to hold booking deposits; nothing is charged until you complete or miss an appointment.</p>`
   );
+};
 
 export const getDepositReleasedTemplate = (
   customerName: string,
