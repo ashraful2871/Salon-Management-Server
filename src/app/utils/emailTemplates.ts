@@ -4,8 +4,72 @@ export const getBookingConfirmationTemplate = (
   serviceName: string,
   date: string,
   time: string,
-  price: string
+  price: string,
+  // Trailing and optional so the six positional arguments above keep their
+  // meaning. Bookings made before tokens existed simply have none.
+  identity?: {
+    token?: string | null;
+    serialNumber?: number | null;
+    staffName?: string | null;
+    counterName?: string | null;
+  }
 ) => {
+  const token = identity?.token;
+  const serialNumber = identity?.serialNumber;
+
+  // The one thing the customer has to have at the counter, so it gets its own
+  // block above the details rather than a row inside them. Tables and inline
+  // styles throughout: Gmail and Outlook drop flexbox and most of a <style>.
+  const identityBlock =
+    token || serialNumber != null
+      ? `
+        <div class="token-card" style="background-color: #2c3e50; color: #ffffff; border-radius: 6px; padding: 20px 16px 12px; margin: 25px 0; text-align: center;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              ${
+                serialNumber != null
+                  ? `<td style="text-align: center; padding: 4px 8px;">
+                      <div class="token-label" style="font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #a9b7c6; margin-bottom: 6px;">Your serial</div>
+                      <div class="token-serial" style="font-size: 30px; font-weight: 700; line-height: 1.1; color: #ffffff;">#${serialNumber}</div>
+                    </td>`
+                  : ""
+              }
+              ${
+                token
+                  ? `<td style="text-align: center; padding: 4px 8px;">
+                      <div class="token-label" style="font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #a9b7c6; margin-bottom: 6px;">Booking token</div>
+                      <div class="token-code" style="font-family: 'Courier New', Courier, monospace; font-size: 24px; font-weight: 700; letter-spacing: 3px; line-height: 1.2; color: #ffffff;">${token}</div>
+                    </td>`
+                  : ""
+              }
+            </tr>
+          </table>
+          <p class="token-hint" style="font-size: 12px; color: #a9b7c6; margin: 14px 0 0;">
+            Show this${token ? " token" : ""} at the salon counter${
+              serialNumber != null
+                ? " - your serial is the order you will be called in"
+                : ""
+            }.
+          </p>
+        </div>`
+      : "";
+
+  const extraRows = `${
+    identity?.staffName
+      ? `<tr>
+          <td class="detail-label" style="padding: 5px 0;">Stylist</td>
+          <td class="detail-value" style="padding: 5px 0;">${identity.staffName}</td>
+        </tr>`
+      : ""
+  }${
+    identity?.counterName
+      ? `<tr>
+          <td class="detail-label" style="padding: 5px 0;">Counter</td>
+          <td class="detail-value" style="padding: 5px 0;">${identity.counterName}</td>
+        </tr>`
+      : ""
+  }`;
+
   return `
   <!DOCTYPE html>
   <html>
@@ -87,6 +151,40 @@ export const getBookingConfirmationTemplate = (
         font-weight: 600;
         margin-top: 20px;
       }
+      .token-card {
+        background-color: #2c3e50;
+        color: #ffffff;
+        border-radius: 6px;
+        padding: 20px 16px 12px;
+        margin: 25px 0;
+        text-align: center;
+      }
+      .token-label {
+        font-size: 11px;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        color: #a9b7c6;
+        margin-bottom: 6px;
+      }
+      .token-serial {
+        font-size: 30px;
+        font-weight: 700;
+        line-height: 1.1;
+        color: #ffffff;
+      }
+      .token-code {
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 3px;
+        line-height: 1.2;
+        color: #ffffff;
+      }
+      .token-hint {
+        font-size: 12px;
+        color: #a9b7c6;
+        margin: 14px 0 0;
+      }
     </style>
   </head>
   <body>
@@ -96,10 +194,32 @@ export const getBookingConfirmationTemplate = (
       </div>
       <div class="content">
         <div class="greeting">Hi ${customerName},</div>
-        <p>Your appointment at <strong>${salonName}</strong> has been successfully booked. Here are your booking details:</p>
-        
+        <p>Your appointment at <strong>${salonName}</strong> has been confirmed. Here are your booking details:</p>
+
+        ${identityBlock}
+
         <div class="booking-details">
           <table style="width: 100%; border-collapse: collapse;">
+            ${
+              token
+                ? `<tr>
+              <td class="detail-label" style="padding: 5px 0;">Token</td>
+              <td class="detail-value" style="padding: 5px 0;">${token}</td>
+            </tr>`
+                : ""
+            }
+            ${
+              serialNumber != null
+                ? `<tr>
+              <td class="detail-label" style="padding: 5px 0;">Serial</td>
+              <td class="detail-value" style="padding: 5px 0;">#${serialNumber}</td>
+            </tr>`
+                : ""
+            }
+            <tr>
+              <td class="detail-label" style="padding: 5px 0;">Salon</td>
+              <td class="detail-value" style="padding: 5px 0;">${salonName}</td>
+            </tr>
             <tr>
               <td class="detail-label" style="padding: 5px 0;">Service</td>
               <td class="detail-value" style="padding: 5px 0;">${serviceName}</td>
@@ -112,13 +232,14 @@ export const getBookingConfirmationTemplate = (
               <td class="detail-label" style="padding: 5px 0;">Time</td>
               <td class="detail-value" style="padding: 5px 0;">${time}</td>
             </tr>
+            ${extraRows}
             <tr>
               <td class="detail-label" style="padding: 5px 0;">Price</td>
               <td class="detail-value" style="padding: 5px 0;">${price}</td>
             </tr>
           </table>
         </div>
-        
+
         <p>We look forward to seeing you!</p>
         <p>If you need to reschedule or cancel your appointment, please contact the salon or use our platform.</p>
       </div>

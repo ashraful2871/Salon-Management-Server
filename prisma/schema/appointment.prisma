@@ -15,6 +15,13 @@ model Appointment {
   updatedAt          DateTime          @updatedAt
   slotId             String?
 
+  /// What the customer is called at the counter. `token` is the short code on
+  /// the confirmation ("TKN-A8F2"); `serialNumber` is their place in the queue
+  /// for this salon + service + day, so #1 is served before #2. Both are
+  /// optional because bookings made before this existed have neither.
+  token        String? @unique
+  serialNumber Int?
+
   // Money, captured at booking time so a later price change cannot rewrite
   // what this customer agreed to pay.
   totalMinor    Int           @default(0)
@@ -45,5 +52,7 @@ model Appointment {
 
   @@index([salonId, status])
   @@index([customerId, salonId])
+  // Backs the "what serial comes next" lookup on every booking.
+  @@index([salonId, serviceId, appointmentDate])
   @@map("appointments")
 }

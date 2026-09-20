@@ -1,12 +1,19 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
-import { DepositStatus, SalonStatus, UserRole } from "@prisma/client";
+import {
+  AppointmentStatus,
+  DepositStatus,
+  SalonStatus,
+  UserRole,
+} from "@prisma/client";
 import { sendEmail } from "../../utils/emailSender";
 import { getBookingConfirmationTemplate } from "../../utils/emailTemplates";
 import { formatBDT } from "../../utils/money";
+import { hasSlotStarted } from "../../utils/slotTime";
 import { WalletService } from "../Wallet/wallet.service";
 import { AppointmentDeposit } from "./appointment.deposit";
+import { AppointmentIdentity } from "./appointment.identity";
 
 const bookAppointment = async (userId: string, payload: any) => {
   // Verify user is customer
@@ -35,6 +42,17 @@ const bookAppointment = async (userId: string, payload: any) => {
     throw new ApiError(
       StatusCodes.CONFLICT,
       "This slot is no longer available. Please select another time.",
+    );
+  }
+
+  // The list is filtered, but a stale tab or a hand-edited request can still
+  // arrive for a time that has already come and gone. Selling it would create a
+  // booking that the auto-start job immediately marks IN_PROGRESS and the
+  // no-show sweep then forfeits - a deposit lost to a slot nobody could attend.
+  if (hasSlotStarted(slot)) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "That time has already passed. Please select a later slot.",
     );
   }
 
@@ -118,6 +136,18 @@ const bookAppointment = async (userId: string, payload: any) => {
           );
         }
 
+        // Queue identity. The serial is allocated under an advisory lock keyed on
+        // salon + service + day, so two customers booking the same morning at
+        // the same moment cannot both be told they are #4.
+        // Sequential, not Promise.all: these share one transaction connection,
+        // and the serial allocation takes a lock the other query must not race.
+        const token = await AppointmentIdentity.generateToken(tx);
+        const serialNumber = await AppointmentIdentity.nextSerialNumber(tx, {
+          salonId: payload.salonId,
+          serviceId: payload.serviceId,
+          appointmentDate: slot.date,
+        });
+
         const createdAppointment = await tx.appointment.create({
           data: {
             customerId: userId,
@@ -130,6 +160,11 @@ const bookAppointment = async (userId: string, payload: any) => {
             endTime: slot.endTime,
             notes: payload.notes,
             slotId: slot.id,
+            token,
+            serialNumber,
+            // The deposit is taken here and now, so there is nothing left for
+            // the salon to confirm - a paid booking is a confirmed booking.
+            status: AppointmentStatus.CONFIRMED,
             totalMinor,
             depositMinor,
             depositStatus:
@@ -213,6 +248,12 @@ const bookAppointment = async (userId: string, payload: any) => {
       depositMinor > 0
         ? `${formatBDT(totalMinor)} (${formatBDT(depositMinor)} deposit held, ${formatBDT(totalMinor - depositMinor)} due at the salon)`
         : formatBDT(totalMinor),
+      {
+        token: appointment.token,
+        serialNumber: appointment.serialNumber,
+        staffName: appointment.staff?.user?.name,
+        counterName: appointment.counter?.name,
+      },
     );
 
     // Call without await so it doesn't block the API response
@@ -588,6 +629,12 @@ const updateAppointmentStatus = async (
     AppointmentDeposit.assertCanMarkNoShow(userRole, appointment);
   }
 
+  // A customer cancelling through this endpoint gets the same time check as the
+  // dedicated cancel route - otherwise it is a way around it.
+  if (payload.status === "CANCELLED" && userRole === UserRole.CUSTOMER) {
+    AppointmentDeposit.assertCancellable(appointment);
+  }
+
   const result = await prisma.appointment.update({
     where: { id: appointmentId },
     data: {
@@ -614,14 +661,15 @@ const updateAppointmentStatus = async (
     await AppointmentDeposit.settleForfeited(appointmentId);
   } else if (payload.status === "CANCELLED") {
     if (userRole === UserRole.CUSTOMER) {
-      // Cancelling too late is the same cost to the salon as not turning up.
+      // Cancelling too late costs the salon a slot it cannot refill, so it
+      // costs the customer a slice of the deposit - but only a slice.
       const inTime = AppointmentDeposit.isWithinFreeCancellation(
         appointment,
         appointment.salon,
       );
       await (inTime
         ? AppointmentDeposit.settleReleased(appointmentId)
-        : AppointmentDeposit.settleForfeited(appointmentId));
+        : AppointmentDeposit.settleLateCancelled(appointmentId));
     } else {
       // The salon or an admin cancelled: the customer is made whole and gets a
       // salon-funded credit for the trouble.
@@ -651,14 +699,22 @@ const cancelAppointment = async (userId: string, appointmentId: string) => {
     );
   }
 
-  if (["COMPLETED", "CANCELLED"].includes(appointment.status)) {
+  if (
+    ["COMPLETED", "CANCELLED", "IN_PROGRESS", "NO_SHOW"].includes(
+      appointment.status,
+    )
+  ) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      `Cannot cancel ${appointment.status.toLowerCase()} appointment`,
+      `Cannot cancel ${appointment.status.toLowerCase().replace("_", " ")} appointment`,
     );
   }
 
-  const inTime = AppointmentDeposit.isWithinFreeCancellation(
+  // Past the start time there is nothing to cancel - only a completion or a
+  // no-show. This has to come before any write.
+  AppointmentDeposit.assertCancellable(appointment);
+
+  const quote = AppointmentDeposit.cancellationQuote(
     appointment,
     appointment.salon,
   );
@@ -677,15 +733,21 @@ const cancelAppointment = async (userId: string, appointmentId: string) => {
     });
   }
 
-  // Inside the cancellation window the slot is too late to resell, so the
-  // deposit is forfeited exactly as it would be for a no-show.
-  await (inTime
+  // Outside the window the deposit comes back whole. Inside it the slot is too
+  // close to resell, so the salon keeps the penalty and the customer gets the
+  // rest back - a late cancellation is not as expensive as never showing up.
+  await (quote.freeCancellation
     ? AppointmentDeposit.settleReleased(appointmentId)
-    : AppointmentDeposit.settleForfeited(appointmentId));
+    : AppointmentDeposit.settleLateCancelled(appointmentId));
 
   return {
     ...result,
-    depositRefunded: inTime,
+    depositRefunded: quote.refundMinor > 0,
+    fullRefund: quote.freeCancellation,
+    depositMinor: quote.depositMinor,
+    refundMinor: quote.refundMinor,
+    penaltyMinor: quote.penaltyMinor,
+    penaltyPercent: quote.penaltyPercent,
     cancellationWindowMin: appointment.salon.cancellationWindowMin,
   };
 };
@@ -707,19 +769,24 @@ const getCancellationPreview = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
-  const inTime = AppointmentDeposit.isWithinFreeCancellation(
+  const quote = AppointmentDeposit.cancellationQuote(
     appointment,
     appointment.salon,
   );
 
   return {
     appointmentId,
-    startsAt: AppointmentDeposit.appointmentStartsAt(appointment),
-    cancellationWindowMin: appointment.salon.cancellationWindowMin,
-    depositMinor: appointment.depositMinor,
-    freeCancellation: inTime,
-    refundMinor: inTime ? appointment.depositMinor : 0,
-    forfeitMinor: inTime ? 0 : appointment.depositMinor,
+    startsAt: quote.startsAt,
+    cancellationWindowMin: quote.cancellationWindowMin,
+    depositMinor: quote.depositMinor,
+    freeCancellation: quote.freeCancellation,
+    refundMinor: quote.refundMinor,
+    // Kept under the old name so existing clients still read the deduction.
+    forfeitMinor: quote.penaltyMinor,
+    penaltyMinor: quote.penaltyMinor,
+    penaltyPercent: quote.penaltyPercent,
+    // False once the appointment has started: cancelling is no longer allowed.
+    cancellable: !quote.started,
   };
 };
 

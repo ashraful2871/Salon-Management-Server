@@ -11,6 +11,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
+import { atWallClock } from "../../utils/slotTime";
 import { sendEmail } from "../../utils/emailSender";
 import {
   getDepositForfeitedTemplate,
@@ -39,6 +40,27 @@ export const APPEAL_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 /** How late a customer can be before the auto no-show job gives up on them. */
 const NO_SHOW_GRACE_MIN = Number(process.env.NO_SHOW_GRACE_MINUTES ?? 20);
+
+/**
+ * What a customer loses for cancelling inside the salon's window. Outside the
+ * window a cancellation is free; inside it the slot is too close to resell, so
+ * the salon keeps a slice - but only a slice. Forfeiting the whole deposit is
+ * what a no-show costs, and someone who tells us an hour ahead is not the same
+ * as someone who never turns up.
+ *
+ * Read on use, not at import: dotenv runs after this module is first loaded.
+ */
+const latePenaltyPercent = () => {
+  const parsed = Number(process.env.LATE_CANCELLATION_PENALTY_PERCENT ?? 20);
+  if (!Number.isFinite(parsed)) return 20;
+  return Math.min(Math.max(parsed, 0), 100);
+};
+
+const latePenaltyMinor = (depositMinor: number) =>
+  Math.min(
+    Math.round((depositMinor * latePenaltyPercent()) / 100),
+    Math.max(depositMinor, 0),
+  );
 
 /**
  * `depositPercent` wins when the salon set one - for a bridal or keratin
@@ -75,11 +97,29 @@ export const resolveDepositMinor = (
  */
 export const appointmentStartsAt = (
   appointment: Pick<Appointment, "appointmentDate" | "startTime">,
+): Date => atWallClock(appointment.appointmentDate, appointment.startTime);
+
+/**
+ * When the chair is free again. `endTime` is written at booking from the slot,
+ * but bookings made before that was stored fall back to the start - a zero
+ * length appointment is wrong, but it is never wrong in the customer's favour
+ * by more than the grace period.
+ */
+export const appointmentEndsAt = (
+  appointment: Pick<Appointment, "appointmentDate" | "startTime" | "endTime">,
 ): Date => {
-  const [hours, minutes] = appointment.startTime.split(":").map(Number);
-  const startsAt = new Date(appointment.appointmentDate);
-  startsAt.setHours(hours || 0, minutes || 0, 0, 0);
-  return startsAt;
+  if (!appointment.endTime) return appointmentStartsAt(appointment);
+
+  const endsAt = atWallClock(appointment.appointmentDate, appointment.endTime);
+
+  // An appointment that runs past midnight has an end time earlier in the day
+  // than its start; roll it forward rather than returning a time in the past.
+  const startsAt = appointmentStartsAt(appointment);
+  if (endsAt.getTime() < startsAt.getTime()) {
+    endsAt.setDate(endsAt.getDate() + 1);
+  }
+
+  return endsAt;
 };
 
 /** True while the customer can still cancel for free. */
@@ -91,6 +131,54 @@ export const isWithinFreeCancellation = (
   const startsAt = appointmentStartsAt(appointment);
   const windowMs = salon.cancellationWindowMin * 60 * 1000;
   return startsAt.getTime() - now.getTime() >= windowMs;
+};
+
+/**
+ * Once the appointment has started there is nothing left to cancel - the chair
+ * was held, the slot is gone, and what happens next is either a completion or
+ * a no-show. Letting a customer cancel at that point would be a way to dodge
+ * the forfeit by a single click.
+ */
+export const assertCancellable = (
+  appointment: Pick<Appointment, "appointmentDate" | "startTime">,
+  now = new Date(),
+) => {
+  if (now.getTime() >= appointmentStartsAt(appointment).getTime()) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "This appointment has already started and can no longer be cancelled. Please contact the salon.",
+    );
+  }
+};
+
+/**
+ * What cancelling right now costs. One function so the preview endpoint, the
+ * cancel endpoint and the status endpoint can never disagree about the number
+ * the customer was shown.
+ */
+export const cancellationQuote = (
+  appointment: Pick<
+    Appointment,
+    "appointmentDate" | "startTime" | "depositMinor"
+  >,
+  salon: Pick<Salon, "cancellationWindowMin">,
+  now = new Date(),
+) => {
+  const startsAt = appointmentStartsAt(appointment);
+  const free = isWithinFreeCancellation(appointment, salon, now);
+  const deposit = Math.max(appointment.depositMinor, 0);
+  const penaltyMinor = free ? 0 : latePenaltyMinor(deposit);
+
+  return {
+    startsAt,
+    started: now.getTime() >= startsAt.getTime(),
+    freeCancellation: free,
+    cancellationWindowMin: salon.cancellationWindowMin,
+    penaltyPercent: free ? 0 : latePenaltyPercent(),
+    depositMinor: deposit,
+    penaltyMinor,
+    refundMinor: deposit - penaltyMinor,
+  };
 };
 
 type AppointmentWithSalon = Appointment & { salon: Salon };
@@ -234,6 +322,101 @@ export const settleReleased = async (
       ),
     );
   }
+};
+
+/**
+ * Cancelled inside the window but before the start: the salon keeps a penalty
+ * slice of the deposit and the rest goes straight back to spendable balance.
+ *
+ * Two wallet movements rather than one, because they are different events and
+ * the customer's transaction list should say so: a fee they paid, and a refund
+ * they received. Both keys are derived from the appointment id, so a retry
+ * replays them instead of charging twice.
+ */
+export const settleLateCancelled = async (appointmentId: string) => {
+  const settled = await prisma.$transaction(
+    async (tx) => {
+      const appointment = await loadForSettlement(tx, appointmentId);
+      if (!appointment) return null;
+
+      if (
+        appointment.depositStatus !== DepositStatus.HELD ||
+        appointment.depositMinor <= 0
+      ) {
+        return null;
+      }
+
+      const penaltyMinor = latePenaltyMinor(appointment.depositMinor);
+      const refundMinor = appointment.depositMinor - penaltyMinor;
+
+      if (penaltyMinor > 0) {
+        await WalletService.mutate(
+          {
+            userId: appointment.customerId,
+            type: WalletTxType.DEPOSIT_FORFEIT,
+            amount: -penaltyMinor,
+            holdDelta: -penaltyMinor,
+            description: `Late cancellation fee (${latePenaltyPercent()}% of your deposit)`,
+            referenceType: "APPOINTMENT",
+            referenceId: appointment.id,
+            idempotencyKey: `late-cancel-fee:${appointment.id}`,
+          },
+          tx,
+        );
+      }
+
+      if (refundMinor > 0) {
+        await WalletService.mutate(
+          {
+            userId: appointment.customerId,
+            type: WalletTxType.DEPOSIT_RELEASE,
+            amount: 0,
+            holdDelta: -refundMinor,
+            description: "Deposit balance returned - booking cancelled",
+            referenceType: "APPOINTMENT",
+            referenceId: appointment.id,
+            idempotencyKey: `late-cancel-refund:${appointment.id}`,
+            metadata: { holdDeltaMinor: -refundMinor },
+          },
+          tx,
+        );
+      }
+
+      await tx.appointment.update({
+        where: { id: appointment.id },
+        data: {
+          depositStatus:
+            penaltyMinor > 0
+              ? DepositStatus.PARTIALLY_FORFEITED
+              : DepositStatus.RELEASED,
+        },
+      });
+
+      await SettlementService.recordLateCancellationPenalty(
+        tx,
+        appointment,
+        penaltyMinor,
+      );
+
+      return { appointment, penaltyMinor, refundMinor };
+    },
+    { timeout: 15000, maxWait: 10000 },
+  );
+
+  if (settled && settled.refundMinor > 0) {
+    notify(
+      settled.appointment.customerId,
+      "Your deposit has been returned",
+      (name) =>
+        getDepositReleasedTemplate(
+          name,
+          formatBDT(settled.refundMinor),
+          settled.appointment.salon.name,
+        ),
+    );
+  }
+
+  return settled;
 };
 
 /**
@@ -450,24 +633,39 @@ export const assertCanMarkNoShow = (
 /**
  * Salon owners forget to mark no-shows, and an unresolved hold is money the
  * customer cannot spend. After the grace period, close it out automatically.
+ *
+ * Which clock the grace runs from depends on how far the booking got. A booking
+ * still sitting at CONFIRMED past its start time was never begun, so the grace
+ * runs from the start. One the auto-start job moved to IN_PROGRESS is measured
+ * from its scheduled *end* instead - otherwise automating the start would
+ * forfeit the deposit of a customer who is sitting in the chair right now.
  */
 export const autoMarkNoShows = async () => {
-  const cutoff = new Date(Date.now() - NO_SHOW_GRACE_MIN * 60 * 1000);
+  const graceMs = NO_SHOW_GRACE_MIN * 60 * 1000;
+  const cutoff = Date.now() - graceMs;
 
   // Cheap pre-filter on the date; the exact start time is a string, so the
   // per-row check below is what actually decides.
   const candidates = await prisma.appointment.findMany({
     where: {
-      status: { in: ["PENDING", "CONFIRMED"] },
+      status: { in: ["PENDING", "CONFIRMED", "IN_PROGRESS"] },
       depositStatus: DepositStatus.HELD,
       appointmentDate: { lte: new Date() },
     },
-    select: { id: true, appointmentDate: true, startTime: true },
+    select: {
+      id: true,
+      status: true,
+      appointmentDate: true,
+      startTime: true,
+      endTime: true,
+    },
     take: 200,
   });
 
-  const due = candidates.filter(
-    (appointment) => appointmentStartsAt(appointment) <= cutoff,
+  const due = candidates.filter((appointment) =>
+    appointment.status === "IN_PROGRESS"
+      ? appointmentEndsAt(appointment).getTime() <= cutoff
+      : appointmentStartsAt(appointment).getTime() <= cutoff,
   );
 
   let marked = 0;
@@ -495,17 +693,70 @@ export const autoMarkNoShows = async () => {
   return { checked: due.length, marked };
 };
 
+// ---------------------------------------------------------------------------
+// Auto start
+// ---------------------------------------------------------------------------
+
+/**
+ * A booking that has reached its start time is underway. Nobody has to press a
+ * button to say so: the salon is cutting hair, not watching a dashboard, and an
+ * appointment stuck at CONFIRMED an hour into itself tells the customer nothing
+ * true.
+ *
+ * Only CONFIRMED moves. A cancelled, completed or already-no-showed booking has
+ * a settled deposit behind it and must not be walked backwards into a live
+ * status.
+ */
+export const autoStartAppointments = async () => {
+  const now = new Date();
+
+  // Same shape as the no-show job: filter on the date in SQL, then decide per
+  // row, because the start time is a "HH:mm" string the database cannot compare.
+  const candidates = await prisma.appointment.findMany({
+    where: {
+      status: "CONFIRMED",
+      appointmentDate: { lte: now },
+    },
+    select: { id: true, appointmentDate: true, startTime: true },
+    take: 200,
+  });
+
+  const due = candidates.filter(
+    (appointment) => appointmentStartsAt(appointment).getTime() <= now.getTime(),
+  );
+
+  if (due.length === 0) return { checked: 0, started: 0 };
+
+  // Re-check the status in the WHERE clause: between the read above and this
+  // write the salon may have completed or cancelled it themselves.
+  const { count } = await prisma.appointment.updateMany({
+    where: { id: { in: due.map((a) => a.id) }, status: "CONFIRMED" },
+    data: { status: "IN_PROGRESS" },
+  });
+
+  if (count) {
+    console.log(`[appointment.autoStart] started ${count} booking(s)`);
+  }
+
+  return { checked: due.length, started: count };
+};
+
 export const AppointmentDeposit = {
   resolveDepositMinor,
   appointmentStartsAt,
+  appointmentEndsAt,
   isWithinFreeCancellation,
+  assertCancellable,
+  cancellationQuote,
   settleCompleted,
   settleReleased,
+  settleLateCancelled,
   settleForfeited,
   appealNoShow,
   resolveAppeal,
   assertCanMarkNoShow,
   autoMarkNoShows,
+  autoStartAppointments,
   APPEAL_WINDOW_MS,
   GOODWILL_CREDIT_MINOR,
 };

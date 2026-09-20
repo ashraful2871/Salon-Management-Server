@@ -17,6 +17,7 @@ const HOUR = 60 * MINUTE;
 
 const RECONCILE_INTERVAL_MS = HOUR;
 const NO_SHOW_INTERVAL_MS = 10 * MINUTE;
+const AUTO_START_INTERVAL_MS = 5 * MINUTE;
 const WALLET_AUDIT_INTERVAL_MS = 6 * HOUR;
 
 /** A job that throws must never take the server down with it. */
@@ -58,6 +59,12 @@ export const startBackgroundJobs = () => {
 
   every(RECONCILE_INTERVAL_MS, "payment.reconcile", () =>
     PaymentIntentService.reconcilePendingIntents(),
+  );
+
+  // Before the no-show sweep, so a booking that has just reached its start time
+  // is moved to IN_PROGRESS rather than being read as an absence.
+  every(AUTO_START_INTERVAL_MS, "appointment.autoStart", () =>
+    AppointmentDeposit.autoStartAppointments(),
   );
 
   every(NO_SHOW_INTERVAL_MS, "deposit.autoNoShow", () =>

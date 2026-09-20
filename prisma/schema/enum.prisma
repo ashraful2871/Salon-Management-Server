@@ -125,6 +125,9 @@ enum DepositStatus {
   RELEASED
   APPLIED
   FORFEITED
+  // A late cancellation: part of the deposit went to the salon as a penalty,
+  // the rest went back to the customer. Not appealable - they chose to cancel.
+  PARTIALLY_FORFEITED
 }
 
 enum AppealStatus {

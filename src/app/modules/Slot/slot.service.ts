@@ -2,6 +2,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { UserRole, SlotStatus } from "@prisma/client";
+import { hasSlotStarted } from "../../utils/slotTime";
 
 const MAX_RANGE_DAYS = 90;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -239,7 +240,16 @@ const bulkCreateSlots = async (userId: string, userRole: string, payload: any) =
 };
 
 const getSlots = async (query: any) => {
-  const { salonId, date, startDate, endDate, status, serviceId, counterId } = query;
+  const {
+    salonId,
+    date,
+    startDate,
+    endDate,
+    status,
+    serviceId,
+    counterId,
+    upcomingOnly,
+  } = query;
 
   const whereConditions: any = {};
   if (salonId) whereConditions.salonId = salonId;
@@ -274,6 +284,15 @@ const getSlots = async (query: any) => {
     },
     orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
+
+  // A booking screen should not offer this morning's 9am at half past four.
+  // The filter is here rather than in the WHERE clause because `startTime` is a
+  // string the database cannot compare against a timestamp, and it is opt-in
+  // because the owner's slot manager still needs to see the whole day.
+  if (upcomingOnly === true || upcomingOnly === "true") {
+    const now = new Date();
+    return slots.filter((slot) => !hasSlotStarted(slot, now));
+  }
 
   return slots;
 };
