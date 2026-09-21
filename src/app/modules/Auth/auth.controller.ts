@@ -87,6 +87,28 @@ const changePassword = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const changeEmail = catchAsync(async (req: Request, res: Response) => {
+  const userId = req.user?.userId;
+
+  const result = await AuthService.changeEmail(userId, req.body);
+
+  // The old tokens still name the old address, so the caller is handed a new
+  // pair the same way login does.
+  setAuthCookies(res, result);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      "Email changed successfully. We sent a verification link to your new address.",
+    data: {
+      user: result.user,
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+    },
+  });
+});
+
 const logout = catchAsync(async (_req: Request, res: Response) => {
   // Both cookies, with the same options they were written with - clearing only
   // the refresh token left a still-valid access token behind for up to an hour.
@@ -166,6 +188,7 @@ export const AuthController = {
   login,
   refreshToken,
   changePassword,
+  changeEmail,
   logout,
   getMyProfile,
   forgotPassword,

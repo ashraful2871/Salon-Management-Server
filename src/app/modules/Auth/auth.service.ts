@@ -7,6 +7,7 @@ import { jwtHelpers } from '../../helper/jwtHelper';
 import config from '../../../config';
 import { sendEmail } from '../../utils/emailSender';
 import {
+  getEmailChangedNoticeTemplate,
   getEmailVerificationTemplate,
   getPasswordResetTemplate,
 } from '../../utils/emailTemplates';
@@ -284,6 +285,115 @@ const changePassword = async (
   return null;
 };
 
+/**
+ * Moves the account to a new address in one step, gated on the current
+ * password so a borrowed session cannot take the account over.
+ *
+ * `User.email` is the only place the address lives - booking confirmations,
+ * receipts and resets all read it from the row - so updating it is what makes
+ * the new address take effect everywhere. The one copy outside the database is
+ * the JWT, which is why a fresh token pair is returned: without it the frontend
+ * would keep showing the old address until the next refresh.
+ */
+const changeEmail = async (
+  userId: string,
+  payload: { newEmail: string; password: string }
+) => {
+  const user = await prisma.user.findUnique({
+    where: {
+      id: userId,
+      isDeleted: false,
+    },
+  });
+
+  if (!user) {
+    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+  }
+
+  const isPasswordCorrect = await bcrypt.compare(payload.password, user.password);
+
+  if (!isPasswordCorrect) {
+    throw new ApiError(StatusCodes.UNAUTHORIZED, 'Current password is incorrect');
+  }
+
+  const newEmail = payload.newEmail.trim();
+
+  if (newEmail === user.email) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      'New email must be different from your current email'
+    );
+  }
+
+  const existingUser = await prisma.user.findUnique({
+    where: { email: newEmail },
+    select: { id: true },
+  });
+
+  if (existingUser) {
+    throw new ApiError(StatusCodes.CONFLICT, 'This email is already in use by another account');
+  }
+
+  const oldEmail = user.email;
+
+  // A race with a registration for the same address still ends in a 409: the
+  // unique index raises P2002, which the global error handler maps.
+  const updatedUser = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Links already sent to the old inbox must stop working. A verify link from
+    // there would otherwise mark the new, unconfirmed address as verified.
+    await tx.verificationToken.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
+    return tx.user.update({
+      where: { id: userId },
+      data: { email: newEmail, emailVerified: false },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        emailVerified: true,
+      },
+    });
+  });
+
+  const jwtPayload = {
+    userId: updatedUser.id,
+    email: updatedUser.email,
+    role: updatedUser.role,
+  };
+
+  const accessToken = jwtHelpers.createToken(
+    jwtPayload,
+    config.jwt.jwt_secret as string,
+    config.jwt.expires_in as string
+  );
+
+  const refreshToken = jwtHelpers.createToken(
+    jwtPayload,
+    config.jwt.refresh_token_secret as string,
+    config.jwt.refresh_token_expires_in as string
+  );
+
+  // Neither of these can throw, so a mail outage never undoes the change.
+  await Promise.all([
+    sendVerificationEmail(updatedUser),
+    sendEmail(
+      oldEmail,
+      'Your email was changed - Salon Management',
+      getEmailChangedNoticeTemplate(updatedUser.name, updatedUser.email)
+    ),
+  ]);
+
+  return {
+    user: updatedUser,
+    accessToken,
+    refreshToken,
+  };
+};
+
 const getMyProfile = async (userId: string) => {
   const user = await prisma.user.findUnique({
     where: {
@@ -441,6 +551,7 @@ export const AuthService = {
   login,
   refreshToken,
   changePassword,
+  changeEmail,
   getMyProfile,
   forgotPassword,
   resetPassword,

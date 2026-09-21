@@ -545,3 +545,20 @@ export const getNewBookingOwnerTemplate = (booking: {
      </table>`
   );
 };
+
+/**
+ * Sent to the address an account just moved away from. If the owner did not
+ * make the change, this is the only warning they get - the new address now
+ * receives every password reset, so it has to reach the old inbox.
+ */
+export const getEmailChangedNoticeTemplate = (
+  userName: string,
+  newEmail: string
+) =>
+  moneyLayout(
+    "Your email was changed",
+    `<p>Hi ${escapeHtml(userName)},</p>
+     <p>The email address on your Salon Management account was just changed to <strong>${escapeHtml(newEmail)}</strong>.</p>
+     <p>From now on, sign in with the new address. Booking confirmations, receipts and password reset links will be sent there instead of here.</p>
+     <p style="color:#c0392b;font-size:13px;">If you did not make this change, please contact support straight away - someone may have access to your account.</p>`
+  );

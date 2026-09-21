@@ -28,7 +28,7 @@ const optionalAuth = () => {
       });
 
       if (user && user.status === "ACTIVE") {
-        req.user = { ...verifiedUser, role: user.role };
+        req.user = { ...verifiedUser, email: user.email, role: user.role };
       }
       
       next();

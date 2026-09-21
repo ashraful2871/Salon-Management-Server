@@ -39,6 +39,17 @@ const changePasswordValidation = z.object({
   }),
 });
 
+const changeEmailValidation = z.object({
+  body: z.object({
+    newEmail: z
+      .string()
+      .trim()
+      .nonempty({ message: "New email is required" })
+      .email("Invalid email format"),
+    password: z.string().nonempty({ message: "Current password is required" }),
+  }),
+});
+
 /**
  * Optional, because the token is just as likely to arrive in the `refreshToken`
  * cookie as in the body. Requiring it here rejected every browser-only refresh
@@ -91,6 +102,7 @@ export const AuthValidation = {
   registerValidation,
   loginValidation,
   changePasswordValidation,
+  changeEmailValidation,
   refreshTokenValidation,
   forgotPasswordValidation,
   resetPasswordValidation,
