@@ -5,6 +5,14 @@ import { seedAdmin } from "./app/seed/admin.seed";
 import { startBackgroundJobs } from "./app/jobs/scheduler";
 
 async function main() {
+  // Slot "HH:mm" times are read as server-local. Anywhere but Dhaka, every
+  // cancellation window, past-slot check and no-show sweep runs hours off.
+  if (new Date().getTimezoneOffset() !== -360) {
+    console.warn(
+      "[tz] Server is not on Asia/Dhaka (UTC+6). Slot times are read as server-local - set TZ=Asia/Dhaka.",
+    );
+  }
+
   try {
     // Seed admin user
     await seedAdmin();

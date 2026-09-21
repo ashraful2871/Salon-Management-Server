@@ -8,6 +8,10 @@ model Slot {
   endTime   String
   status    SlotStatus      @default(AVAILABLE)
   isBooked  Boolean         @default(false)
+  /// The slot's place in its day for this salon + service + counter, in start
+  /// time order: the 1st slot is #1 whoever books it first. Copied onto the
+  /// appointment as its serial. Null only on slots made before numbering.
+  sequenceNo Int?
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
 
@@ -19,5 +23,6 @@ model Slot {
 
   @@index([counterId])
   @@index([salonId, date])
+  @@index([salonId, serviceId, counterId, date])
   @@map("slots")
 }

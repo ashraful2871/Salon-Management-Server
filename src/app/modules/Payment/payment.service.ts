@@ -2,6 +2,11 @@ import { PaymentMethod, PaymentStatus, Prisma, UserRole } from "@prisma/client";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import {
+  assertCanActOnAppointment,
+  ownedSalonIds,
+} from "../../utils/salonAccess";
+import { paymentSummary } from "../Appointment/appointment.billing";
 
 /**
  * This module records money collected *at the counter*. It is deliberately not
@@ -24,38 +29,8 @@ const serviceSelect = {
   priceMinor: true,
 } as const;
 
-/** The salon profile behind a SALON_OWNER user, with the salons they own. */
-const ownedSalonIds = async (userId: string) => {
-  const owner = await prisma.salonOwner.findUnique({
-    where: { userId },
-    include: { salons: { select: { id: true } } },
-  });
-
-  return owner ? owner.salons.map((salon) => salon.id) : [];
-};
-
-const assertCanActOnAppointment = async (
-  userId: string,
-  userRole: string,
-  salonId: string,
-) => {
-  if (userRole === UserRole.ADMIN) return;
-
-  if (userRole === UserRole.SALON_OWNER) {
-    const salonIds = await ownedSalonIds(userId);
-    if (salonIds.includes(salonId)) return;
-
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "You can only record payments for your own salons",
-    );
-  }
-
-  throw new ApiError(
-    StatusCodes.FORBIDDEN,
-    "Only the salon or an admin can record a payment",
-  );
-};
+const PAYMENT_ACCESS_MESSAGE =
+  "You can only record payments for your own salons";
 
 const createPayment = async (
   userId: string,
@@ -71,7 +46,12 @@ const createPayment = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
-  await assertCanActOnAppointment(userId, userRole, appointment.salonId);
+  await assertCanActOnAppointment(
+    userId,
+    userRole,
+    appointment.salonId,
+    PAYMENT_ACCESS_MESSAGE,
+  );
 
   if (!COUNTER_METHODS.includes(payload.paymentMethod)) {
     throw new ApiError(
@@ -80,10 +60,10 @@ const createPayment = async (
     );
   }
 
-  if (appointment.status === "CANCELLED") {
+  if (appointment.status === "CANCELLED" || appointment.status === "NO_SHOW") {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      "Cannot record a payment against a cancelled appointment",
+      `Cannot record a payment against a ${appointment.status === "CANCELLED" ? "cancelled" : "no-show"} appointment`,
     );
   }
 
@@ -100,11 +80,13 @@ const createPayment = async (
 
   // The amount is the server's to decide. `totalMinor` was captured when the
   // booking was made, so a later price change cannot alter an agreed bill; a
-  // deposit that has already been applied comes off what is still owed.
-  const totalMinor = appointment.totalMinor || appointment.service.priceMinor;
-  const depositCredit =
-    appointment.depositStatus === "APPLIED" ? appointment.depositMinor : 0;
-  const amountMinor = Math.max(totalMinor - depositCredit, 0);
+  // deposit the customer has paid - still held or already applied - comes off
+  // what is still owed.
+  const { amountDueMinor: amountMinor } = paymentSummary({
+    ...appointment,
+    totalMinor: appointment.totalMinor || appointment.service.priceMinor,
+    payment: null,
+  });
 
   return prisma.payment.create({
     data: {
@@ -230,6 +212,7 @@ const updatePaymentStatus = async (
     userId,
     userRole,
     payment.appointment.salonId,
+    PAYMENT_ACCESS_MESSAGE,
   );
 
   return prisma.payment.update({

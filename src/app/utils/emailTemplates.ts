@@ -16,6 +16,11 @@ export const getBookingConfirmationTemplate = (
 ) => {
   const token = identity?.token;
   const serialNumber = identity?.serialNumber;
+  // A serial only means something within its queue - salon + service +
+  // counter + day - so it is always shown with the queue it belongs to.
+  const serialQueue = [serviceName, identity?.counterName]
+    .filter(Boolean)
+    .join(" · ");
 
   // The one thing the customer has to have at the counter, so it gets its own
   // block above the details rather than a row inside them. Tables and inline
@@ -29,8 +34,9 @@ export const getBookingConfirmationTemplate = (
               ${
                 serialNumber != null
                   ? `<td style="text-align: center; padding: 4px 8px;">
-                      <div class="token-label" style="font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #a9b7c6; margin-bottom: 6px;">Your serial</div>
-                      <div class="token-serial" style="font-size: 30px; font-weight: 700; line-height: 1.1; color: #ffffff;">#${serialNumber}</div>
+                      <div class="token-label" style="font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #a9b7c6; margin-bottom: 6px;">Your place in line</div>
+                      <div class="token-serial" style="font-size: 30px; font-weight: 700; line-height: 1.1; color: #ffffff;">Serial #${serialNumber}</div>
+                      <div class="token-queue" style="font-size: 13px; line-height: 1.4; color: #d5dde6; margin-top: 4px;">${serialQueue}</div>
                     </td>`
                   : ""
               }
@@ -47,7 +53,7 @@ export const getBookingConfirmationTemplate = (
           <p class="token-hint" style="font-size: 12px; color: #a9b7c6; margin: 14px 0 0;">
             Show this${token ? " token" : ""} at the salon counter${
               serialNumber != null
-                ? " - your serial is the order you will be called in"
+                ? " - your serial is the order you will be called in for this service and counter"
                 : ""
             }.
           </p>
@@ -480,3 +486,62 @@ export const getDepositForfeitedTemplate = (
      <p>Your booking at ${salonName} was marked as a no-show, and the <strong>${amount}</strong> deposit has been forfeited.</p>
      <p>Think this is wrong? You can appeal within <strong>48 hours</strong> from your bookings page and an admin will review it.</p>`
   );
+
+// For text a customer typed, such as their name. It lands in the salon owner's
+// inbox, so it must not be able to add links or markup of its own.
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+/**
+ * Tells a salon owner that a customer has just booked. Laid out for the
+ * counter: the serial and token are what the customer will give on arrival,
+ * and the amount due is what is left to collect once the deposit is counted.
+ */
+export const getNewBookingOwnerTemplate = (booking: {
+  ownerName: string;
+  salonName: string;
+  customerName: string;
+  serviceName: string;
+  counterName?: string | null;
+  serialNumber?: number | null;
+  token?: string | null;
+  date: string;
+  time: string;
+  dueAtCounter: string;
+}) => {
+  const row = (label: string, value: string, mono = false) => `
+    <tr>
+      <td style="padding:10px 0;color:#7f8c8d;font-size:13px;border-bottom:1px solid #eef1f3;">${label}</td>
+      <td style="padding:10px 0;text-align:right;font-size:13px;color:#2c3e50;border-bottom:1px solid #eef1f3;${
+        mono ? "font-family:'Courier New',monospace;" : ""
+      }">${value}</td>
+    </tr>`;
+
+  const serial = booking.serialNumber ? `#${booking.serialNumber}` : "&mdash;";
+
+  return moneyLayout(
+    "New booking",
+    `<p>Hi ${escapeHtml(booking.ownerName)},</p>
+     <p><strong>${escapeHtml(booking.customerName)}</strong> has booked ${escapeHtml(booking.serviceName)} at ${escapeHtml(booking.salonName)}.</p>
+
+     <div style="background:#f8f9fa;border:1px solid #e8ecef;border-radius:6px;padding:18px 20px;margin:22px 0;">
+       <p style="margin:0 0 6px;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7f8c8d;">Serial</p>
+       <p style="margin:0;font-size:28px;font-weight:bold;color:#2c3e50;">${serial}</p>
+     </div>
+
+     <table style="width:100%;border-collapse:collapse;border-top:1px solid #eef1f3;">
+       ${row("Customer", escapeHtml(booking.customerName))}
+       ${row("Service", escapeHtml(booking.serviceName))}
+       ${row("Counter", booking.counterName ? escapeHtml(booking.counterName) : "&mdash;")}
+       ${row("Date", booking.date)}
+       ${row("Time", booking.time)}
+       ${row("Token", booking.token || "&mdash;", true)}
+       ${row("Due at the counter", `<strong>${booking.dueAtCounter}</strong>`)}
+     </table>`
+  );
+};

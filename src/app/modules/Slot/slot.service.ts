@@ -160,17 +160,22 @@ const bulkCreateSlots = async (userId: string, userRole: string, payload: any) =
       counterId: counterId || null,
       date: { gte: rangeStart, lte: rangeEnd },
     },
-    select: { date: true, startTime: true, endTime: true },
+    select: {
+      id: true,
+      date: true,
+      startTime: true,
+      endTime: true,
+      isBooked: true,
+      sequenceNo: true,
+    },
   });
 
-  const existingByDay = new Map<number, { start: number; end: number }[]>();
+  type ExistingSlot = (typeof existingSlots)[number];
+  const existingByDay = new Map<number, ExistingSlot[]>();
   for (const slot of existingSlots) {
     const key = slot.date.getTime();
     const bucket = existingByDay.get(key) || [];
-    bucket.push({
-      start: toMinutes(slot.startTime, "start time"),
-      end: toMinutes(slot.endTime, "end time"),
-    });
+    bucket.push(slot);
     existingByDay.set(key, bucket);
   }
 
@@ -182,12 +187,35 @@ const bulkCreateSlots = async (userId: string, userRole: string, payload: any) =
     startTime: string;
     endTime: string;
     status: SlotStatus;
+    sequenceNo: number;
   }[] = [];
+  // Existing slots whose place in the day moves because a new slot lands before
+  // them, keyed by the new number so each number is one updateMany.
+  const renumber = new Map<number, string[]>();
   const skippedDates = new Set<string>();
+  const lockedDates = new Set<string>();
   let skipped = 0;
 
+  const newSlot = (day: Date, slot: (typeof template)[number], sequenceNo: number) => ({
+    salonId: payload.salonId,
+    serviceId,
+    counterId: counterId || null,
+    date: day,
+    startTime: slot.startTime,
+    endTime: slot.endTime,
+    status: SlotStatus.AVAILABLE,
+    sequenceNo,
+  });
+
   for (const day of days) {
-    const taken = existingByDay.get(day.getTime()) || [];
+    const dayKey = day.toISOString().slice(0, 10);
+    const existing = existingByDay.get(day.getTime()) || [];
+    const taken = existing.map((slot) => ({
+      start: toMinutes(slot.startTime, "start time"),
+      end: toMinutes(slot.endTime, "end time"),
+    }));
+    // The template is generated in time order, so `fresh` is too.
+    const fresh: typeof template = [];
 
     for (const slot of template) {
       const overlaps = taken.some(
@@ -198,40 +226,104 @@ const bulkCreateSlots = async (userId: string, userRole: string, payload: any) =
       // failing the whole range — otherwise one busy day blocks the other 29.
       if (overlaps) {
         skipped++;
-        skippedDates.add(day.toISOString().slice(0, 10));
+        skippedDates.add(dayKey);
         continue;
       }
 
       taken.push({ start: slot.start, end: slot.end });
-      slotsToCreate.push({
-        salonId: payload.salonId,
-        serviceId,
-        counterId: counterId || null,
-        date: day,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        status: SlotStatus.AVAILABLE,
-      });
+      fresh.push(slot);
     }
 
-    existingByDay.set(day.getTime(), taken);
+    if (fresh.length === 0) continue;
+
+    // A slot's number is its place in the day, and a booked slot's number is
+    // already on a customer's confirmation. So a day nobody has booked is
+    // renumbered 1..N from scratch, while a day with a booking only grows at
+    // the end. "HH:mm" is zero-padded, so comparing strings compares times.
+    if (!existing.some((slot) => slot.isBooked)) {
+      const merged = [
+        ...existing.map((slot) => ({ startTime: slot.startTime, existing: slot })),
+        ...fresh.map((slot) => ({ startTime: slot.startTime, fresh: slot })),
+      ].sort((a, b) => (a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0));
+
+      merged.forEach((entry, index) => {
+        const sequenceNo = index + 1;
+        if ("fresh" in entry) {
+          slotsToCreate.push(newSlot(day, entry.fresh, sequenceNo));
+        } else if (entry.existing.sequenceNo !== sequenceNo) {
+          renumber.set(sequenceNo, [...(renumber.get(sequenceNo) || []), entry.existing.id]);
+        }
+      });
+      continue;
+    }
+
+    const lastStart = existing.reduce(
+      (latest, slot) => (slot.startTime > latest ? slot.startTime : latest),
+      ""
+    );
+    // Legacy slots may have no number yet, in which case their count is the
+    // highest position anyone could have been given for this day.
+    let nextNo =
+      Math.max(existing.length, ...existing.map((slot) => slot.sequenceNo ?? 0)) + 1;
+
+    for (const slot of fresh) {
+      if (slot.startTime <= lastStart) {
+        skipped++;
+        lockedDates.add(dayKey);
+        continue;
+      }
+      slotsToCreate.push(newSlot(day, slot, nextNo++));
+    }
   }
 
   if (slotsToCreate.length === 0) {
+    if (lockedDates.size > 0) {
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        `Bookings already exist on these dates: ${Array.from(lockedDates).sort().join(", ")}. New slots can only be added after the last existing slot.`
+      );
+    }
     throw new ApiError(
       StatusCodes.CONFLICT,
       "All generated slots overlap with existing slots."
     );
   }
 
-  const createdSlots = await prisma.slot.createMany({
-    data: slotsToCreate,
-  });
+  const renumberIds = Array.from(renumber.values()).flat();
+
+  const createdSlots = await prisma.$transaction(
+    async (tx) => {
+      const created = await tx.slot.createMany({ data: slotsToCreate });
+
+      for (const [sequenceNo, ids] of renumber) {
+        await tx.slot.updateMany({ where: { id: { in: ids } }, data: { sequenceNo } });
+      }
+
+      // Checked after the writes on purpose: they hold the row locks, so a
+      // booking racing for one of these slots either committed first and is
+      // counted here, or waits and then reads the new number.
+      if (renumberIds.length > 0) {
+        const booked = await tx.slot.count({
+          where: { id: { in: renumberIds }, isBooked: true },
+        });
+        if (booked > 0) {
+          throw new ApiError(
+            StatusCodes.CONFLICT,
+            "A booking just came in for that day - please try again."
+          );
+        }
+      }
+
+      return created;
+    },
+    { timeout: 15000, maxWait: 10000 }
+  );
 
   return {
     count: createdSlots.count,
     skipped,
     skippedDates: Array.from(skippedDates).sort(),
+    lockedDates: Array.from(lockedDates).sort(),
     totalDays,
     startDate: rangeStart.toISOString().slice(0, 10),
     endDate: rangeEnd.toISOString().slice(0, 10),

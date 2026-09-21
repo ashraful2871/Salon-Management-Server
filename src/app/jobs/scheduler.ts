@@ -1,4 +1,5 @@
 import { PaymentIntentService } from "../modules/Payment/paymentIntent.service";
+import { AppointmentCheckout } from "../modules/Appointment/appointment.checkout";
 import { AppointmentDeposit } from "../modules/Appointment/appointment.deposit";
 import { WalletService } from "../modules/Wallet/wallet.service";
 
@@ -17,7 +18,7 @@ const HOUR = 60 * MINUTE;
 
 const RECONCILE_INTERVAL_MS = HOUR;
 const NO_SHOW_INTERVAL_MS = 10 * MINUTE;
-const AUTO_START_INTERVAL_MS = 5 * MINUTE;
+const STALE_CHECKOUT_INTERVAL_MS = 30 * MINUTE;
 const WALLET_AUDIT_INTERVAL_MS = 6 * HOUR;
 
 /** A job that throws must never take the server down with it. */
@@ -61,14 +62,15 @@ export const startBackgroundJobs = () => {
     PaymentIntentService.reconcilePendingIntents(),
   );
 
-  // Before the no-show sweep, so a booking that has just reached its start time
-  // is moved to IN_PROGRESS rather than being read as an absence.
-  every(AUTO_START_INTERVAL_MS, "appointment.autoStart", () =>
-    AppointmentDeposit.autoStartAppointments(),
-  );
-
+  // Arrival is an explicit check-in at the counter, so nothing starts a booking
+  // on the clock. Bookings nobody checked in become no-shows; ones that were
+  // checked in but never completed are closed as completed instead.
   every(NO_SHOW_INTERVAL_MS, "deposit.autoNoShow", () =>
     AppointmentDeposit.autoMarkNoShows(),
+  );
+
+  every(STALE_CHECKOUT_INTERVAL_MS, "appointment.autoCloseStale", () =>
+    AppointmentCheckout.autoCloseStaleCheckIns(),
   );
 
   every(WALLET_AUDIT_INTERVAL_MS, "wallet.audit", auditWallets);

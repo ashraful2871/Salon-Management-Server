@@ -5,8 +5,10 @@ import { Prisma } from "@prisma/client";
  *
  * Two identifiers, because they answer different questions. The `token` is
  * global and unguessable-ish - it is what a customer reads off their phone to
- * prove which booking is theirs. The `serialNumber` is local to one salon, one
- * service and one day, and it is the queue position: #1 goes in before #2.
+ * prove which booking is theirs. The `serialNumber` is local to one salon,
+ * service, counter and day, and it is the queue position: #1 goes in before #2.
+ * It is the slot's position in that day, not the order people booked in, so
+ * whoever takes the 11:00 slot is #5 even if they booked first.
  */
 
 /**
@@ -46,59 +48,51 @@ export const generateToken = async (
   return `TKN-${Date.now().toString(36).toUpperCase().slice(-6)}`;
 };
 
-/** Local midnight either side of the appointment's day. */
-export const dayBounds = (date: Date) => {
-  const start = new Date(date);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
-  return { start, end };
-};
-
-const queueKey = (salonId: string, serviceId: string, start: Date) =>
-  `${salonId}:${serviceId}:${start.toDateString()}`;
-
 /**
- * The next place in the queue for this salon + service + day.
+ * The serial for whoever books this slot: its place in the day for the same
+ * salon + service + counter.
  *
- * The advisory lock is the whole point: reading the current maximum and then
- * inserting is a classic race, and under Prisma's default read-committed
- * isolation two simultaneous bookings would both read the same number and both
- * claim it. The lock is transaction-scoped, so it is released on commit or
- * rollback without any cleanup, and it only serialises bookings for the same
- * queue - two different services still book in parallel.
+ * No lock is needed. The number belongs to the slot, not to the order of
+ * bookings, and the atomic slot claim already guarantees one booking per slot.
+ * Slots made before numbering existed have no `sequenceNo`, so their position
+ * is counted from the earlier slots of that day instead.
+ *
+ * Call it after the slot is claimed in the same transaction. The number is
+ * re-read rather than taken from `slot`, which may have been loaded before a
+ * bulk create renumbered the day; the claim's row lock makes this read final.
  */
-export const nextSerialNumber = async (
+export const slotPosition = async (
   tx: Prisma.TransactionClient,
-  appointment: { salonId: string; serviceId: string; appointmentDate: Date },
+  slot: {
+    id: string;
+    salonId: string;
+    serviceId: string | null;
+    counterId: string | null;
+    date: Date;
+    startTime: string;
+  },
 ): Promise<number> => {
-  const { start, end } = dayBounds(appointment.appointmentDate);
+  const current = await tx.slot.findUnique({
+    where: { id: slot.id },
+    select: { sequenceNo: true },
+  });
+  if (current?.sequenceNo != null) return current.sequenceNo;
 
-  await tx.$executeRaw`
-    SELECT pg_advisory_xact_lock(
-      hashtext(${queueKey(appointment.salonId, appointment.serviceId, start)}),
-      0
-    )
-  `;
-
-  const last = await tx.appointment.findFirst({
+  // "HH:mm" is zero-padded, so a string comparison is a time comparison.
+  const earlier = await tx.slot.count({
     where: {
-      salonId: appointment.salonId,
-      serviceId: appointment.serviceId,
-      appointmentDate: { gte: start, lt: end },
-      // Bookings made before serial numbers existed have none; ordering by a
-      // column full of NULLs would otherwise hand out #1 forever.
-      serialNumber: { not: null },
+      salonId: slot.salonId,
+      serviceId: slot.serviceId,
+      counterId: slot.counterId,
+      date: slot.date,
+      startTime: { lt: slot.startTime },
     },
-    orderBy: { serialNumber: "desc" },
-    select: { serialNumber: true },
   });
 
-  return (last?.serialNumber ?? 0) + 1;
+  return earlier + 1;
 };
 
 export const AppointmentIdentity = {
   generateToken,
-  nextSerialNumber,
-  dayBounds,
+  slotPosition,
 };
