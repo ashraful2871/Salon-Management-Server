@@ -2,9 +2,10 @@ import { PaymentIntentService } from "../modules/Payment/paymentIntent.service";
 import { AppointmentCheckout } from "../modules/Appointment/appointment.checkout";
 import { AppointmentDeposit } from "../modules/Appointment/appointment.deposit";
 import { WalletService } from "../modules/Wallet/wallet.service";
+import { syncSearchIndex } from "../modules/AI-Suggestion/ai.indexer";
 
 /**
- * Periodic money work.
+ * Periodic money work, plus the AI search index repair.
  *
  * Every job here is idempotent - top-ups are keyed by transaction id, deposit
  * outcomes by appointment id - so if this process is running on more than one
@@ -20,6 +21,7 @@ const RECONCILE_INTERVAL_MS = HOUR;
 const NO_SHOW_INTERVAL_MS = 10 * MINUTE;
 const STALE_CHECKOUT_INTERVAL_MS = 30 * MINUTE;
 const WALLET_AUDIT_INTERVAL_MS = 6 * HOUR;
+const AI_INDEX_INTERVAL_MS = 10 * MINUTE;
 
 /** A job that throws must never take the server down with it. */
 const safely = async (name: string, run: () => Promise<unknown>) => {
@@ -75,6 +77,10 @@ export const startBackgroundJobs = () => {
 
   every(WALLET_AUDIT_INTERVAL_MS, "wallet.audit", auditWallets);
 
+  // Embeds salons that are new, changed, or were missed when Gemini was down.
+  // Writes re-embed straight away; this is the net under them.
+  every(AI_INDEX_INTERVAL_MS, "ai.syncIndex", () => syncSearchIndex());
+
   // Catch anything that got stuck while the process was down, but not in the
   // first seconds of boot - a restart loop should not hammer the gateway.
   const warmup = setTimeout(() => {
@@ -84,5 +90,12 @@ export const startBackgroundJobs = () => {
   }, 2 * MINUTE);
   warmup.unref?.();
 
-  console.log("[jobs] background money jobs started");
+  // Sooner than the payment warm-up: a salon missing from the index is
+  // invisible to every AI search until this runs.
+  const indexWarmup = setTimeout(() => {
+    void safely("ai.syncIndex", () => syncSearchIndex());
+  }, 45 * 1000);
+  indexWarmup.unref?.();
+
+  console.log("[jobs] background jobs started");
 };

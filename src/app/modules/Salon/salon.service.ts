@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
-import { aiService } from "../AI-Suggestion/ai.service";
+import { scheduleReindex } from "../AI-Suggestion/ai.indexer";
 import { countNearbySalons, findNearbySalonIds } from "./salon.geo";
 import { SalonListQuery } from "./salon.validation";
 
@@ -69,8 +69,9 @@ const createSalon = async (userId: string, payload: any) => {
     },
   });
 
-  // Automatically generate AI embedding in the background
-  aiService.generateAndSaveSaloneEmbedding(salon.id).catch(console.error);
+  // A new salon awaits approval, so this usually does nothing; the status
+  // change that activates it re-embeds it.
+  scheduleReindex(salon.id, "salon.created");
 
   return salon;
 };
@@ -490,8 +491,9 @@ const updateSalon = async (userId: string, salonId: string, payload: any) => {
     data,
   });
 
-  // Automatically regenerate AI embedding when a salon is updated
-  aiService.generateAndSaveSaloneEmbedding(salonId).catch(console.error);
+  // Skipped by the indexer when nothing it embeds (name, place, description,
+  // services) changed, so settings-only saves cost no Gemini call.
+  scheduleReindex(salonId, "salon.updated");
 
   return result;
 };
@@ -569,6 +571,9 @@ const updateSalonStatus = async (salonId: string, status: string, user?: any) =>
     where: { id: salonId },
     data: { status: status as any },
   });
+
+  // Approval is when a salon becomes searchable.
+  scheduleReindex(salonId, "salon.status");
 
   return result;
 };

@@ -1,4 +1,47 @@
-import rateLimit from "express-rate-limit";
+import { timingSafeEqual } from "crypto";
+import { Request } from "express";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { isIP } from "net";
+import config from "../../config";
+
+const sameSecret = (a: string, b: string) => {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+};
+
+/**
+ * The visitor's address. The frontend calls this API from its own server, so
+ * `req.ip` is Vercel's address for every visitor at once. Our Next.js server
+ * forwards the real one in X-Client-IP - believed only alongside the shared
+ * INTERNAL_API_KEY, since anyone else could write any address there.
+ */
+export const clientIp = (req: Request): string => {
+  const forwarded = req.get("x-client-ip")?.trim();
+  const key = req.get("x-internal-key");
+
+  if (
+    forwarded &&
+    key &&
+    config.internalApiKey &&
+    sameSecret(key, config.internalApiKey) &&
+    isIP(forwarded)
+  ) {
+    return forwarded;
+  }
+
+  return req.ip ?? "unknown";
+};
+
+/**
+ * Signed-in callers by account, everyone else by their real IP. Needs
+ * optionalAuth() (or auth()) to run before the limiter, or req.user is unset.
+ * IPv6 addresses are grouped by /56 so one household is one bucket.
+ */
+export const userOrClientKey = (req: Request): string =>
+  req.user?.userId
+    ? `user:${req.user.userId}`
+    : ipKeyGenerator(clientIp(req));
 
 /**
  * Guards the credential and token endpoints: login, register, forgot-password,
@@ -17,12 +60,13 @@ export const authLimiter = rateLimit({
 });
 
 /**
- * AI search is public but every call spends Gemini quota on two model requests,
- * so it gets a tighter budget than an ordinary read endpoint.
+ * AI search is public but a call can spend Gemini quota on up to three model
+ * requests, so it gets a tighter budget than an ordinary read endpoint.
  */
 export const aiSearchLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 15,
+  keyGenerator: userOrClientKey,
   standardHeaders: true,
   legacyHeaders: false,
   message: {

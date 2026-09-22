@@ -44,6 +44,13 @@ interface Config {
     nominatimUrl: string;
     photonUrl: string;
   };
+  ai: {
+    geminiApiKey: string;
+    embeddingModel: string;
+    chatModels: string[];
+    searchLimit: number;
+  };
+  internalApiKey: string;
 }
 //
 
@@ -176,4 +183,35 @@ export default {
       "",
     ),
   },
+
+  /**
+   * AI search (Gemini). The embedding model is one fixed id: vectors from two
+   * models are not comparable, so there is no fallback for it, and changing it
+   * re-embeds every salon (the indexer notices on its own).
+   *
+   * GEMINI_CHAT_MODEL is a comma-separated preference list. The first model
+   * that answers in time wins; one that fails is skipped for a while. The
+   * default leads with gemini-2.5-flash because this project already uses it -
+   * since 2026-09-18 Google only grants 2.5 access to projects that do, so a new
+   * project should lead with a 3.x Flash-Lite instead.
+   */
+  ai: {
+    geminiApiKey: env("GEMINI_API_KEY"),
+    embeddingModel: env("GEMINI_EMBEDDING_MODEL") || "gemini-embedding-2",
+    chatModels: (
+      env("GEMINI_CHAT_MODEL") || "gemini-2.5-flash,gemini-3.5-flash-lite"
+    )
+      .split(",")
+      .map((model) => model.trim())
+      .filter(Boolean),
+    searchLimit: Math.min(Math.max(Number(env("AI_SEARCH_LIMIT")) || 6, 1), 12),
+  },
+
+  /**
+   * Shared secret between the Next.js server and this API. Every call the
+   * frontend makes comes from its server, so without it `req.ip` is Vercel's
+   * address for every visitor. With it, a limiter may trust the visitor's IP
+   * that the frontend forwards in X-Client-IP. Empty turns that off.
+   */
+  internalApiKey: env("INTERNAL_API_KEY"),
 } as Config;

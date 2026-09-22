@@ -1,40 +1,44 @@
 /**
- * Regenerates salon embeddings.
+ * Embeds salons for AI search.
  *
- *   npm run backfill:embeddings          only salons with no vector
- *   npm run backfill:embeddings -- --all every active salon
+ *   npm run backfill:embeddings          salons whose vector is missing or stale
+ *   npm run backfill:embeddings -- --all every active salon, changed or not
  *
- * Use --all whenever aiService.buildSalonText changes: old vectors describe the
- * old text and are not comparable with newly generated ones.
+ * The server's sync job does the first form on its own every 10 minutes, so
+ * this is for a fresh database or for seeing the result right away. Changing
+ * the embedding model or `buildSalonDocument` no longer needs --all: stored
+ * vectors carry their model and document hash, and stale ones are redone.
  */
-import { aiService } from "../app/modules/AI-Suggestion/ai.service";
+import "../config";
+import { aiIndexer } from "../app/modules/AI-Suggestion/ai.indexer";
 import prisma from "../app/shared/prisma";
 
 const main = async () => {
-  const onlyMissing = !process.argv.includes("--all");
+  const force = process.argv.includes("--all");
 
   console.log(
-    onlyMissing
-      ? "Embedding salons that have no vector yet..."
-      : "Re-embedding every active salon..."
+    force
+      ? "Re-embedding every active salon..."
+      : "Embedding active salons that are missing or stale...",
   );
 
-  const result = await aiService.backfillEmbeddings(onlyMissing);
+  const result = await aiIndexer.reindexAll({ force });
 
   console.log(
-    `\nDone: ${result.succeeded} succeeded, ${result.failed} failed, ${result.total} considered.`
+    `\nDone: ${result.embedded} embedded, ${result.unchanged} unchanged, ${result.skipped} skipped, ${result.failed} failed, ${result.total} active salons.`,
   );
 
   if (result.failures.length) {
     console.error("\nFailures:");
-    result.failures.forEach((f) => console.error(`  ${f.name} (${f.id}): ${f.error}`));
+    result.failures.forEach((f) =>
+      console.error(`  ${f.name} (${f.id}): ${f.error}`),
+    );
   }
 
-  const [{ count }] = await prisma.$queryRaw<Array<{ count: number }>>`
-    SELECT COUNT(*)::int AS count FROM salons
-    WHERE "isDeleted" = false AND status = 'ACTIVE' AND embedding IS NOT NULL
-  `;
-  console.log(`\nActive salons now searchable: ${count}`);
+  const coverage = await aiIndexer.indexCoverage();
+  console.log(
+    `\nSearch index (${coverage.model}, ${coverage.documentVersion}): ${coverage.upToDate} of ${coverage.activeSalons} active salons up to date, ${coverage.missing} missing, ${coverage.stale} stale.`,
+  );
 
   await prisma.$disconnect();
   process.exit(result.failed > 0 ? 1 : 0);

@@ -24,6 +24,14 @@ model Salon {
   ownerId        String
   isDeleted      Boolean                     @default(false)
   embedding      Unsupported("vector(768)")?
+  /// Which model produced `embedding`, and from which document
+  /// (`embeddingHash` is "<document version>:<sha256 of the text>"). The AI
+  /// indexer re-embeds when either stops matching, so a model switch or a
+  /// changed service list never leaves stale or incomparable vectors behind.
+  /// Written only by AI-Suggestion/ai.indexer.ts, with raw SQL.
+  embeddingModel String?
+  embeddingHash  String?
+  embeddedAt     DateTime?
 
   // Deposit policy. `depositPercent` wins when set, otherwise `depositMinor`;
   // either way the result is clamped to the platform min/max in
