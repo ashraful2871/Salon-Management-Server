@@ -6,5 +6,6 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [pgvector(map: "vector")]
+  directUrl  = env("DIRECT_URL")
+  extensions = [pgvector(map: "vector"), postgis]
 }

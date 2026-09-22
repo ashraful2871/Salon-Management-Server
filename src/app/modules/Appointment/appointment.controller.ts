@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
+import { AppointmentCheckout } from "./appointment.checkout";
 import { AppointmentService } from "./appointment.service";
 
 const bookAppointment = catchAsync(async (req: Request, res: Response) => {
@@ -54,7 +55,11 @@ const getAppointmentById = catchAsync(async (req: Request, res: Response) => {
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  const result = await AppointmentService.getAppointmentById(id);
+  const result = await AppointmentService.getAppointmentById(
+    id,
+    req.user!.userId,
+    req.user!.role,
+  );
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -89,11 +94,19 @@ const updateAppointmentStatus = catchAsync(
 
 const cancelAppointment = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
+  const userRole = req.user?.role;
 
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
+  const reason =
+    typeof req.body?.reason === "string" ? req.body.reason : undefined;
 
-  const result = await AppointmentService.cancelAppointment(userId, id);
+  const result = await AppointmentService.cancelAppointment(
+    userId,
+    userRole,
+    id,
+    reason,
+  );
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -160,8 +173,106 @@ const resolveAppeal = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const idFromParams = (req: Request) => {
+  const idParam = req.params.id;
+  return Array.isArray(idParam) ? idParam[0] : idParam;
+};
+
+const actor = (req: Request) => ({
+  userId: req.user!.userId,
+  role: req.user!.role,
+});
+
+const bookWalkIn = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentService.bookWalkIn(actor(req), req.body);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.CREATED,
+    success: true,
+    message: "Walk-in booked successfully",
+    data: result,
+  });
+});
+
+const lookupByToken = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentCheckout.lookupByToken(
+    actor(req),
+    String(req.query.token ?? ""),
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Booking found",
+    data: result,
+  });
+});
+
+const checkIn = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentCheckout.checkIn(
+    actor(req),
+    idFromParams(req),
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Checked in",
+    data: result,
+  });
+});
+
+const startAppointment = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentCheckout.start(actor(req), idFromParams(req));
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Service started",
+    data: result,
+  });
+});
+
+const checkout = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentCheckout.checkout(
+    actor(req),
+    idFromParams(req),
+    {
+      paymentMethod: req.body.paymentMethod,
+      reference: req.body.reference,
+    },
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Payment recorded and booking completed",
+    data: result,
+  });
+});
+
+const cashSummary = catchAsync(async (req: Request, res: Response) => {
+  const salonId =
+    typeof req.query.salonId === "string" && req.query.salonId
+      ? req.query.salonId
+      : undefined;
+
+  const result = await AppointmentCheckout.cashSummary(actor(req), {
+    date: String(req.query.date),
+    salonId,
+  });
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Cash summary retrieved successfully",
+    data: result,
+  });
+});
+
 export const AppointmentController = {
   bookAppointment,
+  bookWalkIn,
   getAllAppointments,
   getMyAppointments,
   getAppointmentById,
@@ -170,4 +281,9 @@ export const AppointmentController = {
   getCancellationPreview,
   appealNoShow,
   resolveAppeal,
+  lookupByToken,
+  checkIn,
+  startAppointment,
+  checkout,
+  cashSummary,
 };

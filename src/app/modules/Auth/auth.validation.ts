@@ -39,10 +39,29 @@ const changePasswordValidation = z.object({
   }),
 });
 
-const refreshTokenValidation = z.object({
+const changeEmailValidation = z.object({
   body: z.object({
-    refreshToken: z.string().nonempty({ message: "Refresh token is required" }),
+    newEmail: z
+      .string()
+      .trim()
+      .nonempty({ message: "New email is required" })
+      .email("Invalid email format"),
+    password: z.string().nonempty({ message: "Current password is required" }),
   }),
+});
+
+/**
+ * Optional, because the token is just as likely to arrive in the `refreshToken`
+ * cookie as in the body. Requiring it here rejected every browser-only refresh
+ * with a 400 before the controller ever looked at the cookie; the controller
+ * now answers 401 when neither source has one.
+ */
+const refreshTokenValidation = z.object({
+  body: z
+    .object({
+      refreshToken: z.string().optional(),
+    })
+    .optional(),
 });
 
 const forgotPasswordValidation = z.object({
@@ -83,6 +102,7 @@ export const AuthValidation = {
   registerValidation,
   loginValidation,
   changePasswordValidation,
+  changeEmailValidation,
   refreshTokenValidation,
   forgotPasswordValidation,
   resetPasswordValidation,

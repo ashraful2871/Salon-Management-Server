@@ -4,8 +4,78 @@ export const getBookingConfirmationTemplate = (
   serviceName: string,
   date: string,
   time: string,
-  price: string
+  price: string,
+  // Trailing and optional so the six positional arguments above keep their
+  // meaning. Bookings made before tokens existed simply have none.
+  identity?: {
+    token?: string | null;
+    serialNumber?: number | null;
+    staffName?: string | null;
+    counterName?: string | null;
+  }
 ) => {
+  const token = identity?.token;
+  const serialNumber = identity?.serialNumber;
+  // A serial only means something within its queue - salon + service +
+  // counter + day - so it is always shown with the queue it belongs to.
+  const serialQueue = [serviceName, identity?.counterName]
+    .filter(Boolean)
+    .join(" · ");
+
+  // The one thing the customer has to have at the counter, so it gets its own
+  // block above the details rather than a row inside them. Tables and inline
+  // styles throughout: Gmail and Outlook drop flexbox and most of a <style>.
+  const identityBlock =
+    token || serialNumber != null
+      ? `
+        <div class="token-card" style="background-color: #2c3e50; color: #ffffff; border-radius: 6px; padding: 20px 16px 12px; margin: 25px 0; text-align: center;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              ${
+                serialNumber != null
+                  ? `<td style="text-align: center; padding: 4px 8px;">
+                      <div class="token-label" style="font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #a9b7c6; margin-bottom: 6px;">Your place in line</div>
+                      <div class="token-serial" style="font-size: 30px; font-weight: 700; line-height: 1.1; color: #ffffff;">Serial #${serialNumber}</div>
+                      <div class="token-queue" style="font-size: 13px; line-height: 1.4; color: #d5dde6; margin-top: 4px;">${serialQueue}</div>
+                    </td>`
+                  : ""
+              }
+              ${
+                token
+                  ? `<td style="text-align: center; padding: 4px 8px;">
+                      <div class="token-label" style="font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #a9b7c6; margin-bottom: 6px;">Booking token</div>
+                      <div class="token-code" style="font-family: 'Courier New', Courier, monospace; font-size: 24px; font-weight: 700; letter-spacing: 3px; line-height: 1.2; color: #ffffff;">${token}</div>
+                    </td>`
+                  : ""
+              }
+            </tr>
+          </table>
+          <p class="token-hint" style="font-size: 12px; color: #a9b7c6; margin: 14px 0 0;">
+            Show this${token ? " token" : ""} at the salon counter${
+              serialNumber != null
+                ? " - your serial is the order you will be called in for this service and counter"
+                : ""
+            }.
+          </p>
+        </div>`
+      : "";
+
+  const extraRows = `${
+    identity?.staffName
+      ? `<tr>
+          <td class="detail-label" style="padding: 5px 0;">Stylist</td>
+          <td class="detail-value" style="padding: 5px 0;">${identity.staffName}</td>
+        </tr>`
+      : ""
+  }${
+    identity?.counterName
+      ? `<tr>
+          <td class="detail-label" style="padding: 5px 0;">Counter</td>
+          <td class="detail-value" style="padding: 5px 0;">${identity.counterName}</td>
+        </tr>`
+      : ""
+  }`;
+
   return `
   <!DOCTYPE html>
   <html>
@@ -87,6 +157,40 @@ export const getBookingConfirmationTemplate = (
         font-weight: 600;
         margin-top: 20px;
       }
+      .token-card {
+        background-color: #2c3e50;
+        color: #ffffff;
+        border-radius: 6px;
+        padding: 20px 16px 12px;
+        margin: 25px 0;
+        text-align: center;
+      }
+      .token-label {
+        font-size: 11px;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        color: #a9b7c6;
+        margin-bottom: 6px;
+      }
+      .token-serial {
+        font-size: 30px;
+        font-weight: 700;
+        line-height: 1.1;
+        color: #ffffff;
+      }
+      .token-code {
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 3px;
+        line-height: 1.2;
+        color: #ffffff;
+      }
+      .token-hint {
+        font-size: 12px;
+        color: #a9b7c6;
+        margin: 14px 0 0;
+      }
     </style>
   </head>
   <body>
@@ -96,10 +200,32 @@ export const getBookingConfirmationTemplate = (
       </div>
       <div class="content">
         <div class="greeting">Hi ${customerName},</div>
-        <p>Your appointment at <strong>${salonName}</strong> has been successfully booked. Here are your booking details:</p>
-        
+        <p>Your appointment at <strong>${salonName}</strong> has been confirmed. Here are your booking details:</p>
+
+        ${identityBlock}
+
         <div class="booking-details">
           <table style="width: 100%; border-collapse: collapse;">
+            ${
+              token
+                ? `<tr>
+              <td class="detail-label" style="padding: 5px 0;">Token</td>
+              <td class="detail-value" style="padding: 5px 0;">${token}</td>
+            </tr>`
+                : ""
+            }
+            ${
+              serialNumber != null
+                ? `<tr>
+              <td class="detail-label" style="padding: 5px 0;">Serial</td>
+              <td class="detail-value" style="padding: 5px 0;">#${serialNumber}</td>
+            </tr>`
+                : ""
+            }
+            <tr>
+              <td class="detail-label" style="padding: 5px 0;">Salon</td>
+              <td class="detail-value" style="padding: 5px 0;">${salonName}</td>
+            </tr>
             <tr>
               <td class="detail-label" style="padding: 5px 0;">Service</td>
               <td class="detail-value" style="padding: 5px 0;">${serviceName}</td>
@@ -112,13 +238,14 @@ export const getBookingConfirmationTemplate = (
               <td class="detail-label" style="padding: 5px 0;">Time</td>
               <td class="detail-value" style="padding: 5px 0;">${time}</td>
             </tr>
+            ${extraRows}
             <tr>
               <td class="detail-label" style="padding: 5px 0;">Price</td>
               <td class="detail-value" style="padding: 5px 0;">${price}</td>
             </tr>
           </table>
         </div>
-        
+
         <p>We look forward to seeing you!</p>
         <p>If you need to reschedule or cancel your appointment, please contact the salon or use our platform.</p>
       </div>
@@ -282,18 +409,59 @@ const moneyLayout = (heading: string, body: string) => `
   </html>
 `;
 
-export const getWalletTopupTemplate = (
-  customerName: string,
-  amount: string,
-  availableBalance: string
-) =>
-  moneyLayout(
-    "Top-up successful",
-    `<p>Hi ${customerName},</p>
-     <p><strong>${amount}</strong> has been added to your wallet.</p>
-     <p>Available balance: <strong>${availableBalance}</strong></p>
-     <p style="color:#7f8c8d;font-size:13px;">Your balance is used to hold booking deposits. Nothing is charged until you complete or miss an appointment.</p>`
+/**
+ * The top-up receipt. This is the customer's proof of payment, so every field
+ * they might have to quote to support belongs on it - above all the
+ * transaction id, which is the same string the wallet page shows and the only
+ * handle either side has on a gateway payment.
+ */
+export const getWalletTopupInvoiceTemplate = (invoice: {
+  customerName: string;
+  transactionId: string;
+  amount: string;
+  availableBalance: string;
+  method: string;
+  gatewayRef: string | null;
+  paidAt: Date;
+  provider: string;
+}) => {
+  const paidAt = invoice.paidAt.toLocaleString("en-GB", {
+    timeZone: "Asia/Dhaka",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  const row = (label: string, value: string, mono = false) => `
+    <tr>
+      <td style="padding:10px 0;color:#7f8c8d;font-size:13px;border-bottom:1px solid #eef1f3;">${label}</td>
+      <td style="padding:10px 0;text-align:right;font-size:13px;color:#2c3e50;border-bottom:1px solid #eef1f3;${
+        mono ? "font-family:'Courier New',monospace;word-break:break-all;" : ""
+      }">${value}</td>
+    </tr>`;
+
+  return moneyLayout(
+    "Payment receipt",
+    `<p>Hi ${invoice.customerName},</p>
+     <p>We have received your payment. <strong>${invoice.amount}</strong> has been added to your wallet.</p>
+
+     <div style="background:#f8f9fa;border:1px solid #e8ecef;border-radius:6px;padding:18px 20px;margin:22px 0;">
+       <p style="margin:0 0 6px;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7f8c8d;">Amount paid</p>
+       <p style="margin:0;font-size:28px;font-weight:bold;color:#27ae60;">${invoice.amount}</p>
+     </div>
+
+     <table style="width:100%;border-collapse:collapse;border-top:1px solid #eef1f3;">
+       ${row("Transaction ID", invoice.transactionId, true)}
+       ${row("Gateway reference", invoice.gatewayRef || "&mdash;", true)}
+       ${row("Payment method", invoice.method)}
+       ${row("Paid via", invoice.provider)}
+       ${row("Date", paidAt)}
+       ${row("Status", '<span style="color:#27ae60;font-weight:bold;">PAID</span>')}
+       ${row("Available balance", `<strong>${invoice.availableBalance}</strong>`)}
+     </table>
+
+     <p style="color:#7f8c8d;font-size:13px;margin-top:22px;">Keep the transaction ID &mdash; it is what support needs to trace this payment. Your balance is used to hold booking deposits; nothing is charged until you complete or miss an appointment.</p>`
   );
+};
 
 export const getDepositReleasedTemplate = (
   customerName: string,
@@ -317,4 +485,80 @@ export const getDepositForfeitedTemplate = (
     `<p>Hi ${customerName},</p>
      <p>Your booking at ${salonName} was marked as a no-show, and the <strong>${amount}</strong> deposit has been forfeited.</p>
      <p>Think this is wrong? You can appeal within <strong>48 hours</strong> from your bookings page and an admin will review it.</p>`
+  );
+
+// For text a customer typed, such as their name. It lands in the salon owner's
+// inbox, so it must not be able to add links or markup of its own.
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+/**
+ * Tells a salon owner that a customer has just booked. Laid out for the
+ * counter: the serial and token are what the customer will give on arrival,
+ * and the amount due is what is left to collect once the deposit is counted.
+ */
+export const getNewBookingOwnerTemplate = (booking: {
+  ownerName: string;
+  salonName: string;
+  customerName: string;
+  serviceName: string;
+  counterName?: string | null;
+  serialNumber?: number | null;
+  token?: string | null;
+  date: string;
+  time: string;
+  dueAtCounter: string;
+}) => {
+  const row = (label: string, value: string, mono = false) => `
+    <tr>
+      <td style="padding:10px 0;color:#7f8c8d;font-size:13px;border-bottom:1px solid #eef1f3;">${label}</td>
+      <td style="padding:10px 0;text-align:right;font-size:13px;color:#2c3e50;border-bottom:1px solid #eef1f3;${
+        mono ? "font-family:'Courier New',monospace;" : ""
+      }">${value}</td>
+    </tr>`;
+
+  const serial = booking.serialNumber ? `#${booking.serialNumber}` : "&mdash;";
+
+  return moneyLayout(
+    "New booking",
+    `<p>Hi ${escapeHtml(booking.ownerName)},</p>
+     <p><strong>${escapeHtml(booking.customerName)}</strong> has booked ${escapeHtml(booking.serviceName)} at ${escapeHtml(booking.salonName)}.</p>
+
+     <div style="background:#f8f9fa;border:1px solid #e8ecef;border-radius:6px;padding:18px 20px;margin:22px 0;">
+       <p style="margin:0 0 6px;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7f8c8d;">Serial</p>
+       <p style="margin:0;font-size:28px;font-weight:bold;color:#2c3e50;">${serial}</p>
+     </div>
+
+     <table style="width:100%;border-collapse:collapse;border-top:1px solid #eef1f3;">
+       ${row("Customer", escapeHtml(booking.customerName))}
+       ${row("Service", escapeHtml(booking.serviceName))}
+       ${row("Counter", booking.counterName ? escapeHtml(booking.counterName) : "&mdash;")}
+       ${row("Date", booking.date)}
+       ${row("Time", booking.time)}
+       ${row("Token", booking.token || "&mdash;", true)}
+       ${row("Due at the counter", `<strong>${booking.dueAtCounter}</strong>`)}
+     </table>`
+  );
+};
+
+/**
+ * Sent to the address an account just moved away from. If the owner did not
+ * make the change, this is the only warning they get - the new address now
+ * receives every password reset, so it has to reach the old inbox.
+ */
+export const getEmailChangedNoticeTemplate = (
+  userName: string,
+  newEmail: string
+) =>
+  moneyLayout(
+    "Your email was changed",
+    `<p>Hi ${escapeHtml(userName)},</p>
+     <p>The email address on your Salon Management account was just changed to <strong>${escapeHtml(newEmail)}</strong>.</p>
+     <p>From now on, sign in with the new address. Booking confirmations, receipts and password reset links will be sent there instead of here.</p>
+     <p style="color:#c0392b;font-size:13px;">If you did not make this change, please contact support straight away - someone may have access to your account.</p>`
   );

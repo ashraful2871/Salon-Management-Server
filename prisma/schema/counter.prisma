@@ -11,6 +11,7 @@ model Counter {
   // Relations
   salon        Salon         @relation(fields: [salonId], references: [id], onDelete: Cascade)
   appointments Appointment[]
+  slots        Slot[]
 
   @@map("counters")
 }

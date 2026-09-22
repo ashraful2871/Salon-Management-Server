@@ -15,6 +15,7 @@ import { AiRoutes } from "../modules/AI-Suggestion/ai.route";
 import { SlotRoutes } from "../modules/Slot/slot.route";
 import { WalletRoutes } from "../modules/Wallet/wallet.routes";
 import { SettlementRoutes } from "../modules/Settlement/settlement.routes";
+import { GeoRoutes } from "../modules/Geo/geo.route";
 
 const router = express.Router();
 
@@ -82,6 +83,10 @@ const moduleRoutes = [
   {
     path: "/settlements",
     route: SettlementRoutes,
+  },
+  {
+    path: "/geo",
+    route: GeoRoutes,
   },
 ];
 

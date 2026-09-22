@@ -11,11 +11,35 @@ const bookAppointmentValidation = z.object({
   }),
 });
 
+const walkInValidation = z.object({
+  body: z.object({
+    slotId: z.string().nonempty({ message: "Slot ID is required" }),
+    customerName: z
+      .string()
+      .trim()
+      .nonempty({ message: "Customer name is required" })
+      .max(100),
+    customerPhone: z
+      .string()
+      .trim()
+      .regex(/^\+?[\d\s-]+$/, { message: "Enter a valid phone number" })
+      .refine(
+        (phone) => {
+          const digits = phone.replace(/\D/g, "").length;
+          return digits >= 6 && digits <= 15;
+        },
+        { message: "Enter a valid phone number" },
+      ),
+    notes: z.string().max(1000).optional(),
+  }),
+});
+
 const updateAppointmentStatusValidation = z.object({
   body: z.object({
     status: z.enum([
       "PENDING",
       "CONFIRMED",
+      "CHECKED_IN",
       "IN_PROGRESS",
       "COMPLETED",
       "CANCELLED",
@@ -43,9 +67,35 @@ const resolveAppealValidation = z.object({
   }),
 });
 
+const lookupByTokenValidation = z.object({
+  query: z.object({
+    token: z.string().trim().nonempty({ message: "Token is required" }),
+  }),
+});
+
+const cashSummaryValidation = z.object({
+  query: z.object({
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, { message: "date must be YYYY-MM-DD" }),
+    salonId: z.string().optional(),
+  }),
+});
+
+const checkoutValidation = z.object({
+  body: z.object({
+    paymentMethod: z.enum(["CASH", "CARD", "MOBILE_BANKING"]),
+    reference: z.string().max(100).optional(),
+  }),
+});
+
 export const AppointmentValidation = {
   bookAppointmentValidation,
+  walkInValidation,
   updateAppointmentStatusValidation,
   appealNoShowValidation,
   resolveAppealValidation,
+  lookupByTokenValidation,
+  cashSummaryValidation,
+  checkoutValidation,
 };

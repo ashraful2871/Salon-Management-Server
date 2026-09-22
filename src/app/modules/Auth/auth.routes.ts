@@ -35,6 +35,15 @@ router.post(
   AuthController.changePassword,
 );
 
+// Rate limited like login: the password in the body makes this a credential check.
+router.post(
+  "/change-email",
+  authLimiter,
+  auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN", "AGENT"),
+  validateRequest(AuthValidation.changeEmailValidation),
+  AuthController.changeEmail,
+);
+
 router.get(
   "/me",
   auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN"),

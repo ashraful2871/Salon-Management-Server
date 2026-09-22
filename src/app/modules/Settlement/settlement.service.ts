@@ -178,6 +178,34 @@ export const recordForfeitedDeposit = async (
 };
 
 /**
+ * A late cancellation. Unlike a forfeit the platform takes nothing: the whole
+ * penalty goes to the salon, because the salon is the one left with an empty
+ * chair it can no longer sell. A zero penalty writes nothing, which keeps the
+ * `hasEntries` guard free for a later correction.
+ */
+export const recordLateCancellationPenalty = async (
+  db: Prisma.TransactionClient,
+  appointment: Appointment,
+  penaltyMinor: number,
+) => {
+  if (penaltyMinor <= 0) return;
+  if (await hasEntries(db, appointment.id)) return;
+
+  await writeEntries(db, appointment, [
+    {
+      account: LedgerAccount.CUSTOMER_WALLET,
+      amountMinor: -penaltyMinor,
+      description: "Late cancellation fee",
+    },
+    {
+      account: LedgerAccount.SALON_PAYABLE,
+      amountMinor: penaltyMinor,
+      description: "Late cancellation fee kept by salon",
+    },
+  ]);
+};
+
+/**
  * Reverses a forfeit after a successful appeal. The original rows stay - a
  * correction is a new compensating set, never an edit.
  */
@@ -572,6 +600,7 @@ export const SettlementService = {
   resolveCommissionMinor,
   recordCompletedBooking,
   recordForfeitedDeposit,
+  recordLateCancellationPenalty,
   reverseForfeitedDeposit,
   getSalonBalance,
   runPayoutBatch,

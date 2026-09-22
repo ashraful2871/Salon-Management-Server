@@ -11,6 +11,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
+import { atWallClock } from "../../utils/slotTime";
 import { sendEmail } from "../../utils/emailSender";
 import {
   getDepositForfeitedTemplate,
@@ -39,6 +40,27 @@ export const APPEAL_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 /** How late a customer can be before the auto no-show job gives up on them. */
 const NO_SHOW_GRACE_MIN = Number(process.env.NO_SHOW_GRACE_MINUTES ?? 20);
+
+/**
+ * What a customer loses for cancelling inside the salon's window. Outside the
+ * window a cancellation is free; inside it the slot is too close to resell, so
+ * the salon keeps a slice - but only a slice. Forfeiting the whole deposit is
+ * what a no-show costs, and someone who tells us an hour ahead is not the same
+ * as someone who never turns up.
+ *
+ * Read on use, not at import: dotenv runs after this module is first loaded.
+ */
+const latePenaltyPercent = () => {
+  const parsed = Number(process.env.LATE_CANCELLATION_PENALTY_PERCENT ?? 20);
+  if (!Number.isFinite(parsed)) return 20;
+  return Math.min(Math.max(parsed, 0), 100);
+};
+
+const latePenaltyMinor = (depositMinor: number) =>
+  Math.min(
+    Math.round((depositMinor * latePenaltyPercent()) / 100),
+    Math.max(depositMinor, 0),
+  );
 
 /**
  * `depositPercent` wins when the salon set one - for a bridal or keratin
@@ -75,11 +97,29 @@ export const resolveDepositMinor = (
  */
 export const appointmentStartsAt = (
   appointment: Pick<Appointment, "appointmentDate" | "startTime">,
+): Date => atWallClock(appointment.appointmentDate, appointment.startTime);
+
+/**
+ * When the chair is free again. `endTime` is written at booking from the slot,
+ * but bookings made before that was stored fall back to the start - a zero
+ * length appointment is wrong, but it is never wrong in the customer's favour
+ * by more than the grace period.
+ */
+export const appointmentEndsAt = (
+  appointment: Pick<Appointment, "appointmentDate" | "startTime" | "endTime">,
 ): Date => {
-  const [hours, minutes] = appointment.startTime.split(":").map(Number);
-  const startsAt = new Date(appointment.appointmentDate);
-  startsAt.setHours(hours || 0, minutes || 0, 0, 0);
-  return startsAt;
+  if (!appointment.endTime) return appointmentStartsAt(appointment);
+
+  const endsAt = atWallClock(appointment.appointmentDate, appointment.endTime);
+
+  // An appointment that runs past midnight has an end time earlier in the day
+  // than its start; roll it forward rather than returning a time in the past.
+  const startsAt = appointmentStartsAt(appointment);
+  if (endsAt.getTime() < startsAt.getTime()) {
+    endsAt.setDate(endsAt.getDate() + 1);
+  }
+
+  return endsAt;
 };
 
 /** True while the customer can still cancel for free. */
@@ -91,6 +131,54 @@ export const isWithinFreeCancellation = (
   const startsAt = appointmentStartsAt(appointment);
   const windowMs = salon.cancellationWindowMin * 60 * 1000;
   return startsAt.getTime() - now.getTime() >= windowMs;
+};
+
+/**
+ * Once the appointment has started there is nothing left to cancel - the chair
+ * was held, the slot is gone, and what happens next is either a completion or
+ * a no-show. Letting a customer cancel at that point would be a way to dodge
+ * the forfeit by a single click.
+ */
+export const assertCancellable = (
+  appointment: Pick<Appointment, "appointmentDate" | "startTime">,
+  now = new Date(),
+) => {
+  if (now.getTime() >= appointmentStartsAt(appointment).getTime()) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "This appointment has already started and can no longer be cancelled. Please contact the salon.",
+    );
+  }
+};
+
+/**
+ * What cancelling right now costs. One function so the preview endpoint, the
+ * cancel endpoint and the status endpoint can never disagree about the number
+ * the customer was shown.
+ */
+export const cancellationQuote = (
+  appointment: Pick<
+    Appointment,
+    "appointmentDate" | "startTime" | "depositMinor"
+  >,
+  salon: Pick<Salon, "cancellationWindowMin">,
+  now = new Date(),
+) => {
+  const startsAt = appointmentStartsAt(appointment);
+  const free = isWithinFreeCancellation(appointment, salon, now);
+  const deposit = Math.max(appointment.depositMinor, 0);
+  const penaltyMinor = free ? 0 : latePenaltyMinor(deposit);
+
+  return {
+    startsAt,
+    started: now.getTime() >= startsAt.getTime(),
+    freeCancellation: free,
+    cancellationWindowMin: salon.cancellationWindowMin,
+    penaltyPercent: free ? 0 : latePenaltyPercent(),
+    depositMinor: deposit,
+    penaltyMinor,
+    refundMinor: deposit - penaltyMinor,
+  };
 };
 
 type AppointmentWithSalon = Appointment & { salon: Salon };
@@ -125,47 +213,62 @@ const notify = (
 
 // ---------------------------------------------------------------------------
 // Outcomes
+//
+// Each outcome comes in three parts: `settleXTx` does the money movement inside
+// a caller's transaction, `notifyX` sends the email once that transaction has
+// committed, and `settleX` runs both on its own for callers that have no
+// transaction of their own. Use the Tx form whenever the status change and the
+// settlement must commit together.
 // ---------------------------------------------------------------------------
+
+const SETTLEMENT_TX_OPTIONS = { timeout: 15000, maxWait: 10000 };
 
 /**
  * Completed: the deposit comes off the bill and becomes money owed to the
  * salon, less our flat 10% commission. The customer pays the remainder at
  * the counter.
  */
+export const settleCompletedTx = async (
+  tx: Prisma.TransactionClient,
+  appointmentId: string,
+) => {
+  const appointment = await loadForSettlement(tx, appointmentId);
+  if (!appointment) return null;
+
+  if (
+    appointment.depositStatus === DepositStatus.HELD &&
+    appointment.depositMinor > 0
+  ) {
+    await WalletService.applyDeposit(
+      appointment.customerId,
+      appointment.depositMinor,
+      appointment.id,
+      tx,
+    );
+
+    await tx.appointment.update({
+      where: { id: appointment.id },
+      data: { depositStatus: DepositStatus.APPLIED },
+    });
+  }
+
+  const commissionMinor = SettlementService.resolveCommissionMinor(
+    appointment.totalMinor,
+  );
+
+  await SettlementService.recordCompletedBooking(
+    tx,
+    { ...appointment, depositStatus: DepositStatus.APPLIED },
+    commissionMinor,
+  );
+
+  return appointment;
+};
+
 export const settleCompleted = async (appointmentId: string) => {
   await prisma.$transaction(
-    async (tx) => {
-      const appointment = await loadForSettlement(tx, appointmentId);
-      if (!appointment) return;
-
-      if (
-        appointment.depositStatus === DepositStatus.HELD &&
-        appointment.depositMinor > 0
-      ) {
-        await WalletService.applyDeposit(
-          appointment.customerId,
-          appointment.depositMinor,
-          appointment.id,
-          tx,
-        );
-
-        await tx.appointment.update({
-          where: { id: appointment.id },
-          data: { depositStatus: DepositStatus.APPLIED },
-        });
-      }
-
-      const commissionMinor = SettlementService.resolveCommissionMinor(
-        appointment.totalMinor,
-      );
-
-      await SettlementService.recordCompletedBooking(
-        tx,
-        { ...appointment, depositStatus: DepositStatus.APPLIED },
-        commissionMinor,
-      );
-    },
-    { timeout: 15000, maxWait: 10000 },
+    (tx) => settleCompletedTx(tx, appointmentId),
+    SETTLEMENT_TX_OPTIONS,
   );
 };
 
@@ -173,58 +276,56 @@ export const settleCompleted = async (appointmentId: string) => {
  * Cancelled in time, or cancelled by the salon: the hold is released and the
  * money is spendable again immediately. No gateway reversal, no 3-10 day wait.
  */
-export const settleReleased = async (
+export const settleReleasedTx = async (
+  tx: Prisma.TransactionClient,
   appointmentId: string,
   options: { goodwill?: boolean } = {},
 ) => {
-  const released = await prisma.$transaction(
-    async (tx) => {
-      const appointment = await loadForSettlement(tx, appointmentId);
-      if (!appointment) return null;
+  const appointment = await loadForSettlement(tx, appointmentId);
+  if (!appointment) return null;
 
-      if (
-        appointment.depositStatus === DepositStatus.HELD &&
-        appointment.depositMinor > 0
-      ) {
-        await WalletService.releaseDeposit(
-          appointment.customerId,
-          appointment.depositMinor,
-          appointment.id,
-          tx,
-        );
+  if (
+    appointment.depositStatus === DepositStatus.HELD &&
+    appointment.depositMinor > 0
+  ) {
+    await WalletService.releaseDeposit(
+      appointment.customerId,
+      appointment.depositMinor,
+      appointment.id,
+      tx,
+    );
 
-        await tx.appointment.update({
-          where: { id: appointment.id },
-          data: { depositStatus: DepositStatus.RELEASED },
-        });
-      }
+    await tx.appointment.update({
+      where: { id: appointment.id },
+      data: { depositStatus: DepositStatus.RELEASED },
+    });
+  }
 
-      if (options.goodwill) {
-        await WalletService.mutate(
-          {
-            userId: appointment.customerId,
-            type: WalletTxType.GOODWILL_CREDIT,
-            amount: GOODWILL_CREDIT_MINOR,
-            description: "Goodwill credit - the salon cancelled your booking",
-            referenceType: "APPOINTMENT",
-            referenceId: appointment.id,
-            idempotencyKey: `goodwill:${appointment.id}`,
-          },
-          tx,
-        );
+  if (options.goodwill) {
+    await WalletService.mutate(
+      {
+        userId: appointment.customerId,
+        type: WalletTxType.GOODWILL_CREDIT,
+        amount: GOODWILL_CREDIT_MINOR,
+        description: "Goodwill credit - the salon cancelled your booking",
+        referenceType: "APPOINTMENT",
+        referenceId: appointment.id,
+        idempotencyKey: `goodwill:${appointment.id}`,
+      },
+      tx,
+    );
 
-        await SettlementService.recordGoodwillCredit(
-          tx,
-          appointment,
-          GOODWILL_CREDIT_MINOR,
-        );
-      }
+    await SettlementService.recordGoodwillCredit(
+      tx,
+      appointment,
+      GOODWILL_CREDIT_MINOR,
+    );
+  }
 
-      return appointment;
-    },
-    { timeout: 15000, maxWait: 10000 },
-  );
+  return appointment;
+};
 
+export const notifyReleased = (released: AppointmentWithSalon | null) => {
   if (released && released.depositMinor > 0) {
     notify(released.customerId, "Your deposit has been returned", (name) =>
       getDepositReleasedTemplate(
@@ -236,50 +337,168 @@ export const settleReleased = async (
   }
 };
 
+export const settleReleased = async (
+  appointmentId: string,
+  options: { goodwill?: boolean } = {},
+) => {
+  const released = await prisma.$transaction(
+    (tx) => settleReleasedTx(tx, appointmentId, options),
+    SETTLEMENT_TX_OPTIONS,
+  );
+
+  notifyReleased(released);
+};
+
+/**
+ * Cancelled inside the window but before the start: the salon keeps a penalty
+ * slice of the deposit and the rest goes straight back to spendable balance.
+ *
+ * Two wallet movements rather than one, because they are different events and
+ * the customer's transaction list should say so: a fee they paid, and a refund
+ * they received. Both keys are derived from the appointment id, so a retry
+ * replays them instead of charging twice.
+ */
+export const settleLateCancelledTx = async (
+  tx: Prisma.TransactionClient,
+  appointmentId: string,
+) => {
+  const appointment = await loadForSettlement(tx, appointmentId);
+  if (!appointment) return null;
+
+  if (
+    appointment.depositStatus !== DepositStatus.HELD ||
+    appointment.depositMinor <= 0
+  ) {
+    return null;
+  }
+
+  const penaltyMinor = latePenaltyMinor(appointment.depositMinor);
+  const refundMinor = appointment.depositMinor - penaltyMinor;
+
+  if (penaltyMinor > 0) {
+    await WalletService.mutate(
+      {
+        userId: appointment.customerId,
+        type: WalletTxType.DEPOSIT_FORFEIT,
+        amount: -penaltyMinor,
+        holdDelta: -penaltyMinor,
+        description: `Late cancellation fee (${latePenaltyPercent()}% of your deposit)`,
+        referenceType: "APPOINTMENT",
+        referenceId: appointment.id,
+        idempotencyKey: `late-cancel-fee:${appointment.id}`,
+      },
+      tx,
+    );
+  }
+
+  if (refundMinor > 0) {
+    await WalletService.mutate(
+      {
+        userId: appointment.customerId,
+        type: WalletTxType.DEPOSIT_RELEASE,
+        amount: 0,
+        holdDelta: -refundMinor,
+        description: "Deposit balance returned - booking cancelled",
+        referenceType: "APPOINTMENT",
+        referenceId: appointment.id,
+        idempotencyKey: `late-cancel-refund:${appointment.id}`,
+        metadata: { holdDeltaMinor: -refundMinor },
+      },
+      tx,
+    );
+  }
+
+  await tx.appointment.update({
+    where: { id: appointment.id },
+    data: {
+      depositStatus:
+        penaltyMinor > 0
+          ? DepositStatus.PARTIALLY_FORFEITED
+          : DepositStatus.RELEASED,
+    },
+  });
+
+  await SettlementService.recordLateCancellationPenalty(
+    tx,
+    appointment,
+    penaltyMinor,
+  );
+
+  return { appointment, penaltyMinor, refundMinor };
+};
+
+export const notifyLateCancelled = (
+  settled: Awaited<ReturnType<typeof settleLateCancelledTx>>,
+) => {
+  if (settled && settled.refundMinor > 0) {
+    notify(
+      settled.appointment.customerId,
+      "Your deposit has been returned",
+      (name) =>
+        getDepositReleasedTemplate(
+          name,
+          formatBDT(settled.refundMinor),
+          settled.appointment.salon.name,
+        ),
+    );
+  }
+};
+
+export const settleLateCancelled = async (appointmentId: string) => {
+  const settled = await prisma.$transaction(
+    (tx) => settleLateCancelledTx(tx, appointmentId),
+    SETTLEMENT_TX_OPTIONS,
+  );
+
+  notifyLateCancelled(settled);
+
+  return settled;
+};
+
 /**
  * No-show, or a cancellation too late to refill the slot: the deposit is
  * forfeited and split with the salon. This is the whole point of the mechanic -
  * it is also why the appeal window exists.
  */
-export const settleForfeited = async (appointmentId: string) => {
-  const forfeited = await prisma.$transaction(
-    async (tx) => {
-      const appointment = await loadForSettlement(tx, appointmentId);
-      if (!appointment) return null;
+export const settleForfeitedTx = async (
+  tx: Prisma.TransactionClient,
+  appointmentId: string,
+) => {
+  const appointment = await loadForSettlement(tx, appointmentId);
+  if (!appointment) return null;
 
-      if (
-        appointment.depositStatus !== DepositStatus.HELD ||
-        appointment.depositMinor <= 0
-      ) {
-        return null;
-      }
+  if (
+    appointment.depositStatus !== DepositStatus.HELD ||
+    appointment.depositMinor <= 0
+  ) {
+    return null;
+  }
 
-      await WalletService.forfeitDeposit(
-        appointment.customerId,
-        appointment.depositMinor,
-        appointment.id,
-        tx,
-      );
-
-      await tx.appointment.update({
-        where: { id: appointment.id },
-        data: {
-          depositStatus: DepositStatus.FORFEITED,
-          noShowMarkedAt: new Date(),
-        },
-      });
-
-      await SettlementService.recordForfeitedDeposit(
-        tx,
-        appointment,
-        appointment.salon.noShowSalonSharePct,
-      );
-
-      return appointment;
-    },
-    { timeout: 15000, maxWait: 10000 },
+  await WalletService.forfeitDeposit(
+    appointment.customerId,
+    appointment.depositMinor,
+    appointment.id,
+    tx,
   );
 
+  await tx.appointment.update({
+    where: { id: appointment.id },
+    data: {
+      depositStatus: DepositStatus.FORFEITED,
+      noShowMarkedAt: new Date(),
+    },
+  });
+
+  await SettlementService.recordForfeitedDeposit(
+    tx,
+    appointment,
+    appointment.salon.noShowSalonSharePct,
+  );
+
+  return appointment;
+};
+
+export const notifyForfeited = (forfeited: AppointmentWithSalon | null) => {
   if (forfeited) {
     notify(forfeited.customerId, "Your deposit was forfeited", (name) =>
       getDepositForfeitedTemplate(
@@ -289,6 +508,15 @@ export const settleForfeited = async (appointmentId: string) => {
       ),
     );
   }
+};
+
+export const settleForfeited = async (appointmentId: string) => {
+  const forfeited = await prisma.$transaction(
+    (tx) => settleForfeitedTx(tx, appointmentId),
+    SETTLEMENT_TX_OPTIONS,
+  );
+
+  notifyForfeited(forfeited);
 };
 
 // ---------------------------------------------------------------------------
@@ -450,35 +678,72 @@ export const assertCanMarkNoShow = (
 /**
  * Salon owners forget to mark no-shows, and an unresolved hold is money the
  * customer cannot spend. After the grace period, close it out automatically.
+ *
+ * Arrival is an explicit check-in, so only a booking nobody checked in can be a
+ * no-show: a CHECKED_IN booking, or an IN_PROGRESS one with a `checkedInAt`, is
+ * never touched here - the stale-checkout job closes those as completed.
+ *
+ * A booking still sitting at CONFIRMED past its start time was never begun, so
+ * the grace runs from the start. IN_PROGRESS without a check-in only exists on
+ * legacy rows the old auto-start job moved; those are measured from their
+ * scheduled *end*, since the job may have started someone who was in the chair.
  */
 export const autoMarkNoShows = async () => {
-  const cutoff = new Date(Date.now() - NO_SHOW_GRACE_MIN * 60 * 1000);
+  const graceMs = NO_SHOW_GRACE_MIN * 60 * 1000;
+  const cutoff = Date.now() - graceMs;
 
   // Cheap pre-filter on the date; the exact start time is a string, so the
   // per-row check below is what actually decides.
   const candidates = await prisma.appointment.findMany({
     where: {
-      status: { in: ["PENDING", "CONFIRMED"] },
       depositStatus: DepositStatus.HELD,
       appointmentDate: { lte: new Date() },
+      OR: [
+        { status: { in: ["PENDING", "CONFIRMED"] } },
+        { status: "IN_PROGRESS", checkedInAt: null },
+      ],
     },
-    select: { id: true, appointmentDate: true, startTime: true },
+    select: {
+      id: true,
+      status: true,
+      appointmentDate: true,
+      startTime: true,
+      endTime: true,
+    },
     take: 200,
   });
 
-  const due = candidates.filter(
-    (appointment) => appointmentStartsAt(appointment) <= cutoff,
+  const due = candidates.filter((appointment) =>
+    appointment.status === "IN_PROGRESS"
+      ? appointmentEndsAt(appointment).getTime() <= cutoff
+      : appointmentStartsAt(appointment).getTime() <= cutoff,
   );
 
   let marked = 0;
 
   for (const appointment of due) {
     try {
-      await prisma.appointment.update({
-        where: { id: appointment.id },
-        data: { status: "NO_SHOW" },
-      });
-      await settleForfeited(appointment.id);
+      // Conditional on the status read above and on nobody having checked the
+      // customer in since: if the salon acted first, this row is left alone
+      // and its deposit is not settled.
+      const forfeited = await prisma.$transaction(async (tx) => {
+        const { count } = await tx.appointment.updateMany({
+          where: {
+            id: appointment.id,
+            status: appointment.status,
+            checkedInAt: null,
+          },
+          data: { status: "NO_SHOW" },
+        });
+
+        if (count !== 1) return undefined;
+
+        return settleForfeitedTx(tx, appointment.id);
+      }, SETTLEMENT_TX_OPTIONS);
+
+      if (forfeited === undefined) continue;
+
+      notifyForfeited(forfeited);
       marked += 1;
     } catch (error) {
       console.error(
@@ -498,10 +763,21 @@ export const autoMarkNoShows = async () => {
 export const AppointmentDeposit = {
   resolveDepositMinor,
   appointmentStartsAt,
+  appointmentEndsAt,
   isWithinFreeCancellation,
+  assertCancellable,
+  cancellationQuote,
   settleCompleted,
+  settleCompletedTx,
   settleReleased,
+  settleReleasedTx,
+  notifyReleased,
+  settleLateCancelled,
+  settleLateCancelledTx,
+  notifyLateCancelled,
   settleForfeited,
+  settleForfeitedTx,
+  notifyForfeited,
   appealNoShow,
   resolveAppeal,
   assertCanMarkNoShow,

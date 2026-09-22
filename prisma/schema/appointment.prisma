@@ -15,6 +15,15 @@ model Appointment {
   updatedAt          DateTime          @updatedAt
   slotId             String?
 
+  /// What the customer is called at the counter. `token` is the short code on
+  /// the confirmation ("TKN-A8F2"); `serialNumber` is their place in the queue,
+  /// where a queue is salon + service + counter + day. It is copied from
+  /// `slot.sequenceNo` at booking, so it follows slot time rather than booking
+  /// order and never changes afterwards. Both are optional because bookings
+  /// made before this existed have neither.
+  token        String? @unique
+  serialNumber Int?
+
   // Money, captured at booking time so a later price change cannot rewrite
   // what this customer agreed to pay.
   totalMinor    Int           @default(0)
@@ -32,6 +41,15 @@ model Appointment {
   appealReason   String?
   appealStatus   AppealStatus?
 
+  // Arrival and checkout, stamped by whoever pressed the button at the
+  // counter. The *ById fields are plain user ids with no relation: they are an
+  // audit trail, and a null completedById means the stale-checkout job closed
+  // the booking rather than a person.
+  checkedInAt   DateTime?
+  completedAt   DateTime?
+  checkedInById String?
+  completedById String?
+
   // Relations
   customer      User          @relation(fields: [customerId], references: [id], onDelete: Cascade)
   salon         Salon         @relation(fields: [salonId], references: [id], onDelete: Cascade)
@@ -45,5 +63,7 @@ model Appointment {
 
   @@index([salonId, status])
   @@index([customerId, salonId])
+  // Backs listing one salon's bookings for a service and day.
+  @@index([salonId, serviceId, appointmentDate])
   @@map("appointments")
 }

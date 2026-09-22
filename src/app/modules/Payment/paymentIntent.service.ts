@@ -11,7 +11,7 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
 import { sendEmail } from "../../utils/emailSender";
-import { getWalletTopupTemplate } from "../../utils/emailTemplates";
+import { getWalletTopupInvoiceTemplate } from "../../utils/emailTemplates";
 import { WalletService } from "../Wallet/wallet.service";
 import { sslCommerzProvider } from "./providers/sslcommerz.provider";
 import { PaymentProvider } from "./providers/types";
@@ -111,14 +111,23 @@ const initiateTopup = async (userId: string, amountMinor: number) => {
 // Settlement
 // ---------------------------------------------------------------------------
 
-const markIntentFailed = async (transactionId: string, reason: string) => {
+type TerminalStatus =
+  | typeof IntentStatus.FAILED
+  | typeof IntentStatus.CANCELLED
+  | typeof IntentStatus.EXPIRED;
+
+const markIntentFailed = async (
+  transactionId: string,
+  reason: string,
+  status: TerminalStatus = IntentStatus.FAILED,
+) => {
   await prisma.paymentIntent.updateMany({
     // Never walk back a success: an intent that already credited stays credited.
     where: {
       transactionId,
       status: { in: [IntentStatus.INITIATED, IntentStatus.PENDING] },
     },
-    data: { status: IntentStatus.FAILED, failureReason: reason },
+    data: { status, failureReason: reason },
   });
 };
 
@@ -134,9 +143,13 @@ const creditSettledIntent = async (
     raw: unknown;
   },
 ) => {
-  await prisma.$transaction(async (tx) => {
-    await tx.paymentIntent.update({
-      where: { id: intent.id },
+  const credited = await prisma.$transaction(async (tx) => {
+    // Claim the intent before doing anything else. The IPN and the customer's
+    // own return can land at the same moment; the second one blocks on this row
+    // and then finds it already SUCCESS. The wallet credit is idempotent on its
+    // own, but the receipt email is not, so the loser has to stop here.
+    const claim = await tx.paymentIntent.updateMany({
+      where: { id: intent.id, status: { not: IntentStatus.SUCCESS } },
       data: {
         status: IntentStatus.SUCCESS,
         gatewayRef: settled.gatewayRef,
@@ -145,6 +158,8 @@ const creditSettledIntent = async (
         completedAt: new Date(),
       },
     });
+
+    if (claim.count === 0) return false;
 
     if (intent.purpose === IntentPurpose.WALLET_TOPUP) {
       await WalletService.mutate(
@@ -155,6 +170,15 @@ const creditSettledIntent = async (
           description: `Top-up via ${settled.method ?? provider.name}`,
           referenceType: "TOPUP",
           referenceId: intent.id,
+          // The wallet history renders these. Without them a ledger row has no
+          // way back to the gateway payment that produced it, and the customer
+          // has no id to quote to support.
+          metadata: {
+            transactionId: intent.transactionId,
+            gatewayRef: settled.gatewayRef ?? null,
+            method: settled.method ?? null,
+            provider: provider.name,
+          },
           // The final replay guard: even if every check above is passed twice,
           // this key means the money only lands once.
           idempotencyKey: `topup:${intent.transactionId}`,
@@ -162,12 +186,17 @@ const creditSettledIntent = async (
         tx,
       );
     }
+
+    return true;
   });
 
-  notifyTopupSuccess(intent);
+  if (credited) notifyTopupSuccess(intent, settled);
 };
 
-const notifyTopupSuccess = (intent: PaymentIntent) => {
+const notifyTopupSuccess = (
+  intent: PaymentIntent,
+  settled: { gatewayRef: string | null; method: string | null },
+) => {
   if (intent.purpose !== IntentPurpose.WALLET_TOPUP) return;
 
   void (async () => {
@@ -184,12 +213,17 @@ const notifyTopupSuccess = (intent: PaymentIntent) => {
 
       await sendEmail(
         user.email,
-        "Wallet top-up successful",
-        getWalletTopupTemplate(
-          user.name || "there",
-          formatBDT(intent.amountMinor),
-          formatBDT(wallet.balance - wallet.heldBalance),
-        ),
+        `Payment receipt - ${formatBDT(intent.amountMinor)} added to your wallet`,
+        getWalletTopupInvoiceTemplate({
+          customerName: user.name || "there",
+          transactionId: intent.transactionId,
+          amount: formatBDT(intent.amountMinor),
+          availableBalance: formatBDT(wallet.balance - wallet.heldBalance),
+          method: settled.method ?? provider.name,
+          gatewayRef: settled.gatewayRef ?? null,
+          paidAt: new Date(),
+          provider: provider.name,
+        }),
       );
     } catch (error) {
       console.error("[payment.notify] top-up email failed", error);
@@ -263,6 +297,94 @@ const processIpn = async (payload: Record<string, string>) => {
 // ---------------------------------------------------------------------------
 
 /**
+ * How SSLCommerz names the ways a payment can end, mapped onto our own terminal
+ * statuses. Anything unrecognised is a failure - never a silent success.
+ */
+const terminalStatusFor = (gatewayStatus: string): TerminalStatus => {
+  switch (gatewayStatus?.toUpperCase()) {
+    case "CANCELLED":
+    case "CANCELED":
+      return IntentStatus.CANCELLED;
+    case "EXPIRED":
+    case "UNATTEMPTED":
+      return IntentStatus.EXPIRED;
+    default:
+      return IntentStatus.FAILED;
+  }
+};
+
+/**
+ * Settle one intent against the gateway's own record of it.
+ *
+ * This is the path for every case where the IPN is not what tells us how a
+ * payment ended: the reconciliation sweep, and the fail/cancel redirect - whose
+ * POST body anyone could hand-craft, so it is never trusted to close an intent
+ * by itself. Returns the status the intent now has.
+ */
+const settleFromGateway = async (intent: PaymentIntent) => {
+  const result = await provider.validateByTransactionId(intent.transactionId);
+
+  if (result.settled && result.amountMinor === intent.amountMinor) {
+    await creditSettledIntent(intent, {
+      gatewayRef: result.gatewayRef,
+      method: result.method,
+      raw: result.raw,
+    });
+    return IntentStatus.SUCCESS;
+  }
+
+  if (result.settled) {
+    console.error(
+      `[payment.settle] amount mismatch on intent=${intent.id}: expected ${intent.amountMinor}, got ${result.amountMinor}`,
+    );
+    await markIntentFailed(intent.transactionId, "Amount mismatch");
+    return IntentStatus.FAILED;
+  }
+
+  // Still genuinely in flight at the gateway - leave it alone.
+  if (result.status === "PENDING" || result.status === "PROCESSING") {
+    return intent.status;
+  }
+
+  const status = terminalStatusFor(result.status);
+  await markIntentFailed(
+    intent.transactionId,
+    status === IntentStatus.CANCELLED
+      ? "Payment cancelled at the gateway"
+      : `Gateway reported ${result.status}`,
+    status,
+  );
+  return status;
+};
+
+/**
+ * Close out a single intent by transaction id, for the fail and cancel returns.
+ *
+ * A gateway lookup that throws leaves the intent PENDING on purpose: the
+ * reconciliation sweep will get to it, which is much better than trusting an
+ * unauthenticated redirect body and writing off a payment that did settle.
+ */
+const resolveByTransactionId = async (transactionId: string) => {
+  const intent = await prisma.paymentIntent.findUnique({
+    where: { transactionId },
+  });
+
+  if (!intent) {
+    console.warn(`[payment.resolve] unknown transaction ${transactionId}`);
+    return;
+  }
+
+  if (
+    intent.status !== IntentStatus.INITIATED &&
+    intent.status !== IntentStatus.PENDING
+  ) {
+    return;
+  }
+
+  await settleFromGateway(intent);
+};
+
+/**
  * An intent whose IPN never arrived must not sit PENDING forever. Ask the
  * gateway what happened and settle it either way.
  */
@@ -283,44 +405,19 @@ const reconcilePendingIntents = async () => {
 
   for (const intent of pending) {
     try {
-      const result = await provider.validateByTransactionId(
-        intent.transactionId,
-      );
+      const status = await settleFromGateway(intent);
 
-      if (result.settled && result.amountMinor === intent.amountMinor) {
-        await creditSettledIntent(intent, {
-          gatewayRef: result.gatewayRef,
-          method: result.method,
-          raw: result.raw,
-        });
+      if (status === IntentStatus.SUCCESS) {
         credited += 1;
-        continue;
-      }
-
-      if (result.settled) {
-        console.error(
-          `[payment.reconcile] amount mismatch on intent=${intent.id}: expected ${intent.amountMinor}, got ${result.amountMinor}`,
-        );
-        await markIntentFailed(intent.transactionId, "Amount mismatch");
-        failed += 1;
-        continue;
-      }
-
-      // Still genuinely in flight at the gateway - leave it for the next pass.
-      if (result.status === "PENDING" || result.status === "PROCESSING") {
+      } else if (status === IntentStatus.INITIATED || status === IntentStatus.PENDING) {
         if (Date.now() - intent.createdAt.getTime() > ALERT_AFTER_MS) {
           console.error(
             `[payment.reconcile] intent=${intent.id} has been pending for over 24h - needs manual review`,
           );
         }
-        continue;
+      } else {
+        failed += 1;
       }
-
-      await markIntentFailed(
-        intent.transactionId,
-        `Gateway reported ${result.status}`,
-      );
-      failed += 1;
     } catch (error) {
       console.error(
         `[payment.reconcile] could not reconcile intent=${intent.id}`,
@@ -374,7 +471,32 @@ const getMyIntents = async (userId: string, query: any) => {
   return { meta: { page: pageNum, limit: limitNum, total }, data };
 };
 
-/** Lets the frontend poll after a redirect instead of guessing. */
+/**
+ * The customer is back from the gateway on the success url. The IPN is still
+ * the authority, but waiting for it is what leaves someone watching a spinner,
+ * so settle here too: first from the signed redirect body, then - if that did
+ * not close the intent - by asking the gateway outright.
+ */
+const settleFromSuccessRedirect = async (payload: Record<string, string>) => {
+  if (!payload?.tran_id) return;
+
+  try {
+    await processIpn(payload);
+  } catch (error) {
+    console.error(
+      `[payment.success-redirect] IPN path failed for tran_id=${payload.tran_id}`,
+      error,
+    );
+  }
+
+  await resolveByTransactionId(payload.tran_id);
+};
+
+/**
+ * Lets the frontend poll after a redirect instead of guessing. It backs the
+ * result page, so it carries everything that page shows: the gateway's own
+ * reference, the method used, and the balance the top-up produced.
+ */
 const getIntentStatus = async (userId: string, transactionId: string) => {
   const intent = await prisma.paymentIntent.findUnique({
     where: { transactionId },
@@ -384,9 +506,12 @@ const getIntentStatus = async (userId: string, transactionId: string) => {
       purpose: true,
       amountMinor: true,
       status: true,
+      provider: true,
       method: true,
+      gatewayRef: true,
       failureReason: true,
       completedAt: true,
+      createdAt: true,
     },
   });
 
@@ -395,12 +520,24 @@ const getIntentStatus = async (userId: string, transactionId: string) => {
   }
 
   const { userId: _ownerId, ...rest } = intent;
-  return rest;
+
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId },
+    select: { balance: true, heldBalance: true },
+  });
+
+  return {
+    ...rest,
+    // Saves the result page a second round-trip to show the new balance.
+    walletAvailableMinor: wallet ? wallet.balance - wallet.heldBalance : 0,
+  };
 };
 
 export const PaymentIntentService = {
   initiateTopup,
   processIpn,
+  settleFromSuccessRedirect,
+  resolveByTransactionId,
   markIntentFailed,
   reconcilePendingIntents,
   getMyIntents,

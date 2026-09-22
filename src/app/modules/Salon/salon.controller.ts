@@ -3,6 +3,8 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { SalonService } from "./salon.service";
+import { findSalonMarkers } from "./salon.geo";
+import { SalonValidation } from "./salon.validation";
 
 const createSalon = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
@@ -18,7 +20,9 @@ const createSalon = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getAllSalons = catchAsync(async (req: Request, res: Response) => {
-  const result = await SalonService.getAllSalons(req.query, req.user);
+  // Parsed here, not in validateRequest, so the coerced numbers survive.
+  const query = SalonValidation.salonListQuery.parse(req.query);
+  const result = await SalonService.getAllSalons(query, req.user);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -26,6 +30,20 @@ const getAllSalons = catchAsync(async (req: Request, res: Response) => {
     message: "Salons retrieved successfully",
     meta: result.meta,
     data: result.data,
+  });
+});
+
+const getSalonMarkers = catchAsync(async (req: Request, res: Response) => {
+  const {
+    bbox: [minLng, minLat, maxLng, maxLat],
+  } = SalonValidation.salonMapQuery.parse(req.query);
+  const result = await findSalonMarkers(minLng, minLat, maxLng, maxLat);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Salon markers retrieved successfully",
+    data: result,
   });
 });
 
@@ -71,6 +89,24 @@ const updateSalon = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const updateSalonLocation = catchAsync(async (req: Request, res: Response) => {
+  const userId = req.user?.userId;
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+  const result = await SalonService.updateSalonLocation(userId, id, {
+    latitude: req.body.latitude,
+    longitude: req.body.longitude,
+  });
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Salon location updated successfully",
+    data: result,
+  });
+});
+
 const updateSalonStatus = catchAsync(async (req: Request, res: Response) => {
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
@@ -103,9 +139,11 @@ const deleteSalon = catchAsync(async (req: Request, res: Response) => {
 export const SalonController = {
   createSalon,
   getAllSalons,
+  getSalonMarkers,
   getMySalons,
   getSalonById,
   updateSalon,
+  updateSalonLocation,
   updateSalonStatus,
   deleteSalon,
 };

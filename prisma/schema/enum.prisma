@@ -23,6 +23,7 @@ enum Gender {
 enum AppointmentStatus {
   PENDING
   CONFIRMED
+  CHECKED_IN
   IN_PROGRESS
   COMPLETED
   CANCELLED
@@ -70,6 +71,11 @@ enum SalonStatus {
   INACTIVE
   PENDING_APPROVAL
   REJECTED
+}
+
+enum LocationAccuracy {
+  EXACT
+  APPROXIMATE
 }
 
 enum OwnerApplicationStatus {
@@ -125,6 +131,9 @@ enum DepositStatus {
   RELEASED
   APPLIED
   FORFEITED
+  // A late cancellation: part of the deposit went to the salon as a penalty,
+  // the rest went back to the customer. Not appealable - they chose to cancel.
+  PARTIALLY_FORFEITED
 }
 
 enum AppealStatus {

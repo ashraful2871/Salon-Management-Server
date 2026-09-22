@@ -48,8 +48,9 @@ const auth = (...requiredRoles: string[]) => {
         throw new ApiError(StatusCodes.FORBIDDEN, "Forbidden!");
       }
 
-      // Update the request user with the fresh role from DB
-      req.user = { ...verifiedUser, role: user.role };
+      // Update the request user with the fresh role and email from DB - both can
+      // change after the token was issued
+      req.user = { ...verifiedUser, email: user.email, role: user.role };
       next();
     } catch (error) {
       next(error);

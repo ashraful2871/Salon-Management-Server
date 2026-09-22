@@ -11,7 +11,9 @@ const bulkCreateSlots = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,
     success: true,
-    message: "Slots generated successfully!",
+    message: result.skipped
+      ? `${result.count} slot(s) generated. ${result.skipped} slot(s) skipped because they overlap existing slots.`
+      : `${result.count} slot(s) generated successfully!`,
     data: result,
   });
 });

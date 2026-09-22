@@ -1,15 +1,24 @@
 import { z } from "zod";
 
 const bulkCreateSlotsValidation = z.object({
-  body: z.object({
-    salonId: z.string().nonempty({ message: "Salon ID is required" }),
-    serviceId: z.string().nonempty({ message: "Service ID is required" }),
-    date: z.string().nonempty({ message: "Date is required" }),
-    startTime: z.string().nonempty({ message: "Start time is required" }),
-    endTime: z.string().nonempty({ message: "End time is required" }),
-    duration: z.number().positive({ message: "Duration must be positive" }),
-    breakDuration: z.number().min(0).default(0),
-  }),
+  body: z
+    .object({
+      salonId: z.string().nonempty({ message: "Salon ID is required" }),
+      serviceId: z.string().nonempty({ message: "Service ID is required" }),
+      // `date` is the legacy single-day form; startDate/endDate is the range form.
+      date: z.string().optional(),
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
+      counterId: z.string().optional(),
+      startTime: z.string().nonempty({ message: "Start time is required" }),
+      endTime: z.string().nonempty({ message: "End time is required" }),
+      duration: z.number().positive({ message: "Duration must be positive" }),
+      breakDuration: z.number().min(0).default(0),
+    })
+    .refine((body) => Boolean(body.date) || Boolean(body.startDate && body.endDate), {
+      message: "Provide either a date, or both startDate and endDate",
+      path: ["startDate"],
+    }),
 });
 
 const updateSlotStatusValidation = z.object({

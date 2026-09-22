@@ -32,6 +32,39 @@ export const aiSearchLimiter = rateLimit({
 });
 
 /**
+ * Map markers are public and re-fetched on every pan and zoom, so the budget
+ * is loose for a person dragging a map but still stops a scraper walking
+ * the whole country box by box.
+ */
+export const mapLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many map requests. Please wait a minute and try again.",
+  },
+});
+
+/**
+ * Address search and pin lookup are public and proxy free third-party
+ * geocoders (Photon, Nominatim) whose fair-use terms we answer for. Both
+ * endpoints share this budget; the frontend debounces typing, so a person
+ * stays well under it.
+ */
+export const geoLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many address lookups. Please wait a minute and try again.",
+  },
+});
+
+/**
  * Money endpoints: starting a top-up opens a gateway session and recording a
  * payment moves real balances. Twenty per 15 minutes is far more than any
  * honest customer needs and takes the fun out of scripting either one.

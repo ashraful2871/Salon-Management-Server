@@ -2,6 +2,45 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { UserRole, SlotStatus } from "@prisma/client";
+import { hasSlotStarted } from "../../utils/slotTime";
+
+const MAX_RANGE_DAYS = 90;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// Slots carry a calendar day, not an instant — normalize every date to UTC
+// midnight so generating and later filtering by `date` match exactly.
+const toCalendarDate = (value: string, label: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+
+  if (match) {
+    return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  }
+
+  const parsed = new Date(value);
+
+  if (isNaN(parsed.getTime())) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, `Invalid ${label} format`);
+  }
+
+  return new Date(
+    Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate())
+  );
+};
+
+const toMinutes = (time: string, label: string) => {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  const hours = match ? Number(match[1]) : NaN;
+  const minutes = match ? Number(match[2]) : NaN;
+
+  if (isNaN(hours) || isNaN(minutes) || hours > 23 || minutes > 59) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, `Invalid ${label}, expected HH:MM`);
+  }
+
+  return hours * 60 + minutes;
+};
+
+const formatMinutes = (value: number) =>
+  `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 
 const bulkCreateSlots = async (userId: string, userRole: string, payload: any) => {
   if (userRole !== UserRole.SALON_OWNER) {
@@ -24,102 +63,299 @@ const bulkCreateSlots = async (userId: string, userRole: string, payload: any) =
     throw new ApiError(StatusCodes.FORBIDDEN, "You do not own this salon");
   }
 
-  const { date, startTime, endTime, duration, breakDuration, serviceId } = payload;
-  
+  const {
+    date,
+    startDate,
+    endDate,
+    startTime,
+    endTime,
+    duration,
+    breakDuration,
+    serviceId,
+    counterId,
+  } = payload;
+
   const service = await prisma.service.findFirst({
-    where: { id: serviceId, salonId: payload.salonId }
+    where: { id: serviceId, salonId: payload.salonId },
   });
 
   if (!service) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Service not found or does not belong to this salon");
-  }
-  
-  const targetDate = new Date(date);
-  if (isNaN(targetDate.getTime())) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Invalid date format");
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Service not found or does not belong to this salon"
+    );
   }
 
-  const parseTime = (timeStr: string) => {
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const d = new Date(targetDate);
-    d.setHours(hours, minutes, 0, 0);
-    return d;
-  };
+  if (counterId) {
+    const counter = await prisma.counter.findFirst({
+      where: { id: counterId, salonId: payload.salonId, isDeleted: false, isActive: true },
+    });
 
-  const parsedStartTime = parseTime(startTime);
-  const parsedEndTime = parseTime(endTime);
+    if (!counter) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Counter not found or does not belong to this salon"
+      );
+    }
+  }
 
-  if (parsedEndTime <= parsedStartTime) {
+  // `date` is the legacy single-day payload; a range collapses to one day when
+  // startDate and endDate are equal.
+  const rangeStart = toCalendarDate(startDate || date, "start date");
+  const rangeEnd = toCalendarDate(endDate || date, "end date");
+
+  if (rangeEnd < rangeStart) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "End date must be on or after start date");
+  }
+
+  const totalDays = Math.round((rangeEnd.getTime() - rangeStart.getTime()) / MS_PER_DAY) + 1;
+
+  if (totalDays > MAX_RANGE_DAYS) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Date range cannot exceed ${MAX_RANGE_DAYS} days`
+    );
+  }
+
+  const startMinutes = toMinutes(startTime, "start time");
+  const endMinutes = toMinutes(endTime, "end time");
+
+  if (endMinutes <= startMinutes) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "End time must be after start time");
   }
 
-  const slotsToCreate = [];
-  let currentStart = new Date(parsedStartTime);
-
-  const formatTime = (d: Date) => {
-    return d.toTimeString().substring(0, 5);
-  };
-
-  while (new Date(currentStart.getTime() + duration * 60000) <= parsedEndTime) {
-    const currentEnd = new Date(currentStart.getTime() + duration * 60000);
-    
-    slotsToCreate.push({
-      salonId: payload.salonId,
-      serviceId: serviceId,
-      date: targetDate,
-      startTime: formatTime(currentStart),
-      endTime: formatTime(currentEnd),
-      status: SlotStatus.AVAILABLE,
+  // The daily template is identical for every day in the range.
+  const template: { startTime: string; endTime: string; start: number; end: number }[] = [];
+  for (
+    let cursor = startMinutes;
+    cursor + duration <= endMinutes;
+    cursor += duration + (breakDuration || 0)
+  ) {
+    template.push({
+      startTime: formatMinutes(cursor),
+      endTime: formatMinutes(cursor + duration),
+      start: cursor,
+      end: cursor + duration,
     });
-
-    currentStart = new Date(currentEnd.getTime() + (breakDuration || 0) * 60000);
   }
 
-  if (slotsToCreate.length === 0) {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Could not generate any slots with the provided settings");
+  if (template.length === 0) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Could not generate any slots with the provided settings"
+    );
   }
 
+  const days: Date[] = [];
+  for (let i = 0; i < totalDays; i++) {
+    days.push(new Date(rangeStart.getTime() + i * MS_PER_DAY));
+  }
+
+  // Slots on different counters may legitimately share a time, so conflicts are
+  // scoped to the same counter (or to the unassigned pool when none is given).
   const existingSlots = await prisma.slot.findMany({
     where: {
       salonId: payload.salonId,
-      serviceId: serviceId,
-      date: targetDate,
+      serviceId,
+      counterId: counterId || null,
+      date: { gte: rangeStart, lte: rangeEnd },
+    },
+    select: {
+      id: true,
+      date: true,
+      startTime: true,
+      endTime: true,
+      isBooked: true,
+      sequenceNo: true,
     },
   });
 
-  const conflicts = slotsToCreate.filter(newSlot => {
-    const newStart = parseTime(newSlot.startTime);
-    const newEnd = parseTime(newSlot.endTime);
-
-    return existingSlots.some(existing => {
-      const existingStart = parseTime(existing.startTime);
-      const existingEnd = parseTime(existing.endTime);
-
-      return (newStart < existingEnd && existingStart < newEnd);
-    });
-  });
-
-  if (conflicts.length > 0) {
-    throw new ApiError(StatusCodes.CONFLICT, "Some generated slots overlap with existing slots.");
+  type ExistingSlot = (typeof existingSlots)[number];
+  const existingByDay = new Map<number, ExistingSlot[]>();
+  for (const slot of existingSlots) {
+    const key = slot.date.getTime();
+    const bucket = existingByDay.get(key) || [];
+    bucket.push(slot);
+    existingByDay.set(key, bucket);
   }
 
-  const createdSlots = await prisma.slot.createMany({
-    data: slotsToCreate,
+  const slotsToCreate: {
+    salonId: string;
+    serviceId: string;
+    counterId: string | null;
+    date: Date;
+    startTime: string;
+    endTime: string;
+    status: SlotStatus;
+    sequenceNo: number;
+  }[] = [];
+  // Existing slots whose place in the day moves because a new slot lands before
+  // them, keyed by the new number so each number is one updateMany.
+  const renumber = new Map<number, string[]>();
+  const skippedDates = new Set<string>();
+  const lockedDates = new Set<string>();
+  let skipped = 0;
+
+  const newSlot = (day: Date, slot: (typeof template)[number], sequenceNo: number) => ({
+    salonId: payload.salonId,
+    serviceId,
+    counterId: counterId || null,
+    date: day,
+    startTime: slot.startTime,
+    endTime: slot.endTime,
+    status: SlotStatus.AVAILABLE,
+    sequenceNo,
   });
 
-  return createdSlots;
+  for (const day of days) {
+    const dayKey = day.toISOString().slice(0, 10);
+    const existing = existingByDay.get(day.getTime()) || [];
+    const taken = existing.map((slot) => ({
+      start: toMinutes(slot.startTime, "start time"),
+      end: toMinutes(slot.endTime, "end time"),
+    }));
+    // The template is generated in time order, so `fresh` is too.
+    const fresh: typeof template = [];
+
+    for (const slot of template) {
+      const overlaps = taken.some(
+        (existing) => slot.start < existing.end && existing.start < slot.end
+      );
+
+      // A day that is already partly filled is skipped slot by slot rather than
+      // failing the whole range — otherwise one busy day blocks the other 29.
+      if (overlaps) {
+        skipped++;
+        skippedDates.add(dayKey);
+        continue;
+      }
+
+      taken.push({ start: slot.start, end: slot.end });
+      fresh.push(slot);
+    }
+
+    if (fresh.length === 0) continue;
+
+    // A slot's number is its place in the day, and a booked slot's number is
+    // already on a customer's confirmation. So a day nobody has booked is
+    // renumbered 1..N from scratch, while a day with a booking only grows at
+    // the end. "HH:mm" is zero-padded, so comparing strings compares times.
+    if (!existing.some((slot) => slot.isBooked)) {
+      const merged = [
+        ...existing.map((slot) => ({ startTime: slot.startTime, existing: slot })),
+        ...fresh.map((slot) => ({ startTime: slot.startTime, fresh: slot })),
+      ].sort((a, b) => (a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0));
+
+      merged.forEach((entry, index) => {
+        const sequenceNo = index + 1;
+        if ("fresh" in entry) {
+          slotsToCreate.push(newSlot(day, entry.fresh, sequenceNo));
+        } else if (entry.existing.sequenceNo !== sequenceNo) {
+          renumber.set(sequenceNo, [...(renumber.get(sequenceNo) || []), entry.existing.id]);
+        }
+      });
+      continue;
+    }
+
+    const lastStart = existing.reduce(
+      (latest, slot) => (slot.startTime > latest ? slot.startTime : latest),
+      ""
+    );
+    // Legacy slots may have no number yet, in which case their count is the
+    // highest position anyone could have been given for this day.
+    let nextNo =
+      Math.max(existing.length, ...existing.map((slot) => slot.sequenceNo ?? 0)) + 1;
+
+    for (const slot of fresh) {
+      if (slot.startTime <= lastStart) {
+        skipped++;
+        lockedDates.add(dayKey);
+        continue;
+      }
+      slotsToCreate.push(newSlot(day, slot, nextNo++));
+    }
+  }
+
+  if (slotsToCreate.length === 0) {
+    if (lockedDates.size > 0) {
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        `Bookings already exist on these dates: ${Array.from(lockedDates).sort().join(", ")}. New slots can only be added after the last existing slot.`
+      );
+    }
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "All generated slots overlap with existing slots."
+    );
+  }
+
+  const renumberIds = Array.from(renumber.values()).flat();
+
+  const createdSlots = await prisma.$transaction(
+    async (tx) => {
+      const created = await tx.slot.createMany({ data: slotsToCreate });
+
+      for (const [sequenceNo, ids] of renumber) {
+        await tx.slot.updateMany({ where: { id: { in: ids } }, data: { sequenceNo } });
+      }
+
+      // Checked after the writes on purpose: they hold the row locks, so a
+      // booking racing for one of these slots either committed first and is
+      // counted here, or waits and then reads the new number.
+      if (renumberIds.length > 0) {
+        const booked = await tx.slot.count({
+          where: { id: { in: renumberIds }, isBooked: true },
+        });
+        if (booked > 0) {
+          throw new ApiError(
+            StatusCodes.CONFLICT,
+            "A booking just came in for that day - please try again."
+          );
+        }
+      }
+
+      return created;
+    },
+    { timeout: 15000, maxWait: 10000 }
+  );
+
+  return {
+    count: createdSlots.count,
+    skipped,
+    skippedDates: Array.from(skippedDates).sort(),
+    lockedDates: Array.from(lockedDates).sort(),
+    totalDays,
+    startDate: rangeStart.toISOString().slice(0, 10),
+    endDate: rangeEnd.toISOString().slice(0, 10),
+    counterId: counterId || null,
+  };
 };
 
 const getSlots = async (query: any) => {
-  const { salonId, date, status, serviceId } = query;
+  const {
+    salonId,
+    date,
+    startDate,
+    endDate,
+    status,
+    serviceId,
+    counterId,
+    upcomingOnly,
+  } = query;
 
   const whereConditions: any = {};
   if (salonId) whereConditions.salonId = salonId;
   if (date) {
-    whereConditions.date = new Date(date);
+    whereConditions.date = toCalendarDate(date, "date");
+  } else if (startDate || endDate) {
+    whereConditions.date = {
+      ...(startDate ? { gte: toCalendarDate(startDate, "start date") } : {}),
+      ...(endDate ? { lte: toCalendarDate(endDate, "end date") } : {}),
+    };
   }
   if (status) whereConditions.status = status;
   if (serviceId) whereConditions.serviceId = serviceId;
+  if (counterId) whereConditions.counterId = counterId;
 
   const slots = await prisma.slot.findMany({
     where: whereConditions,
@@ -130,9 +366,25 @@ const getSlots = async (query: any) => {
           name: true,
         },
       },
+      counter: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+        },
+      },
     },
-    orderBy: { startTime: 'asc' },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
+
+  // A booking screen should not offer this morning's 9am at half past four.
+  // The filter is here rather than in the WHERE clause because `startTime` is a
+  // string the database cannot compare against a timestamp, and it is opt-in
+  // because the owner's slot manager still needs to see the whole day.
+  if (upcomingOnly === true || upcomingOnly === "true") {
+    const now = new Date();
+    return slots.filter((slot) => !hasSlotStarted(slot, now));
+  }
 
   return slots;
 };

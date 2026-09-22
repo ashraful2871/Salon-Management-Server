@@ -14,6 +14,14 @@ router.post(
   AppointmentController.bookAppointment,
 );
 
+// A walk-in or phone customer, entered at the counter. No deposit.
+router.post(
+  "/walk-in",
+  auth(UserRole.SALON_OWNER, UserRole.STAFF),
+  validateRequest(AppointmentValidation.walkInValidation),
+  AppointmentController.bookWalkIn,
+);
+
 router.get(
   "/",
   auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF, UserRole.CUSTOMER),
@@ -26,10 +34,45 @@ router.get(
   AppointmentController.getMyAppointments,
 );
 
+// These two must stay above GET "/:id", or Express reads "lookup" and
+// "cash-summary" as appointment ids.
+router.get(
+  "/lookup",
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF),
+  validateRequest(AppointmentValidation.lookupByTokenValidation),
+  AppointmentController.lookupByToken,
+);
+
+router.get(
+  "/cash-summary",
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER),
+  validateRequest(AppointmentValidation.cashSummaryValidation),
+  AppointmentController.cashSummary,
+);
+
 router.get(
   "/:id",
   auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF, UserRole.CUSTOMER),
   AppointmentController.getAppointmentById,
+);
+
+router.patch(
+  "/:id/check-in",
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF),
+  AppointmentController.checkIn,
+);
+
+router.patch(
+  "/:id/start",
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF),
+  AppointmentController.startAppointment,
+);
+
+router.post(
+  "/:id/checkout",
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF),
+  validateRequest(AppointmentValidation.checkoutValidation),
+  AppointmentController.checkout,
 );
 
 router.patch(

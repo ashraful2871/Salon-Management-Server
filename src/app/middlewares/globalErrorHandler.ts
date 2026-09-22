@@ -42,6 +42,24 @@ const globalErrorHandler = (
     statusCode = StatusCodes.BAD_REQUEST;
     message = "Validation error";
   }
+  /**
+   * jsonwebtoken's own errors, which the `auth` middleware hands straight over.
+   *
+   * Without this branch they fell through to the generic `Error` case and left
+   * as `500 jwt expired` - indistinguishable from a database outage. A client
+   * cannot know to refresh its token from a 500, so an hour-old session looked
+   * like a broken server instead of one that needed renewing.
+   */
+  else if (err.name === "TokenExpiredError") {
+    statusCode = StatusCodes.UNAUTHORIZED;
+    message = "Your session has expired. Please sign in again.";
+  } else if (
+    err.name === "JsonWebTokenError" ||
+    err.name === "NotBeforeError"
+  ) {
+    statusCode = StatusCodes.UNAUTHORIZED;
+    message = "Invalid authentication token.";
+  }
   // Handle custom ApiError
   else if (err instanceof ApiError) {
     statusCode = err.statusCode;

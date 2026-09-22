@@ -79,6 +79,20 @@ const updatePaymentStatus = catchAsync(async (req: Request, res: Response) => {
 const WALLET_PAGE = `${config.frontend_url}/dashboard/wallet`;
 
 /**
+ * Every return from the gateway lands on its own page, so the customer reads a
+ * sentence written for what actually happened instead of a banner on the wallet
+ * that has to guess. The transaction id rides along on all three: it is what
+ * the page polls with, and what the customer quotes to support.
+ */
+const resultPage = (
+  outcome: "success" | "failed" | "cancelled",
+  tranId?: string,
+) => {
+  const url = `${WALLET_PAGE}/payment/${outcome}`;
+  return tranId ? `${url}?tran=${encodeURIComponent(tranId)}` : url;
+};
+
+/**
  * The only endpoint that moves money in from the gateway.
  *
  * It answers 200 straight away and works afterwards: a non-200 makes
@@ -104,31 +118,68 @@ const handleIpn = (req: Request, res: Response) => {
  * never credit anything, because anyone can hand-craft a POST to this URL.
  * The wallet page polls `GET /wallet/topup/:transactionId` for the real state.
  */
+const gatewayPayload = (req: Request) => ({
+  ...((req.query ?? {}) as Record<string, string>),
+  ...((req.body ?? {}) as Record<string, string>),
+});
+
 const handleSuccessRedirect = (req: Request, res: Response) => {
-  const payload = (req.body ?? {}) as Record<string, string>;
-  
-  // Attempt to process IPN immediately during the redirect so that 
-  // localhost development works without ngrok, and real IPNs aren't the only 
-  // way to confirm a payment.
+  const payload = gatewayPayload(req);
+
+  // Settle during the redirect as well as on the IPN, so localhost development
+  // works without ngrok and the result page has something to show at once.
   if (payload.tran_id) {
-    void PaymentIntentService.processIpn(payload).catch((error) => {
-      console.error(
-        `[payment.success-redirect] processing failed for tran_id=${payload.tran_id}`,
-        error,
-      );
-    });
+    void PaymentIntentService.settleFromSuccessRedirect(payload).catch(
+      (error) => {
+        console.error(
+          `[payment.success-redirect] processing failed for tran_id=${payload.tran_id}`,
+          error,
+        );
+      },
+    );
   }
 
-  const tranId = encodeURIComponent(String(payload.tran_id ?? ""));
-  res.redirect(`${WALLET_PAGE}?topup=processing&tran=${tranId}`);
+  res.redirect(resultPage("success", payload.tran_id));
 };
 
-const handleFailRedirect = (_req: Request, res: Response) => {
-  res.redirect(`${WALLET_PAGE}?topup=failed`);
+/**
+ * The fail and cancel returns never write the intent off on the strength of
+ * this request alone - anyone can POST here. They ask the gateway what really
+ * happened; if that lookup fails the intent stays pending and the
+ * reconciliation sweep picks it up.
+ */
+const handleFailRedirect = (req: Request, res: Response) => {
+  const payload = gatewayPayload(req);
+
+  if (payload.tran_id) {
+    void PaymentIntentService.resolveByTransactionId(payload.tran_id).catch(
+      (error) => {
+        console.error(
+          `[payment.fail-redirect] resolve failed for tran_id=${payload.tran_id}`,
+          error,
+        );
+      },
+    );
+  }
+
+  res.redirect(resultPage("failed", payload.tran_id));
 };
 
-const handleCancelRedirect = (_req: Request, res: Response) => {
-  res.redirect(`${WALLET_PAGE}?topup=cancelled`);
+const handleCancelRedirect = (req: Request, res: Response) => {
+  const payload = gatewayPayload(req);
+
+  if (payload.tran_id) {
+    void PaymentIntentService.resolveByTransactionId(payload.tran_id).catch(
+      (error) => {
+        console.error(
+          `[payment.cancel-redirect] resolve failed for tran_id=${payload.tran_id}`,
+          error,
+        );
+      },
+    );
+  }
+
+  res.redirect(resultPage("cancelled", payload.tran_id));
 };
 
 const runReconciliation = catchAsync(async (_req: Request, res: Response) => {
