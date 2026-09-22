@@ -123,3 +123,19 @@ export const paymentLimiter = rateLimit({
     message: "Too many payment attempts. Try again in 15 minutes.",
   },
 });
+
+/**
+ * Guided turns are DB reads, so this is generous — it exists to stop a script,
+ * not a fast tapper. The model-backed endpoint gets its own budget later.
+ */
+export const assistantLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: userOrClientKey, // optionalAuth() must run first
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many messages. Please wait a minute.",
+  },
+});

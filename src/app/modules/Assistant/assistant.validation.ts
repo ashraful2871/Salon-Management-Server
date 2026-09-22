@@ -1,0 +1,58 @@
+import { z } from "zod";
+import type { AssistantAction } from "./assistant.actions";
+
+/**
+ * A discriminated union is what makes an unknown `type` a 400 at the edge
+ * instead of a surprise inside a handler.
+ */
+const actionSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("start") }),
+  z.object({
+    type: z.literal("find_nearby"),
+    page: z.coerce.number().int().min(1).max(50).optional(),
+  }),
+  z.object({
+    type: z.literal("set_location"),
+    lat: z.number(),
+    lng: z.number(),
+    label: z.string().max(80).optional(),
+  }),
+  z.object({
+    type: z.literal("search_salons"),
+    query: z.string().max(300),
+    page: z.coerce.number().int().min(1).max(50).optional(),
+  }),
+  z.object({ type: z.literal("choose_salon"), salonId: z.string().uuid() }),
+  z.object({ type: z.literal("change_location") }),
+  z.object({ type: z.literal("book") }),
+  z.object({ type: z.literal("show_services") }),
+  z.object({ type: z.literal("restart") }),
+  z.object({ type: z.literal("back") }),
+]);
+
+// Fails the build if the schema and the handler union ever drift apart.
+type ParsedAction = z.infer<typeof actionSchema>;
+const _actionsMatch: ParsedAction extends AssistantAction ? true : never = true;
+void _actionsMatch;
+
+const createConversation = z.object({
+  body: z.object({
+    locale: z.enum(["en", "bn"]).optional(),
+    action: actionSchema.optional(),
+    label: z.string().max(80).optional(),
+  }),
+});
+
+const runAction = z.object({
+  params: z.object({ id: z.string().uuid() }),
+  body: z.object({
+    action: actionSchema,
+    label: z.string().max(80).optional(),
+  }),
+});
+
+export const AssistantValidation = {
+  actionSchema,
+  createConversation,
+  runAction,
+};

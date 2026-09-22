@@ -166,3 +166,9 @@ enum PayoutStatus {
   PAID
   FAILED
 }
+
+enum AssistantRole {
+  USER
+  ASSISTANT
+  TOOL
+}

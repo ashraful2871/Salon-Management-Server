@@ -24,6 +24,7 @@ model User {
   verificationTokens VerificationToken[]
   wallet             Wallet?
   paymentIntents     PaymentIntent[]
+  assistantConversations AssistantConversation[]
 
   @@map("users")
 }
