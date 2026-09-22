@@ -73,6 +73,11 @@ enum SalonStatus {
   REJECTED
 }
 
+enum LocationAccuracy {
+  EXACT
+  APPROXIMATE
+}
+
 enum OwnerApplicationStatus {
   PENDING
   APPROVED

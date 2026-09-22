@@ -10,6 +10,10 @@ model Salon {
   city           String
   state          String?
   zipCode        String?
+  latitude          Float?
+  longitude         Float?
+  locationAccuracy  LocationAccuracy?
+  locationUpdatedAt DateTime?
   phone          String
   email          String?
   images         String[]
@@ -44,5 +48,7 @@ model Salon {
   ledgerEntries   LedgerEntry[]
   payouts         Payout[]
 
+  @@index([latitude, longitude])
+  @@index([status, isDeleted], map: "salons_status_is_deleted_idx") // already exists in DB; declaring it stops Prisma from dropping it
   @@map("salons")
 }

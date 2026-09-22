@@ -39,6 +39,11 @@ interface Config {
       pass: string;
     };
   };
+  geo: {
+    userAgent: string;
+    nominatimUrl: string;
+    photonUrl: string;
+  };
 }
 //
 
@@ -151,5 +156,24 @@ export default {
     cancelUrl:
       process.env.SSLCZ_CANCEL_URL || `${apiUrl}/api/v1/payments/sslcz/cancel`,
     ipnUrl: process.env.SSLCZ_IPN_URL || `${apiUrl}/api/v1/payments/sslcz/ipn`,
+  },
+
+  /**
+   * Geocoding. Photon answers search-as-you-type; Nominatim answers reverse
+   * lookups and bans autocomplete. Nominatim's usage policy also requires a
+   * User-Agent naming the app and a real contact - set GEOCODER_USER_AGENT in
+   * production, the placeholder below is not one.
+   */
+  geo: {
+    userAgent:
+      env("GEOCODER_USER_AGENT") ||
+      "SalonManagement/1.0 (contact: you@yourdomain.com)",
+    nominatimUrl: (
+      env("NOMINATIM_URL") || "https://nominatim.openstreetmap.org"
+    ).replace(/\/+$/, ""),
+    photonUrl: (env("PHOTON_URL") || "https://photon.komoot.io").replace(
+      /\/+$/,
+      "",
+    ),
   },
 } as Config;
