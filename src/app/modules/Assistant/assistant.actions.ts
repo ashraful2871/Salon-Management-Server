@@ -76,6 +76,15 @@ import {
   signConfirm,
   type ConfirmPayload,
 } from "./assistant.token";
+import { bandFor } from "./assistant.dates";
+import {
+  AssistantManage,
+  rescheduleInfo,
+  withReturningExtras,
+} from "./assistant.manage";
+import { AssistantValidation, type SearchFilters } from "./assistant.validation";
+import { rankSalons } from "../AI-Suggestion/ai.search";
+import { CATEGORY_LABELS } from "../AI-Suggestion/ai.constants";
 
 /**
  * Every turn in this phase is deterministic: an action comes in, the server
@@ -86,7 +95,9 @@ export type AssistantAction =
   | { type: "start" }
   | { type: "find_nearby"; page?: number }
   | { type: "set_location"; lat: number; lng: number; label?: string }
-  | { type: "search_salons"; query: string; page?: number }
+  // With `filters`: a typed message, read into AI search's filters and ranked
+  // the same way. Without: the plain name/area search.
+  | { type: "search_salons"; query: string; page?: number; filters?: SearchFilters }
   | { type: "choose_salon"; salonId: string }
   // The "Change location" chip: re-asks, rather than re-running the search from
   // the location we already hold.
@@ -106,7 +117,15 @@ export type AssistantAction =
   // answer for it.
   | { type: "check_payment" }
   | { type: "restart" }
-  | { type: "back" };
+  | { type: "back" }
+  // Managing bookings that already exist (assistant.manage.ts). Cancelling is
+  // two taps on purpose: `cancel_booking` only shows what it would cost.
+  | { type: "my_bookings"; scope?: "upcoming" | "past" }
+  | { type: "cancel_booking"; appointmentId: string }
+  | { type: "cancel_confirm"; appointmentId: string }
+  | { type: "reschedule"; appointmentId: string }
+  | { type: "book_usual"; appointmentId: string }
+  | { type: "rate_booking"; appointmentId: string; rating: number };
 
 export type ChangeTarget = "salon" | "date" | "service" | "counter" | "slot";
 
@@ -121,7 +140,12 @@ export type TurnResult = {
  * between a signed-in customer and a guest; the conversation id goes into the
  * confirmation token, which is what binds a quote to this chat.
  */
-export type TurnContext = { userId?: string; conversationId?: string };
+export type TurnContext = {
+  userId?: string;
+  conversationId?: string;
+  /** The first turn of a new conversation, run inside its create request. */
+  opening?: boolean;
+};
 
 /* ------------------------------------------------------------------ cards */
 
@@ -222,7 +246,7 @@ const startBlocks = (): Block[] => [
       icon: "scissors",
     },
     { label: "💳 My wallet", action: { type: "wallet" }, icon: "wallet" },
-    // 📅 My bookings — Phase 7
+    { label: "📅 My bookings", action: { type: "my_bookings" }, icon: "calendar" },
   ]),
 ];
 
@@ -386,11 +410,126 @@ const handleSetLocation = async (
   return handleFindNearby(located, { type: "find_nearby" });
 };
 
+/** "haircut in Dhanmondi under ৳500" — what the filters asked for, in words
+ *  built from the filters themselves, never from the model. */
+export const describeFilters = (filters: SearchFilters): string => {
+  const parts: string[] = [];
+  const services = filters.categories.map((c) => CATEGORY_LABELS[c].toLowerCase());
+  parts.push(services.length ? services.join(" or ") : filters.serviceTerms.join(" or "));
+  if (filters.place) parts.push(`in ${filters.place.label}`);
+  else if (filters.nearMe) parts.push("near you");
+  if (filters.maxPriceMinor !== null) parts.push(`under ${formatBDT(filters.maxPriceMinor)}`);
+  if (filters.minRating !== null) parts.push(`rated ${filters.minRating}+`);
+  if (filters.openNow) parts.push("open now");
+  return parts.filter(Boolean).join(" ");
+};
+
+/** Ranked like AI search — same filters, same scoring — minus the embedding
+ *  and the written reply: both are model calls, and a tap must not make one. */
+const RANKED_MAX = 12;
+
+const handleRankedSearch = async (
+  state: AssistantState,
+  action: Extract<AssistantAction, { type: "search_salons" }> & { filters: SearchFilters },
+): Promise<TurnResult> => {
+  const { filters } = action;
+  const page = action.page ?? 1;
+
+  if (filters.nearMe && !filters.place && !state.location) {
+    return {
+      text: "Where should I look? Share your location and I will search near you.",
+      blocks: [locationRequest(COPY.locationReason, true)],
+      // Picked up again by `followWish` when the location arrives.
+      state: advance(state, {
+        step: "greeting",
+        wish: { ...state.wish, search: { ...action, page: 1 } },
+      }),
+    };
+  }
+
+  const limit = Math.min(RANKED_MAX, page * SALON_CARDS);
+  const ranked = await rankSalons({
+    intent: { ...filters, otherPlace: null, englishQuery: null, understoodBy: "rules" },
+    vector: null,
+    origin: state.location ? { ...state.location, source: "user" } : null,
+    limit,
+    query: action.query,
+  });
+  const rows = ranked.salons.slice((page - 1) * SALON_CARDS, limit);
+
+  const counters = rows.length
+    ? await prisma.counter.groupBy({
+        by: ["salonId"],
+        where: { salonId: { in: rows.map((r) => r.id) }, isActive: true, isDeleted: false },
+        _count: { _all: true },
+      })
+    : [];
+  const counterCount = new Map(counters.map((c) => [c.salonId, c._count._all]));
+
+  const cards = rows.map((row): SalonCard => {
+    const card = toCard({
+      ...row,
+      distanceMeters: row.distanceMeters ?? undefined,
+      services: row.services.map((s) => ({ priceMinor: s.priceMinor, isActive: true })),
+      counters: Array.from({ length: counterCount.get(row.id) ?? 0 }, () => ({ isActive: true })),
+    });
+    // The asked-for service's price, not the salon's cheapest trim.
+    const matched = row.matchedServices.map((s) => s.priceMinor);
+    return {
+      ...card,
+      priceFromMinor: matched.length ? Math.min(...matched) : card.priceFromMinor,
+      reasons: [...new Set([...row.reasons.map((r) => r.text), ...card.reasons])].slice(0, 4),
+    };
+  });
+
+  const next = advance(state, { step: "discover", lastQuery: action.query.slice(0, 300) });
+  const described = describeFilters(filters);
+  // "salons for haircut in Dhanmondi", but "salons in Dhaka" — no dangling "for".
+  const what = !described
+    ? `for "${action.query}"`
+    : filters.categories.length || filters.serviceTerms.length
+      ? `for ${described}`
+      : described;
+
+  if (cards.length === 0) {
+    return {
+      text: `I could not find a salon ${what}.`,
+      blocks: [
+        notice("info", `No salons found ${what}.`),
+        quickReplies([
+          { label: "Find salons near me", action: { type: "find_nearby" }, icon: "map-pin" },
+          { label: "Start over", action: { type: "restart" }, style: "ghost" },
+        ]),
+      ],
+      state: next,
+    };
+  }
+
+  const hasMore = ranked.salons.length === limit && limit < RANKED_MAX;
+  const more = { ...action, page: page + 1 };
+
+  return {
+    text: `I found ${cards.length} salon${cards.length === 1 ? "" : "s"} ${what}. Tap one to see its times.`,
+    blocks: [
+      ...ranked.notes.slice(0, 1).map((note) => notice("info", note)),
+      salonCarousel(cards, hasMore ? more : undefined),
+      quickReplies([
+        ...cards.slice(0, 3).map(chooseSalonReply),
+        ...(hasMore ? [{ label: "Show more", action: more }] : []),
+        { label: "Start over", action: { type: "restart" } as const, style: "ghost" as const },
+      ]),
+    ],
+    state: next,
+  };
+};
+
 /** The no-location fallback, and the seed of free-text search in Phase 6. */
 const handleSearchSalons = async (
   state: AssistantState,
   action: Extract<AssistantAction, { type: "search_salons" }>,
 ): Promise<TurnResult> => {
+  if (action.filters) return handleRankedSearch(state, { ...action, filters: action.filters });
+
   const query = action.query.trim();
 
   if (!query) {
@@ -475,7 +614,7 @@ const handleSearchSalons = async (
  * on both sides: a retired chair's slots are not for sale, and neither is a
  * service the owner has switched off.
  */
-const loadSalon = (salonId: string) =>
+export const loadSalon = (salonId: string) =>
   prisma.salon.findFirst({
     where: { id: salonId, status: "ACTIVE", isDeleted: false },
     include: {
@@ -492,7 +631,7 @@ const loadSalon = (salonId: string) =>
 
 type LoadedSalon = NonNullable<Awaited<ReturnType<typeof loadSalon>>>;
 
-const salonGone = (state: AssistantState): TurnResult => ({
+export const salonGone = (state: AssistantState): TurnResult => ({
   text: COPY.salonGone,
   blocks: [
     notice("warn", COPY.salonGone),
@@ -667,7 +806,7 @@ const noDates = (state: AssistantState): TurnResult => {
 
 /* --------------------------------------------------------------- the steps */
 
-const renderDates = async (
+export const renderDates = async (
   state: AssistantState,
   salon: LoadedSalon,
   lead: string,
@@ -1350,6 +1489,11 @@ const handleChooseSlot = async (
 
   const handoffUrl = `/salons/${salon.id}/book?service=${service.id}&counter=${counter.id}&slot=${slot.id}&date=${state.date}`;
 
+  // A move is a new booking plus a cancellation, so what that cancellation
+  // costs belongs on the card before the tap, quoted by the same function the
+  // cancel will apply. Null when the old booking can no longer be moved.
+  const move = await rescheduleInfo(ctx.userId, state.rescheduleOf);
+
   // Hold the chair only for somebody who could actually take it. A guest has
   // no wallet and no account, so holding for them would keep a slot off the
   // market on behalf of a customer who may never sign in.
@@ -1426,8 +1570,25 @@ const handleChooseSlot = async (
       canConfirmInChat: confirmToken !== null,
       ...(confirmToken ? { confirmToken } : {}),
       ...(holdExpiresAt ? { holdExpiresAt } : {}),
+      ...(move ? { reschedule: move } : {}),
     }),
   ];
+
+  if (state.rescheduleOf && !move) {
+    blocks.push(
+      notice(
+        "info",
+        "Your earlier booking can no longer be changed here, so this would be a new booking alongside it.",
+      ),
+    );
+  } else if (move && move.penaltyMinor > 0) {
+    blocks.push(
+      notice(
+        "warn",
+        `Moving costs ${formatBDT(move.penaltyMinor)}: your ${move.label} booking is inside its free-cancellation window, so that much of its ${formatBDT(move.depositMinor)} deposit is kept when it is cancelled.`,
+      ),
+    );
+  }
 
   if (wallet.signedIn && shortfallMinor > 0) {
     // "৳30 short of the ৳30 deposit" is true and reads like a mistake, so an
@@ -1483,11 +1644,19 @@ const handleChooseSlot = async (
 
   // Set after `advance`, which drops the quote of whatever slot came before.
   const next = advance(state, { step: "summary", slotId: slot.id });
+  if (state.rescheduleOf && !move) delete next.rescheduleOf;
+
+  const moveLine = move
+    ? `Moving your ${move.label} booking. ` +
+      (move.penaltyMinor > 0
+        ? `Cancelling the old one keeps ${formatBDT(move.penaltyMinor)} of its deposit. `
+        : "Cancelling the old one is free. ")
+    : "";
   if (confirmToken) next.quoteToken = confirmToken;
   else delete next.quoteToken;
 
   return {
-    text: `${service.name} at ${salon.name}, ${dateLabel(state.date)} at ${slot.startTime}. ${formatBDT(priceMinor)} in total: ${dueLine}${holdLine}`,
+    text: `${moveLine}${service.name} at ${salon.name}, ${dateLabel(state.date)} at ${slot.startTime}. ${formatBDT(priceMinor)} in total: ${dueLine}${holdLine}`,
     blocks,
     state: next,
   };
@@ -1694,7 +1863,11 @@ const LEAVES_THE_SUMMARY: AssistantAction["type"][] = [
   "restart",
   "choose_salon",
   "find_nearby",
+  "search_salons",
   "back",
+  // Both start a new draft at another salon/service.
+  "reschedule",
+  "book_usual",
 ];
 
 const releaseHeldSlot = async (
@@ -1739,8 +1912,174 @@ export const runAction = async (
   state: AssistantState,
   action: AssistantAction,
   ctx: TurnContext = {},
-): Promise<TurnResult> =>
-  keepConsentHonest(state, await dispatchAction(state, action, ctx));
+): Promise<TurnResult> => {
+  const result = keepConsentHonest(state, await dispatchAction(state, action, ctx));
+  return settle(await followWish(action, result, ctx));
+};
+
+const withoutWish = (
+  state: AssistantState,
+  ...fields: Array<keyof NonNullable<AssistantState["wish"]>>
+): AssistantState => {
+  if (!state.wish) return state;
+  const wish = { ...state.wish };
+  for (const field of fields) delete wish[field];
+  const next: AssistantState = { ...state, wish };
+  if (Object.keys(wish).length === 0) delete next.wish;
+  return next;
+};
+
+const matchesWish = (
+  service: ServiceOption,
+  wish: NonNullable<AssistantState["wish"]>,
+): boolean => {
+  const name = service.name.toLowerCase();
+  return (
+    (wish.categories ?? []).includes(service.category) ||
+    (wish.serviceTerms ?? []).some((term) => name.includes(term.toLowerCase()))
+  );
+};
+
+/**
+ * A typed "haircut tomorrow evening" answers questions the funnel has not
+ * asked yet. When it gets there, this answers them — once each — with the same
+ * actions a tap would send, so the result is exactly what tapping would show.
+ * A day that has nothing free is said out loud and the picker left open.
+ */
+const followWish = async (
+  action: AssistantAction,
+  first: TurnResult,
+  ctx: TurnContext,
+): Promise<TurnResult> => {
+  let result = first;
+
+  // A near-me search that had to ask for a location first.
+  const pending = result.state.wish?.search;
+  if (action.type === "set_location" && pending && result.state.location) {
+    const parsed = AssistantValidation.actionSchema.safeParse(pending);
+    const state = withoutWish(result.state, "search");
+    result =
+      parsed.success && parsed.data.type === "search_salons"
+        ? await dispatchAction(state, parsed.data, ctx)
+        : { ...result, state };
+  }
+
+  for (let round = 0; round < 3; round += 1) {
+    const { state } = result;
+    const wish = state.wish;
+    if (!wish) break;
+
+    if (state.step === "date" && wish.date) {
+      const cleared = withoutWish(state, "date");
+      const picker = result.blocks.find((b) => b.type === "date_picker");
+      const offered =
+        picker?.type === "date_picker" && picker.dates.some((d) => d.date === wish.date);
+      if (offered) {
+        result = await dispatchAction(cleared, { type: "choose_date", date: wish.date }, ctx);
+        continue;
+      }
+      const text = `Nothing is free on ${dateLabel(wish.date)} here. These days still have times.`;
+      result = { text, blocks: [notice("info", text), ...result.blocks], state: cleared };
+      continue;
+    }
+
+    if (state.step === "service" && (wish.categories?.length || wish.serviceTerms?.length)) {
+      const cleared = withoutWish(state, "categories", "serviceTerms");
+      const picker = result.blocks.find((b) => b.type === "service_picker");
+      const matches =
+        picker?.type === "service_picker" ? picker.services.filter((s) => matchesWish(s, wish)) : [];
+      // Two haircuts is a real choice; only an unambiguous match is taken.
+      if (matches.length === 1) {
+        result = await dispatchAction(cleared, { type: "choose_service", serviceId: matches[0].id }, ctx);
+        continue;
+      }
+      result = { ...result, state: cleared };
+      continue;
+    }
+
+    break;
+  }
+
+  return result;
+};
+
+/** Scrolls a slot picker to the part of day the customer typed. */
+const focusSlots = (result: TurnResult): TurnResult => {
+  const wish = result.state.wish;
+  if (!wish?.partOfDay && !wish?.after) return result;
+  const focus = bandFor(wish.partOfDay);
+  const picker = result.blocks.find((b) => b.type === "slot_picker");
+  // Asked for the evening and there is none: say so, rather than scroll to a
+  // band that is not there and leave them wondering.
+  const missing =
+    focus &&
+    picker?.type === "slot_picker" &&
+    !picker.groups.some((g) => g.label === focus && g.slots.length > 0)
+      ? `Nothing is free in the ${focus.toLowerCase()} that day. These are the times that are.`
+      : null;
+  return {
+    ...result,
+    blocks: [
+      ...(missing ? [notice("info", missing)] : []),
+      ...result.blocks.map((block) =>
+        block.type === "slot_picker"
+          ? { ...block, focus: missing ? null : focus, after: wish.after ?? null }
+          : block,
+      ),
+    ],
+  };
+};
+
+/** The finishing touches every turn gets — also applied by the text turn to
+ *  a step it redraws without an action. */
+export const settle = (result: TurnResult): TurnResult => remember(focusSlots(result));
+
+/** What the last picker offered, so "the first one" or "5:45" can be matched
+ *  against it without a model. A turn with no picker keeps the old list. */
+const remember = (result: TurnResult): TurnResult => {
+  let lastOptions: AssistantState["lastOptions"];
+
+  for (const block of result.blocks) {
+    if (block.type === "salon_carousel") {
+      lastOptions = {
+        kind: "salon",
+        items: block.salons.map((s) => ({ id: s.id, label: s.name, priceMinor: s.priceFromMinor })),
+      };
+    } else if (block.type === "date_picker") {
+      lastOptions = { kind: "date", items: block.dates.map((d) => ({ id: d.date, label: d.label })) };
+    } else if (block.type === "service_picker") {
+      lastOptions = {
+        kind: "service",
+        items: block.services.map((s) => ({
+          id: s.id,
+          label: s.name,
+          priceMinor: s.priceMinor,
+          category: s.category,
+        })),
+      };
+    } else if (block.type === "counter_picker") {
+      lastOptions = { kind: "counter", items: block.counters.map((c) => ({ id: c.id, label: c.name })) };
+    } else if (block.type === "slot_picker") {
+      // Over the cap, the band the customer asked for is the part worth keeping.
+      const groups = [...block.groups].sort(
+        (a, b) => Number(b.label === block.focus) - Number(a.label === block.focus),
+      );
+      lastOptions = {
+        kind: "slot",
+        items: groups
+          .flatMap((g) => g.slots.map((s) => ({ id: s.id, label: s.startTime, time: s.startTime.slice(0, 5) })))
+          .slice(0, 20)
+          .sort((a, b) => a.time.localeCompare(b.time)),
+      };
+    }
+  }
+
+  if (!lastOptions) return result;
+  return {
+    ...result,
+    state: { ...result.state, lastOptions: { ...lastOptions, items: lastOptions.items.slice(0, 20) } },
+  };
+};
 
 const dispatchAction = async (
   state: AssistantState,
@@ -1755,11 +2094,15 @@ const dispatchAction = async (
 
   switch (action.type) {
     case "start":
-      return handleStart(state);
+      return withReturningExtras(handleStart(state), ctx.userId);
     case "find_nearby":
       return handleFindNearby(state, action);
-    case "set_location":
-      return handleSetLocation(state, action);
+    case "set_location": {
+      // A saved location opens the chat straight onto the carousel, so that
+      // first turn is where a returning customer's shortcuts have to appear.
+      const located = await handleSetLocation(state, action);
+      return ctx.opening ? withReturningExtras(located, ctx.userId) : located;
+    }
     case "search_salons":
       return handleSearchSalons(state, action);
     case "choose_salon":
@@ -1785,8 +2128,20 @@ const dispatchAction = async (
     case "check_payment":
       return walletOnly(state, ctx);
     case "restart":
-      return handleRestart(state);
+      return withReturningExtras(handleRestart(state), ctx.userId);
     case "back":
       return handleBack(state);
+    case "my_bookings":
+      return AssistantManage.handleMyBookings(state, ctx, action);
+    case "cancel_booking":
+      return AssistantManage.handleCancelBooking(state, ctx, action);
+    case "cancel_confirm":
+      return AssistantManage.handleCancelConfirm(state, ctx, action);
+    case "reschedule":
+      return AssistantManage.handleReschedule(state, ctx, action);
+    case "book_usual":
+      return AssistantManage.handleBookUsual(state, ctx, action);
+    case "rate_booking":
+      return AssistantManage.handleRateBooking(state, ctx, action);
   }
 };

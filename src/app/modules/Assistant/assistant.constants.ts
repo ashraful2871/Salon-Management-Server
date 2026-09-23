@@ -7,6 +7,23 @@
 /** Kill switch. Unset means on; only the literal "false" turns it off. */
 export const ASSISTANT_ENABLED = process.env.ASSISTANT_ENABLED !== "false";
 
+/**
+ * Free text may reach Gemini only when this is the literal "true". Off (the
+ * default), typed messages are read by the rules alone — "guided mode" — and
+ * every tap works exactly the same either way.
+ */
+export const ASSISTANT_LLM_ENABLED = process.env.ASSISTANT_LLM_ENABLED === "true";
+
+/**
+ * Tokens (in + out) the whole process may spend on the assistant per Dhaka
+ * day. Past it, typed messages fall back to the rules until midnight: cheap
+ * insurance against a loop or an abusive script.
+ */
+export const ASSISTANT_DAILY_TOKEN_BUDGET = Math.max(
+  0,
+  Number(process.env.ASSISTANT_DAILY_TOKEN_BUDGET ?? 2_000_000) || 2_000_000,
+);
+
 /** Per conversation. A guided flow reaches a booking in well under ten turns. */
 export const MAX_TURNS = 40;
 

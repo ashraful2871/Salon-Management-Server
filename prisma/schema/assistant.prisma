@@ -35,6 +35,10 @@ model AssistantMessage {
   model          String?
   promptVersion  String?
   latencyMs      Int?
+  tokensIn       Int?
+  tokensOut      Int?
+  feedback       Int? // 👍 1 / 👎 -1 from the customer; null when not rated
+  feedbackReason String?
   createdAt      DateTime      @default(now())
 
   conversation AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)

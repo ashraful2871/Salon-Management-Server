@@ -37,6 +37,44 @@ export const assistantStateSchema = z.object({
     .optional(),
   lastQuery: z.string().max(300).optional(),
   /**
+   * What a typed message asked for that the funnel has not reached yet —
+   * "tomorrow evening", "a haircut". Applied once, when the step it answers
+   * comes up, and then dropped, so a later "Change day" tap is not overruled
+   * by something typed three turns ago.
+   */
+  wish: z
+    .object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      partOfDay: z.enum(["morning", "afternoon", "evening", "night"]).optional(),
+      after: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+      categories: z.array(z.string().max(20)).max(12).optional(),
+      serviceTerms: z.array(z.string().max(60)).max(6).optional(),
+      /** A search that needed a location first; re-run once one arrives. */
+      search: z.record(z.string(), z.unknown()).optional(),
+    })
+    .optional(),
+  /**
+   * The options the last picker showed, so "the first one", "the cheaper one"
+   * or "5:45" can be matched without asking the model. Capped: it is a lookup
+   * table, not a copy of the block.
+   */
+  lastOptions: z
+    .object({
+      kind: z.enum(["salon", "date", "service", "counter", "slot"]),
+      items: z
+        .array(
+          z.object({
+            id: z.string().max(40),
+            label: z.string().max(120),
+            priceMinor: z.number().int().nullable().optional(),
+            category: z.string().max(20).optional(),
+            time: z.string().max(5).optional(),
+          }),
+        )
+        .max(20),
+    })
+    .optional(),
+  /**
    * The booking this conversation produced, keyed by the `Idempotency-Key`
    * that produced it. A replayed Confirm — a double tap, a retried request —
    * matches the key and is answered with the same appointment instead of a
@@ -55,6 +93,13 @@ export const assistantStateSchema = z.object({
   quoteToken: z.string().max(2048).optional(),
   /** The hold on this slot has already had its one top-up extension. */
   holdExtended: z.boolean().optional(),
+  /**
+   * The booking this funnel is moving. Set by "Reschedule"; Confirm then books
+   * the new time first and cancels this one only once that succeeded. Dropped
+   * with the salon, so walking off to another salon is a new booking, not a
+   * move.
+   */
+  rescheduleOf: z.string().uuid().optional(),
   /**
    * A wallet top-up this chat opened and has not yet seen settle. It rides
    * alongside whatever step the customer is at, rather than being a step: they
@@ -92,15 +137,33 @@ export const readState = (json: unknown): AssistantState => {
 type ActionType = AssistantAction["type"];
 
 /**
+ * Looking after bookings that already exist. Reachable from every step — "what
+ * did I book?" is a fair question in the middle of booking something else, and
+ * none of these touch the draft except Reschedule and Book again, which start
+ * a new one on purpose.
+ */
+const MANAGE: ActionType[] = [
+  "my_bookings",
+  "cancel_booking",
+  "cancel_confirm",
+  "reschedule",
+  "book_usual",
+  "rate_booking",
+];
+
+/**
  * Accepted everywhere inside the funnel. A customer is always allowed to walk
  * away to another salon, change something they already picked, or start again —
  * a booking flow that traps you is one you abandon.
  */
 const ALWAYS: ActionType[] = [
+  ...MANAGE,
   "change",
   "restart",
   "back",
   "find_nearby",
+  // "Gulshan instead", typed mid-funnel, is another search.
+  "search_salons",
   "choose_salon",
   "wallet",
   "check_payment",
@@ -123,6 +186,7 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "restart",
     "wallet",
     "check_payment",
+    ...MANAGE,
   ],
   discover: [
     "start",
@@ -135,6 +199,7 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "back",
     "wallet",
     "check_payment",
+    ...MANAGE,
   ],
   salon: [
     "find_nearby",
@@ -148,6 +213,7 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "back",
     "wallet",
     "check_payment",
+    ...MANAGE,
   ],
   // Date and service may arrive in either order, so each of the two steps
   // accepts both answers — see `nextStep` in assistant.actions.ts.
@@ -184,14 +250,16 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
   payment: [],
   // A finished booking is not a dead end: the customer may want another salon,
   // their wallet, or to start again. It is deliberately not `change` or
-  // `choose_slot` — the appointment is made, and moving it is Phase 7's job.
+  // `choose_slot` — the appointment is made, and moving it is `reschedule`.
   booked: [
     "restart",
     "find_nearby",
     "set_location",
+    "search_salons",
     "choose_salon",
     "wallet",
     "check_payment",
+    ...MANAGE,
   ],
 };
 
@@ -233,14 +301,15 @@ type ClearableField =
   | "slotId"
   | "staffId"
   | "quoteToken"
-  | "holdExtended";
+  | "holdExtended"
+  | "rescheduleOf";
 
 /** A quote and its hold extension belong to one slot, so anything that drops
  *  the slot drops them too. */
 const QUOTE: ClearableField[] = ["staffId", "quoteToken", "holdExtended"];
 
 const CLEARED_BY: Record<(typeof DOWNSTREAM)[number], ClearableField[]> = {
-  salonId: ["serviceId", "date", "counterId", "slotId", ...QUOTE],
+  salonId: ["serviceId", "date", "counterId", "slotId", "rescheduleOf", ...QUOTE],
   serviceId: ["counterId", "slotId", ...QUOTE],
   date: ["counterId", "slotId", ...QUOTE],
   counterId: ["slotId", ...QUOTE],

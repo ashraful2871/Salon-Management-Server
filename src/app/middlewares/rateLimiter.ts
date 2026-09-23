@@ -131,6 +131,23 @@ export const paymentLimiter = rateLimit({
 });
 
 /**
+ * Typed messages are the one assistant call that can reach Gemini, so they get
+ * their own, tighter budget — tighter still for guests, who cost the same and
+ * are cheaper to multiply. The per-conversation cap is `MAX_TURNS`.
+ */
+export const assistantLlmLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: (req: Request) => (req.user?.userId ? 20 : 10),
+  keyGenerator: userOrClientKey, // optionalAuth() must run first
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "You are typing faster than I can read. Please wait a minute.",
+  },
+});
+
+/**
  * Guided turns are DB reads, so this is generous — it exists to stop a script,
  * not a fast tapper. The model-backed endpoint gets its own budget later.
  */

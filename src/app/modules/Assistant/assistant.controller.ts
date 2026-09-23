@@ -9,6 +9,7 @@ import {
   AssistantConfirmError,
 } from "./assistant.confirm";
 import { COPY } from "./assistant.constants";
+import { isPaymentQuestion } from "./assistant.nlu";
 import { AssistantPayment } from "./assistant.payment";
 import { AssistantService, Owner, recordTurn } from "./assistant.service";
 
@@ -79,6 +80,27 @@ const act = catchAsync(async (req: Request, res: Response) => {
     statusCode: StatusCodes.OK,
     success: true,
     message: "Action handled",
+    data: result,
+  });
+});
+
+/**
+ * A typed message. "Did my payment go through?" goes where the tap would, the
+ * payment module; everything else is a text turn.
+ */
+const message = catchAsync(async (req: Request, res: Response) => {
+  const text: string = req.body.text;
+  const result = isPaymentQuestion(text)
+    ? {
+        ...(await AssistantPayment.checkPayment(req.params.id, ownerOf(req), text.slice(0, 80))),
+        mode: "guided" as const,
+      }
+    : await AssistantService.runTextTurn(req.params.id, ownerOf(req), text);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Message handled",
     data: result,
   });
 });
@@ -175,4 +197,29 @@ const topup = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
-export const AssistantController = { create, get, act, confirm, topup };
+/** 👍 / 👎 on an assistant message. */
+const feedback = catchAsync(async (req: Request, res: Response) => {
+  const result = await AssistantService.rateMessage(
+    req.params.id,
+    ownerOf(req),
+    req.body.value,
+    req.body.reason,
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Thanks for the feedback",
+    data: result,
+  });
+});
+
+export const AssistantController = {
+  create,
+  get,
+  act,
+  message,
+  confirm,
+  topup,
+  feedback,
+};

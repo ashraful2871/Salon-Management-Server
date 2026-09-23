@@ -15,6 +15,7 @@ import {
 } from "./assistant.actions";
 import { Block, bookingConfirmed, notice, quickReplies } from "./assistant.blocks";
 import { releaseSlot } from "./assistant.booking";
+import { completeMove } from "./assistant.manage";
 import { APPOINTMENTS_PATH, COPY } from "./assistant.constants";
 import { findOwned, recordTurn, type Owner } from "./assistant.service";
 import { advance, readState, type AssistantState } from "./assistant.state";
@@ -332,11 +333,27 @@ const confirmBooking = async (input: ConfirmInput) => {
     // clears it too. Tidiness, not correctness.
     await releaseSlot(payload.sid, input.userId);
 
-    const turn = await confirmedTurn(appointment, state);
+    const confirmed = await confirmedTurn(appointment, state);
+
+    // A reschedule: the new booking is safely made, so now — and only now —
+    // the old one goes. Hold, confirm, cancel, in that order.
+    const move = state.rescheduleOf
+      ? await completeMove(input.userId, state.rescheduleOf)
+      : null;
+
+    const turn: TurnResult = move
+      ? {
+          text: `${move.text} ${confirmed.text}`,
+          blocks: [...move.blocks, ...confirmed.blocks],
+          state: confirmed.state,
+        }
+      : confirmed;
+    const { rescheduleOf: _moved, ...after } = turn.state;
+
     const booked: TurnResult = {
       ...turn,
       state: {
-        ...turn.state,
+        ...after,
         confirm: {
           key: input.idempotencyKey,
           appointmentId: appointment.id,
@@ -360,7 +377,7 @@ const confirmBooking = async (input: ConfirmInput) => {
       conversation: { status: "BOOKED", appointmentId: appointment.id },
     });
 
-    return { appointment, replayed: false, turn, conversationId: payload.cid };
+    return { appointment, replayed: false, turn: booked, conversationId: payload.cid };
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
 

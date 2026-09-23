@@ -54,6 +54,15 @@ model Appointment {
   checkedInById String?
   completedById String?
 
+  /// Stamped when the reminder email goes out. The job picks bookings by a
+  /// time window *and* a null stamp, so it may run twice but a customer is
+  /// only ever emailed once per reminder.
+  reminder24At  DateTime?
+  reminder2hAt  DateTime?
+  /// When the chat asked for a review of this booking. Claimed with a
+  /// conditional write, so the question is asked once per booking, ever.
+  reviewAskedAt DateTime?
+
   // Relations
   customer      User          @relation(fields: [customerId], references: [id], onDelete: Cascade)
   salon         Salon         @relation(fields: [salonId], references: [id], onDelete: Cascade)
@@ -69,5 +78,7 @@ model Appointment {
   @@index([customerId, salonId])
   // Backs listing one salon's bookings for a service and day.
   @@index([salonId, serviceId, appointmentDate])
+  // Backs the reminder job's "confirmed bookings in the next day" scan.
+  @@index([status, appointmentDate])
   @@map("appointments")
 }

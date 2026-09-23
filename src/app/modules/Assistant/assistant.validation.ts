@@ -1,7 +1,37 @@
+import { ServiceCategory } from "@prisma/client";
 import { z } from "zod";
 import { formatBDT } from "../../utils/money";
 import { PaymentIntentService } from "../Payment/paymentIntent.service";
 import type { AssistantAction } from "./assistant.actions";
+
+/**
+ * A typed message, read by the rules (or the model's tool call) into the same
+ * filters AI search uses. It rides on the action so "Show more" can page the
+ * same search with a tap — re-reading the words would mean a model call.
+ */
+export const searchFiltersSchema = z.object({
+  categories: z.array(z.nativeEnum(ServiceCategory)).max(12).default([]),
+  serviceTerms: z.array(z.string().max(60)).max(6).default([]),
+  place: z
+    .object({
+      area: z.string().max(80).optional(),
+      district: z.string().max(80).optional(),
+      city: z.string().max(80).optional(),
+      division: z.string().max(80).optional(),
+      label: z.string().max(120),
+    })
+    .nullable()
+    .default(null),
+  nearMe: z.boolean().default(false),
+  maxPriceMinor: z.number().int().nonnegative().nullable().default(null),
+  minPriceMinor: z.number().int().nonnegative().nullable().default(null),
+  budget: z.boolean().default(false),
+  minRating: z.number().min(0).max(5).nullable().default(null),
+  sortBy: z.enum(["relevance", "rating", "price", "distance"]).default("relevance"),
+  openNow: z.boolean().default(false),
+});
+
+export type SearchFilters = z.infer<typeof searchFiltersSchema>;
 
 /**
  * A discriminated union is what makes an unknown `type` a 400 at the edge
@@ -23,6 +53,7 @@ const actionSchema = z.discriminatedUnion("type", [
     type: z.literal("search_salons"),
     query: z.string().max(300),
     page: z.coerce.number().int().min(1).max(50).optional(),
+    filters: searchFiltersSchema.optional(),
   }),
   z.object({ type: z.literal("choose_salon"), salonId: z.string().uuid() }),
   z.object({ type: z.literal("change_location") }),
@@ -44,6 +75,19 @@ const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("check_payment") }),
   z.object({ type: z.literal("restart") }),
   z.object({ type: z.literal("back") }),
+  z.object({
+    type: z.literal("my_bookings"),
+    scope: z.enum(["upcoming", "past"]).optional(),
+  }),
+  z.object({ type: z.literal("cancel_booking"), appointmentId: z.string().uuid() }),
+  z.object({ type: z.literal("cancel_confirm"), appointmentId: z.string().uuid() }),
+  z.object({ type: z.literal("reschedule"), appointmentId: z.string().uuid() }),
+  z.object({ type: z.literal("book_usual"), appointmentId: z.string().uuid() }),
+  z.object({
+    type: z.literal("rate_booking"),
+    appointmentId: z.string().uuid(),
+    rating: z.number().int().min(1).max(5),
+  }),
 ]);
 
 // Fails the build if the schema and the handler union ever drift apart.
@@ -65,6 +109,13 @@ const runAction = z.object({
     action: actionSchema,
     label: z.string().max(80).optional(),
   }),
+});
+
+/** A typed message. Two characters is the shortest thing worth reading
+ *  ("ok", "kal"); 300 is a paragraph, and the model is paid per token. */
+const sendMessage = z.object({
+  params: z.object({ id: z.string().uuid() }),
+  body: z.object({ text: z.string().trim().min(2).max(300) }),
 });
 
 /**
@@ -103,10 +154,21 @@ const startTopup = z.object({
   }),
 });
 
+/** 👍 / 👎 on one assistant message, with an optional word on why. */
+const messageFeedback = z.object({
+  params: z.object({ id: z.string().uuid() }),
+  body: z.object({
+    value: z.union([z.literal(1), z.literal(-1)]),
+    reason: z.string().trim().max(300).optional(),
+  }),
+});
+
 export const AssistantValidation = {
+  messageFeedback,
   actionSchema,
   createConversation,
   runAction,
+  sendMessage,
   confirmBooking,
   startTopup,
 };

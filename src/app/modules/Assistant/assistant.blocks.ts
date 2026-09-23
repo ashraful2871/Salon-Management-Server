@@ -56,6 +56,11 @@ export type Block =
       date: string;
       counterName: string | null;
       groups: SlotGroup[];
+      /** The band a typed "evening" / "bikele" asked for: the picker scrolls
+       *  to it. Every band is still shown. */
+      focus?: "Morning" | "Afternoon" | "Evening" | null;
+      /** "after 5": times before this are dimmed, not hidden. */
+      after?: string | null;
     }
   | {
       type: "booking_summary";
@@ -92,6 +97,39 @@ export type Block =
       confirmToken?: string;
       /** ISO instant the hold lapses, for the countdown on the button. */
       holdExpiresAt?: string;
+      /** Present when this summary moves an existing booking: the button
+       *  reads "Move booking", and what cancelling the old one costs is on the
+       *  card before the tap. */
+      reschedule?: RescheduleInfo;
+    }
+  | {
+      type: "booking_list";
+      scope: "upcoming" | "past";
+      bookings: BookingListItem[];
+    }
+  | {
+      /**
+       * What cancelling costs, shown before the customer is asked. Built from
+       * `getCancellationPreview`, the same quote the cancel endpoint applies,
+       * so the figure here and the figure charged cannot disagree.
+       */
+      type: "cancellation_preview";
+      appointmentId: string;
+      startsAt: string;
+      freeCancellation: boolean;
+      cancellationWindowMin: number;
+      depositMinor: number;
+      penaltyMinor: number;
+      penaltyPercent: number;
+      refundMinor: number;
+      /** False once the appointment has started — then only the salon can. */
+      cancellable: boolean;
+      salonName: string;
+      salonPhone: string;
+      serviceName: string;
+      date: string;
+      startTime: string;
+      actions: QuickReply[];
     }
   | {
       type: "booking_confirmed";
@@ -205,6 +243,40 @@ export type SummaryService = {
 
 export type SummaryCounter = { id: string; name: string; code: string | null };
 
+export type RescheduleInfo = {
+  appointmentId: string;
+  /** "Thu 24 Sep 17:45" — the booking being moved, in the card's words. */
+  label: string;
+  date: string;
+  startTime: string;
+  /** What cancelling the old booking keeps, quoted now; 0 inside the free
+   *  window. The move is a new booking plus this cancellation. */
+  penaltyMinor: number;
+  depositMinor: number;
+  freeCancellation: boolean;
+};
+
+export type BookingListItem = {
+  id: string;
+  salonId: string;
+  salonName: string;
+  salonPhone: string;
+  serviceName: string;
+  date: string;
+  startTime: string;
+  endTime: string | null;
+  status: string;
+  token: string | null;
+  serialNumber: number | null;
+  counterName: string | null;
+  totalMinor: number;
+  depositMinor: number;
+  dueAtSalonMinor: number;
+  canCancel: boolean;
+  canReschedule: boolean;
+  actions: QuickReply[];
+};
+
 export type SalonPolicy = {
   depositMinor: number;
   depositPercent: number | null;
@@ -287,6 +359,15 @@ export const bookingSummary = (fields: BlockOf<"booking_summary">): Block => ({
 export const bookingConfirmed = (
   fields: BlockOf<"booking_confirmed">,
 ): Block => ({ type: "booking_confirmed", ...fields });
+
+export const bookingList = (fields: BlockOf<"booking_list">): Block => ({
+  type: "booking_list",
+  ...fields,
+});
+
+export const cancellationPreview = (
+  fields: BlockOf<"cancellation_preview">,
+): Block => ({ type: "cancellation_preview", ...fields });
 
 export const paymentPromptBlock = (
   fields: BlockOf<"payment_prompt">,

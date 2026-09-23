@@ -17,7 +17,8 @@
     "verify:payments": "ts-node-dev --transpile-only ./src/scripts/verifyPayments.ts",
     "test:email": "ts-node-dev --transpile-only ./src/scripts/testEmail.ts",
     "check:email": "ts-node-dev --transpile-only ./src/scripts/checkEmailKey.ts",
-    "assistant:check": "ts-node-dev --transpile-only ./src/scripts/assistantReadiness.ts"
+    "assistant:check": "ts-node-dev --transpile-only ./src/scripts/assistantReadiness.ts",
+    "assistant:eval": "ts-node-dev --transpile-only ./src/scripts/evalAssistant.ts"
   },
   "keywords": [
     "salon",

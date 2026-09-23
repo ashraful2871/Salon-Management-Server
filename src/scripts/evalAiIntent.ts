@@ -51,6 +51,7 @@ const CASES: Array<[string, Expect]> = [
   ["facial 1,500 taka", { categories: ["FACIAL"], maxPriceMinor: 150000 }],
   ["keratin treatment between 3000 and 5000 tk", { categories: ["TREATMENT"], minPriceMinor: 300000, maxPriceMinor: 500000, terms: ["keratin"] }],
   ["amar chul kata lagbe dhanmondi te 500 takar moddhe", { categories: ["HAIRCUT"], place: "Dhanmondi", maxPriceMinor: 50000, asksModel: false }],
+  ["চুল কাটতে চাই", { categories: ["HAIRCUT"] }],
   ["ধানমন্ডিতে চুল কাটা ৫০০ টাকার মধ্যে", { categories: ["HAIRCUT"], place: "Dhanmondi", maxPriceMinor: 50000 }],
   ["best barber in ctg", { categories: ["HAIRCUT"], sortBy: "rating", place: "Chittagong" }],
   ["nail art open now", { categories: ["MANICURE"], openNow: true }],

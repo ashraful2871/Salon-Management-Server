@@ -562,3 +562,57 @@ export const getEmailChangedNoticeTemplate = (
      <p>From now on, sign in with the new address. Booking confirmations, receipts and password reset links will be sent there instead of here.</p>
      <p style="color:#c0392b;font-size:13px;">If you did not make this change, please contact support straight away - someone may have access to your account.</p>`
   );
+
+/**
+ * The 24-hour and 2-hour booking reminders. Everything the customer needs at
+ * the counter (token, serial, what is left to pay) plus the one thing that
+ * costs money if they forget it: when free cancellation closes.
+ */
+export const getBookingReminderTemplate = (reminder: {
+  customerName: string;
+  when: "tomorrow" | "in 2 hours";
+  salonName: string;
+  salonAddress: string;
+  salonPhone: string;
+  serviceName: string;
+  date: string;
+  time: string;
+  token: string | null;
+  serialNumber: number | null;
+  dueAtSalon: string;
+  /** Sentence about the cancellation deadline, already worded. */
+  cancellation: string;
+  manageUrl: string;
+}) => {
+  const row = (label: string, value: string, mono = false) => `
+    <tr>
+      <td style="padding:10px 0;color:#7f8c8d;font-size:13px;border-bottom:1px solid #eef1f3;">${label}</td>
+      <td style="padding:10px 0;text-align:right;font-size:13px;color:#2c3e50;border-bottom:1px solid #eef1f3;${
+        mono ? "font-family:'Courier New',monospace;" : ""
+      }">${value}</td>
+    </tr>`;
+
+  return moneyLayout(
+    reminder.when === "tomorrow"
+      ? "Your appointment is tomorrow"
+      : "Your appointment is in 2 hours",
+    `<p>Hi ${escapeHtml(reminder.customerName)},</p>
+     <p>A reminder of your <strong>${escapeHtml(reminder.serviceName)}</strong> at <strong>${escapeHtml(reminder.salonName)}</strong>, ${reminder.when}.</p>
+
+     <table style="width:100%;border-collapse:collapse;border-top:1px solid #eef1f3;margin:18px 0;">
+       ${row("Date", reminder.date)}
+       ${row("Time", reminder.time)}
+       ${reminder.token ? row("Token", `<strong>${reminder.token}</strong>`, true) : ""}
+       ${reminder.serialNumber ? row("Serial", `#${reminder.serialNumber}`) : ""}
+       ${row("Pay at the salon", `<strong>${reminder.dueAtSalon}</strong>`)}
+       ${row("Address", escapeHtml(reminder.salonAddress))}
+       ${row("Phone", escapeHtml(reminder.salonPhone))}
+     </table>
+
+     <p style="font-size:14px;">${reminder.cancellation}</p>
+     <p style="text-align:center;margin:24px 0;">
+       <a href="${reminder.manageUrl}" style="display:inline-block;padding:12px 24px;background-color:#2c3e50;color:#ffffff;text-decoration:none;border-radius:4px;font-weight:600;">Manage booking</a>
+     </p>
+     <p style="color:#7f8c8d;font-size:13px;">Show your token at the counter when you arrive.</p>`
+  );
+};

@@ -4,6 +4,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { AssistantAction, runAction } from "./assistant.actions";
+import { textTurn } from "./assistant.ai";
 import { notice } from "./assistant.blocks";
 import { COPY, CONVERSATION_TTL_DAYS, MAX_TURNS } from "./assistant.constants";
 import { AssistantState, readState } from "./assistant.state";
@@ -83,7 +84,7 @@ const createConversation = async (
   // Opening the chat and tapping the first button is one round trip: the widget
   // should not have to ask twice before it can draw anything.
   const turn = action
-    ? await runTurn(conversation.id, owner, action, label)
+    ? await runTurn(conversation.id, owner, action, label, true)
     : null;
 
   return {
@@ -117,6 +118,7 @@ const runTurn = async (
   owner: Owner,
   action: AssistantAction,
   label?: string,
+  opening = false,
 ) => {
   const conversation = await findOwned(id, owner);
 
@@ -153,6 +155,7 @@ const runTurn = async (
   const result = await runAction(state, action, {
     userId: owner.userId,
     conversationId: conversation.id,
+    opening,
   });
   const latencyMs = Date.now() - started;
 
@@ -162,6 +165,80 @@ const runTurn = async (
     result,
     latencyMs,
   });
+};
+
+/**
+ * A typed message: the same turn envelope as a tap, plus `mode` ("guided"
+ * when no model was involved) and `toolLabel` when a tool ran. The customer's
+ * text is the user message; the action stored beside it is `{ type: "text" }`
+ * so the transcript still says how the turn was driven.
+ */
+const runTextTurn = async (id: string, owner: Owner, text: string) => {
+  const conversation = await findOwned(id, owner);
+
+  if (conversation.status !== "ACTIVE") {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "This conversation is closed. Start a new chat.",
+    );
+  }
+
+  const state = readState(conversation.state);
+
+  if (conversation.turnCount >= MAX_TURNS) {
+    return {
+      conversationId: conversation.id,
+      state,
+      mode: "guided" as const,
+      messages: [
+        {
+          id: randomUUID(),
+          role: "ASSISTANT" as const,
+          text: COPY.turnLimit,
+          blocks: [notice("warn", COPY.turnLimit)],
+          createdAt: new Date(),
+        },
+      ],
+    };
+  }
+
+  // Text only, oldest first: the model sees what was said, never the blocks,
+  // tokens or ids that were on screen.
+  const recent = await prisma.assistantMessage.findMany({
+    where: { conversationId: conversation.id, text: { not: null } },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+    select: { role: true, text: true },
+  });
+  const history = recent
+    .reverse()
+    .filter((m) => m.role !== "TOOL")
+    .map((m) => ({
+      role: m.role === "USER" ? ("user" as const) : ("model" as const),
+      text: m.text as string,
+    }));
+
+  const started = Date.now();
+  const { result, meta } = await textTurn(
+    state,
+    text,
+    { userId: owner.userId, conversationId: conversation.id },
+    history,
+  );
+
+  const recorded = await recordTurn(conversation.id, {
+    action: { type: "text" },
+    label: text,
+    result,
+    latencyMs: Date.now() - started,
+    model: meta,
+  });
+
+  return {
+    ...recorded,
+    mode: meta.mode,
+    ...(meta.toolLabel ? { toolLabel: meta.toolLabel } : {}),
+  };
 };
 
 /**
@@ -177,6 +254,8 @@ export const recordTurn = async (
     label?: string;
     result: { text: string; blocks: unknown[]; state: AssistantState };
     latencyMs?: number;
+    /** A typed turn that reached the model: which one, and what it cost. */
+    model?: { model?: string; promptVersion?: string; tokensIn?: number; tokensOut?: number };
     /** Set when the turn is what produced the booking. */
     conversation?: { status?: string; appointmentId?: string };
   },
@@ -197,6 +276,14 @@ export const recordTurn = async (
         text: input.result.text,
         blocks: input.result.blocks as unknown as Prisma.InputJsonValue,
         ...(input.latencyMs !== undefined ? { latencyMs: input.latencyMs } : {}),
+        ...(input.model?.model
+          ? {
+              model: input.model.model,
+              promptVersion: input.model.promptVersion ?? null,
+              tokensIn: input.model.tokensIn ?? null,
+              tokensOut: input.model.tokensOut ?? null,
+            }
+          : {}),
       },
     }),
     prisma.assistantConversation.update({
@@ -222,8 +309,44 @@ export const recordTurn = async (
   };
 };
 
+/**
+ * 👍 / 👎 on one assistant message. Only the conversation's owner may rate it,
+ * only an assistant message can be rated, and a second tap overwrites the
+ * first — it is an opinion, not a vote count. Phase 8 reviews the 👎 turns.
+ */
+const rateMessage = async (
+  messageId: string,
+  owner: Owner,
+  value: 1 | -1,
+  reason?: string,
+) => {
+  const message = await prisma.assistantMessage.findUnique({
+    where: { id: messageId },
+    select: { id: true, conversationId: true, role: true },
+  });
+
+  if (!message || message.role !== "ASSISTANT") {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Message not found");
+  }
+
+  // Someone else's message reads exactly like one that does not exist.
+  await findOwned(message.conversationId, owner).catch(() => {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Message not found");
+  });
+
+  const updated = await prisma.assistantMessage.update({
+    where: { id: message.id },
+    data: { feedback: value, feedbackReason: reason || null },
+    select: { id: true, feedback: true, feedbackReason: true },
+  });
+
+  return updated;
+};
+
 export const AssistantService = {
+  rateMessage,
   createConversation,
   getConversation,
   runTurn,
+  runTextTurn,
 };

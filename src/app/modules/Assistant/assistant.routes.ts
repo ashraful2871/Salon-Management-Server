@@ -5,6 +5,7 @@ import auth from "../../middlewares/auth";
 import optionalAuth from "../../middlewares/optionalAuth";
 import {
   assistantLimiter,
+  assistantLlmLimiter,
   paymentLimiter,
 } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
@@ -52,6 +53,16 @@ router.post(
   AssistantController.act,
 );
 
+/** Free text. The only assistant route that can reach the model; a tap never
+ *  does. Same turn envelope as /actions. */
+router.post(
+  "/conversations/:id/messages",
+  optionalAuth(),
+  assistantLlmLimiter,
+  validateRequest(AssistantValidation.sendMessage),
+  AssistantController.message,
+);
+
 /**
  * The only endpoint here that writes a booking, so it is the only one behind
  * `auth` rather than `optionalAuth`: a guest has no wallet to take a deposit
@@ -76,6 +87,16 @@ router.post(
   paymentLimiter,
   validateRequest(AssistantValidation.startTopup),
   AssistantController.topup,
+);
+
+/** 👍 / 👎 on one assistant message — the cheapest quality signal there is.
+ *  Guests may rate their own chat too, by the same key that owns it. */
+router.post(
+  "/messages/:id/feedback",
+  optionalAuth(),
+  assistantLimiter,
+  validateRequest(AssistantValidation.messageFeedback),
+  AssistantController.feedback,
 );
 
 export const AssistantRoutes = router;

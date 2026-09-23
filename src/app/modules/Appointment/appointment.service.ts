@@ -1063,7 +1063,7 @@ const getAllAppointments = async (
 };
 
 const getMyAppointments = async (userId: string, query: any) => {
-  const { page = 1, limit = 10, status, salonId } = query;
+  const { page = 1, limit = 10, status, salonId, scope } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
   const whereConditions: any = {
@@ -1076,6 +1076,33 @@ const getMyAppointments = async (userId: string, query: any) => {
 
   if (salonId) {
     whereConditions.salonId = salonId;
+  }
+
+  // "upcoming" is a live booking from today on, soonest first; "past" is
+  // everything else, newest first. Without a scope the list stays in booking
+  // order, as the dashboard has always had it. Today is the server's calendar
+  // day as UTC midnight, the way `appointmentDate` is written.
+  let orderBy: Prisma.AppointmentOrderByWithRelationInput[] = [
+    { createdAt: "desc" },
+  ];
+
+  if (scope === "upcoming" || scope === "past") {
+    const now = new Date();
+    const today = new Date(
+      Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()),
+    );
+    const live = {
+      status: { in: [...ACTIVE_BOOKING_STATUSES, AppointmentStatus.IN_PROGRESS] },
+      appointmentDate: { gte: today },
+    };
+
+    if (scope === "upcoming") {
+      whereConditions.AND = [live];
+      orderBy = [{ appointmentDate: "asc" }, { startTime: "asc" }];
+    } else {
+      whereConditions.NOT = live;
+      orderBy = [{ appointmentDate: "desc" }, { startTime: "desc" }];
+    }
   }
 
   const [appointments, total] = await Promise.all([
@@ -1112,10 +1139,11 @@ const getMyAppointments = async (userId: string, query: any) => {
             },
           },
         },
+        counter: { select: { id: true, name: true, code: true } },
         payment: true,
         review: true,
       },
-      orderBy: { createdAt: "desc" },
+      orderBy,
     }),
     prisma.appointment.count({ where: whereConditions }),
   ]);

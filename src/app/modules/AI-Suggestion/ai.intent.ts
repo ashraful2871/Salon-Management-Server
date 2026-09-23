@@ -107,7 +107,7 @@ const CATEGORY_KEYWORDS: Record<ServiceCategory, string[]> = {
     "trim", "trimming", "barber", "barbers", "barbershop", "barber shop",
     "fade", "crew cut", "undercut", "beard", "beard trim", "shave", "shaving",
     "chul kata", "chul katbo", "chul katano", "chul katate",
-    "চুল কাটা", "চুল কাটানো", "হেয়ারকাট", "হেয়ার কাট", "দাড়ি", "শেভ",
+    "চুল কাটা", "চুল কাটানো", "চুল কাটতে", "চুল কাটব", "হেয়ারকাট", "হেয়ার কাট", "দাড়ি", "শেভ",
   ],
   STYLING: [
     "hairstyle", "hair style", "hair styling", "styling", "blow dry",
@@ -774,6 +774,21 @@ export const understandQuery = async (query: string): Promise<Understanding> => 
     intent,
     preferEnglishForEmbedding: nonEnglish && Boolean(intent.englishQuery),
     modelAsked: true,
+  };
+};
+
+/**
+ * The rules alone, against the live place list: never calls the model. The
+ * booking assistant uses it for typed messages it can answer without one, and
+ * `leftover` tells it whether the model would have had anything to add.
+ */
+export const understandQueryRules = async (
+  query: string,
+): Promise<{ intent: SearchIntent; leftover: string[] }> => {
+  const rules = parseRules(query, await loadKnownPlaces());
+  return {
+    intent: { ...rules.intent, otherPlace: null, englishQuery: null, understoodBy: "rules" },
+    leftover: rules.leftover,
   };
 };
 
