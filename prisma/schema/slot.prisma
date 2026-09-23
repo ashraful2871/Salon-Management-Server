@@ -15,6 +15,12 @@ model Slot {
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
 
+  /// A soft reservation taken while a customer finishes choosing in the chat.
+  /// Expiry is part of the claim predicate rather than a cleanup job's job, so
+  /// a lapsed hold is bookable again the moment it lapses, by anyone.
+  heldUntil    DateTime?
+  heldByUserId String?
+
   // Relations
   salon        Salon         @relation(fields: [salonId], references: [id], onDelete: Cascade)
   service      Service?      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
@@ -24,5 +30,6 @@ model Slot {
   @@index([counterId])
   @@index([salonId, date])
   @@index([salonId, serviceId, counterId, date])
+  @@index([heldUntil])
   @@map("slots")
 }

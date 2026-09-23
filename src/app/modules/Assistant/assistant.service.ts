@@ -47,7 +47,7 @@ const ownerWhere = (
 };
 
 /** Loads a conversation the caller owns, or throws the same 404 either way. */
-const findOwned = async (id: string, owner: Owner) => {
+export const findOwned = async (id: string, owner: Owner) => {
   const where = ownerWhere(id, owner);
   const conversation = where
     ? await prisma.assistantConversation.findFirst({ where })
@@ -148,40 +148,76 @@ const runTurn = async (
   }
 
   const started = Date.now();
-  const result = await runAction(state, action);
+  // The caller's own id, not the conversation's: a guest who signs in mid-chat
+  // still owns the chat by its key, but the wallet quoted has to be theirs.
+  const result = await runAction(state, action, {
+    userId: owner.userId,
+    conversationId: conversation.id,
+  });
   const latencyMs = Date.now() - started;
 
+  return recordTurn(conversation.id, {
+    action,
+    label,
+    result,
+    latencyMs,
+  });
+};
+
+/**
+ * Both halves of one turn plus the new state, in a single transaction. Pulled
+ * out of `runTurn` so the confirm endpoint — which does not go through
+ * `runAction`, because a booking is not a chat action a stale tab may replay —
+ * lands in the transcript identically.
+ */
+export const recordTurn = async (
+  conversationId: string,
+  input: {
+    action: AssistantAction | { type: string };
+    label?: string;
+    result: { text: string; blocks: unknown[]; state: AssistantState };
+    latencyMs?: number;
+    /** Set when the turn is what produced the booking. */
+    conversation?: { status?: string; appointmentId?: string };
+  },
+) => {
   const [userMessage, assistantMessage] = await prisma.$transaction([
     prisma.assistantMessage.create({
       data: {
-        conversationId: conversation.id,
+        conversationId,
         role: "USER",
-        text: label ?? null,
-        action: action as unknown as Prisma.InputJsonValue,
+        text: input.label ?? null,
+        action: input.action as unknown as Prisma.InputJsonValue,
       },
     }),
     prisma.assistantMessage.create({
       data: {
-        conversationId: conversation.id,
+        conversationId,
         role: "ASSISTANT",
-        text: result.text,
-        blocks: result.blocks as unknown as Prisma.InputJsonValue,
-        latencyMs,
+        text: input.result.text,
+        blocks: input.result.blocks as unknown as Prisma.InputJsonValue,
+        ...(input.latencyMs !== undefined ? { latencyMs: input.latencyMs } : {}),
       },
     }),
     prisma.assistantConversation.update({
-      where: { id: conversation.id },
+      where: { id: conversationId },
       data: {
-        state: result.state as unknown as Prisma.InputJsonValue,
+        state: input.result.state as unknown as Prisma.InputJsonValue,
         turnCount: { increment: 1 },
         expiresAt: expiry(),
+        ...(input.conversation?.status
+          ? { status: input.conversation.status }
+          : {}),
+        ...(input.conversation?.appointmentId
+          ? { appointmentId: input.conversation.appointmentId }
+          : {}),
       },
     }),
   ]);
 
   return {
-    conversationId: conversation.id,
-    state: result.state,
+    conversationId,
+    state: input.result.state,
     messages: [userMessage, assistantMessage],
   };
 };

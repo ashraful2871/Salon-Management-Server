@@ -1,5 +1,7 @@
 import express, { NextFunction, Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
+import { UserRole } from "@prisma/client";
+import auth from "../../middlewares/auth";
 import optionalAuth from "../../middlewares/optionalAuth";
 import { assistantLimiter } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
@@ -45,6 +47,19 @@ router.post(
   assistantLimiter,
   validateRequest(AssistantValidation.runAction),
   AssistantController.act,
+);
+
+/**
+ * The only endpoint here that writes a booking, so it is the only one behind
+ * `auth` rather than `optionalAuth`: a guest has no wallet to take a deposit
+ * from. The role set matches the one `bookAppointment` itself accepts.
+ */
+router.post(
+  "/bookings/confirm",
+  auth(UserRole.CUSTOMER, UserRole.SALON_OWNER, UserRole.ADMIN),
+  assistantLimiter,
+  validateRequest(AssistantValidation.confirmBooking),
+  AssistantController.confirm,
 );
 
 export const AssistantRoutes = router;

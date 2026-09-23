@@ -172,3 +172,11 @@ enum AssistantRole {
   ASSISTANT
   TOOL
 }
+
+/// How a booking reached us. Set on the appointment at creation and never
+/// changed: it is what answers "how many bookings did the chat produce".
+enum BookingChannel {
+  WEB
+  ASSISTANT
+  WALK_IN
+}

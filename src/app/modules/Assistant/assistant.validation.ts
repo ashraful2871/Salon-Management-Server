@@ -26,6 +26,19 @@ const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("change_location") }),
   z.object({ type: z.literal("book") }),
   z.object({ type: z.literal("show_services") }),
+  z.object({
+    type: z.literal("choose_date"),
+    // The calendar day, not an instant: slots are stored per day.
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  }),
+  z.object({ type: z.literal("choose_service"), serviceId: z.string().uuid() }),
+  z.object({ type: z.literal("choose_counter"), counterId: z.string().uuid() }),
+  z.object({ type: z.literal("choose_slot"), slotId: z.string().uuid() }),
+  z.object({
+    type: z.literal("change"),
+    target: z.enum(["salon", "date", "service", "counter", "slot"]),
+  }),
+  z.object({ type: z.literal("wallet") }),
   z.object({ type: z.literal("restart") }),
   z.object({ type: z.literal("back") }),
 ]);
@@ -51,8 +64,21 @@ const runAction = z.object({
   }),
 });
 
+/**
+ * The token is opaque here on purpose: it is verified by its HMAC in
+ * `assistant.token.ts`, not by its shape. All zod has to do is keep a
+ * megabyte of nonsense out of the crypto.
+ */
+const confirmBooking = z.object({
+  body: z.object({
+    confirmationToken: z.string().min(1).max(2048),
+    notes: z.string().max(500).optional(),
+  }),
+});
+
 export const AssistantValidation = {
   actionSchema,
   createConversation,
   runAction,
+  confirmBooking,
 };

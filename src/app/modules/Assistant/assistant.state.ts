@@ -36,6 +36,16 @@ export const assistantStateSchema = z.object({
     .object({ lat: z.number(), lng: z.number(), label: z.string().max(80) })
     .optional(),
   lastQuery: z.string().max(300).optional(),
+  /**
+   * The booking this conversation produced, keyed by the `Idempotency-Key`
+   * that produced it. A replayed Confirm — a double tap, a retried request —
+   * matches the key and is answered with the same appointment instead of a
+   * second one. This is the second of the two idempotency guards; the first is
+   * the conditional slot claim, which can only ever win once.
+   */
+  confirm: z
+    .object({ key: z.string().max(200), appointmentId: z.string().uuid() })
+    .optional(),
 });
 
 export type AssistantState = z.infer<typeof assistantStateSchema>;
@@ -51,6 +61,20 @@ export const readState = (json: unknown): AssistantState => {
 
 type ActionType = AssistantAction["type"];
 
+/**
+ * Accepted everywhere inside the funnel. A customer is always allowed to walk
+ * away to another salon, change something they already picked, or start again —
+ * a booking flow that traps you is one you abandon.
+ */
+const ALWAYS: ActionType[] = [
+  "change",
+  "restart",
+  "back",
+  "find_nearby",
+  "choose_salon",
+  "wallet",
+];
+
 /** What a tap may do from where the customer actually is. Anything else is a
  *  stale tab pressing an old button — answered, not thrown at. */
 export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
@@ -60,7 +84,13 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "set_location",
     "change_location",
     "search_salons",
+    // The deep links ("Ask about this salon", "Continue in chat") open a brand
+    // new conversation *and* name a salon, so this arrives before the customer
+    // has been anywhere. Without it the first thing they see is "that option is
+    // no longer available".
+    "choose_salon",
     "restart",
+    "wallet",
   ],
   discover: [
     "start",
@@ -71,6 +101,7 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "choose_salon",
     "restart",
     "back",
+    "wallet",
   ],
   salon: [
     "find_nearby",
@@ -78,24 +109,65 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "search_salons",
     "choose_salon",
     "change_location",
-    "book", // Phase 2 — stub
-    "show_services", // Phase 2 — stub
+    "book",
+    "show_services",
     "restart",
     "back",
+    "wallet",
   ],
-  date: [], // Phase 2
-  service: [], // Phase 2
-  counter: [], // Phase 2
-  slot: [], // Phase 2
-  summary: [], // Phase 2
+  // Date and service may arrive in either order, so each of the two steps
+  // accepts both answers — see `nextStep` in assistant.actions.ts.
+  date: [...ALWAYS, "book", "show_services", "choose_date", "choose_service"],
+  service: [...ALWAYS, "book", "show_services", "choose_service", "choose_date"],
+  counter: [
+    ...ALWAYS,
+    "book",
+    "show_services",
+    "choose_counter",
+    "choose_date",
+    "choose_service",
+  ],
+  slot: [
+    ...ALWAYS,
+    "book",
+    "show_services",
+    "choose_slot",
+    "choose_counter",
+    "choose_date",
+    "choose_service",
+  ],
+  summary: [
+    ...ALWAYS,
+    "book",
+    "show_services",
+    "choose_slot",
+    "choose_counter",
+    "choose_date",
+    "choose_service",
+  ],
   payment: [], // Phase 5
-  booked: [], // Phase 4
+  // A finished booking is not a dead end: the customer may want another salon,
+  // their wallet, or to start again. It is deliberately not `change` or
+  // `choose_slot` — the appointment is made, and moving it is Phase 7's job.
+  booked: ["restart", "find_nearby", "set_location", "choose_salon", "wallet"],
 };
 
 /** One step back along the chain. Later phases extend it. */
 export const PREVIOUS_STEP: Partial<Record<Step, Step>> = {
   discover: "greeting",
   salon: "discover",
+};
+
+/** What "Back" undoes once the funnel has started: the same clearing `change`
+ *  does, aimed one step upstream. */
+export const BACK_TARGET: Partial<
+  Record<Step, "salon" | "date" | "service" | "counter" | "slot">
+> = {
+  date: "salon",
+  service: "date",
+  counter: "service",
+  slot: "counter",
+  summary: "slot",
 };
 
 /**
@@ -119,6 +191,23 @@ const CLEARED_BY: Record<(typeof DOWNSTREAM)[number], ClearableField[]> = {
   date: ["counterId", "slotId", "staffId"],
   counterId: ["slotId", "staffId"],
   slotId: ["staffId"],
+};
+
+/**
+ * "Change the date" is not a write, so `advance` cannot express it — it decides
+ * what to clear by comparing a *new* value. This drops the field itself along
+ * with everything it invalidated, which is what every `change` tap means.
+ */
+export const clearFrom = (
+  state: AssistantState,
+  field: (typeof DOWNSTREAM)[number],
+): AssistantState => {
+  const next: AssistantState = { ...state };
+
+  delete next[field];
+  for (const stale of CLEARED_BY[field]) delete next[stale];
+
+  return next;
 };
 
 /** The only way a handler may change the state. */

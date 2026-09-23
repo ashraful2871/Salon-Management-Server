@@ -27,6 +27,40 @@ export const NEARBY_RADIUS_WIDE_KM = 15;
  *  precision the frontend already stores in its `sm_loc` cookie. */
 export const LOCATION_PRECISION = 3;
 
+/** How far ahead the funnel looks, counting today. Three counters x twenty
+ *  slots x fourteen days is ~840 narrow rows — one query, no pagination. */
+export const MAX_DAYS_AHEAD = Math.min(
+  60,
+  Math.max(1, Number(process.env.ASSISTANT_MAX_DAYS ?? 14) || 14),
+);
+
+/**
+ * How long a prepared booking holds its slot. Long enough to read the summary
+ * and tap, short enough that a customer who wanders off does not keep a chair
+ * off the market. Expiry is checked in the claim predicate, so this is a
+ * promise the database keeps without a cleanup job.
+ */
+export const HOLD_MINUTES = Math.min(
+  60,
+  Math.max(1, Number(process.env.ASSISTANT_HOLD_MINUTES ?? 10) || 10),
+);
+
+/** More than this and a customer is parking chairs rather than choosing one. */
+export const MAX_ACTIVE_HOLDS = 2;
+
+/** Signs the confirmation token. Missing, with the assistant on, is a startup
+ *  failure — see assistant.token.ts. */
+export const ASSISTANT_TOKEN_SECRET = process.env.ASSISTANT_TOKEN_SECRET ?? "";
+
+/** Where the chat sends a customer who has to top up before Phase 5 lands. */
+export const WALLET_PATH = "/dashboard/wallet";
+
+/** Where "My bookings" points from a confirmation or a limit notice. */
+export const APPOINTMENTS_PATH = "/dashboard/appointments";
+
+/** Where login should land a customer who signed in from the chat itself. */
+export const ASSISTANT_PATH = "/assistant";
+
 export const COPY = {
   greeting:
     "Hi! I can find a salon near you and book a time. What would you like to do?",
@@ -38,9 +72,39 @@ export const COPY = {
     "I could not find a salon there. Try another area, or start over.",
   salonGone:
     "That salon is not taking bookings right now. Here are the others nearby.",
-  bookingSoon: "Booking in chat is coming next.",
+  notBookable:
+    "This salon has not set up its services and chairs for online booking yet. You can still call them, or I can show you another salon nearby.",
+  // Never "booked", "confirmed" or "reserved" anywhere in this phase: nothing
+  // is held until the review page, and saying otherwise is how a customer
+  // arrives to find their chair taken.
+  noDates:
+    "No free times in the next {days} days. Try another salon nearby?",
+  noServices:
+    "Nothing bookable is left on that day. Pick another day and I will try again.",
+  slotsGone:
+    "Those times were taken while you were choosing. Here are the days that still have something free.",
+  slotTaken:
+    "That time was just taken. Here is what is still free on the same day.",
+  badDate: "I cannot book that day. Here are the days that still have space.",
+  topupSoon:
+    "Topping up inside the chat arrives shortly. For now, add money at {path} and come back — I will still be here.",
+  loginToBook:
+    "Sign in when you are ready to book. You can look at the times first.",
+  loginToPay: "Sign in to use your wallet.",
   turnLimit:
     "This chat has gone on a while. Start a new one and I will pick things up fresh.",
   staleTap:
     "That option is no longer available here. Here is where we are.",
+  // Phase 4. A hold lost to somebody else is the one race the funnel cannot
+  // prevent, only recover from.
+  slotHeld:
+    "Someone is booking that time right now. Here is what else is free on the same day.",
+  priceChanged:
+    "The price for that time changed while you were deciding, so I have not booked anything. Here are the new figures.",
+  quoteExpired:
+    "That price quote expired, so I re-checked it. Confirm again if it still suits you.",
+  holdExpired:
+    "Your hold on that time has run out. Here are the times that are still free.",
+  bookedAlready:
+    "That booking is already made — here it is again rather than a second one.",
 } as const;

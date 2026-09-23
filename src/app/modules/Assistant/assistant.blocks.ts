@@ -1,4 +1,5 @@
 import type { AssistantAction } from "./assistant.actions";
+import type { DateOption, SlotGroup } from "./assistant.availability";
 
 /**
  * Blocks are the assistant's whole vocabulary for the screen. The server builds
@@ -20,9 +21,103 @@ export type Block =
       actions: QuickReply[];
     }
   | { type: "notice"; tone: "info" | "warn" | "error"; text: string }
-  | { type: "login_required"; reason: string; returnPath: string };
-// Phase 2: wallet_status · date_picker · service_picker · counter_picker · slot_picker · booking_summary
-// Phase 4: booking_confirmed
+  | { type: "login_required"; reason: string; returnPath: string }
+  | {
+      type: "wallet_status";
+      signedIn: boolean;
+      isFrozen: boolean;
+      availableMinor: number;
+      heldMinor: number;
+      /** The cheapest deposit this salon could ask for. Zero on the standalone
+       *  "My wallet" chip, where no booking is in play. */
+      depositFromMinor: number;
+      /** What is missing, and nothing else: a wallet can never go negative, so
+       *  there is no such thing as an outstanding balance here. */
+      shortfallMinor: number;
+      suggestedTopupMinor: number;
+      minTopupMinor: number;
+      note: string;
+    }
+  | {
+      type: "date_picker";
+      salonId: string;
+      serviceId: string | null;
+      dates: DateOption[];
+    }
+  | {
+      type: "service_picker";
+      salonId: string;
+      date: string | null;
+      services: ServiceOption[];
+    }
+  | { type: "counter_picker"; counters: CounterOption[] }
+  | {
+      type: "slot_picker";
+      date: string;
+      counterName: string | null;
+      groups: SlotGroup[];
+    }
+  | {
+      type: "booking_summary";
+      salon: SummarySalon;
+      service: SummaryService;
+      counter: SummaryCounter;
+      staff: { id: string; name: string } | null;
+      slot: {
+        id: string;
+        date: string;
+        startTime: string;
+        endTime: string | null;
+      };
+      priceMinor: number;
+      depositMinor: number;
+      dueAtSalonMinor: number;
+      /** ISO instant, or null when free cancellation has already lapsed. */
+      freeCancellationUntil: string | null;
+      cancellationWindowMin: number;
+      wallet: {
+        signedIn: boolean;
+        availableMinor: number;
+        shortfallMinor: number;
+      };
+      /** The existing review page, pre-filled. */
+      handoffUrl: string;
+      /** True once the slot is held for this customer and a Confirm token has
+       *  been signed. Guests, and anyone whose hold was lost, get false and the
+       *  handoff instead. */
+      canConfirmInChat: boolean;
+      /** Signed quote for `POST /assistant/bookings/confirm`. Goes to the UI
+       *  block only — never into a model prompt or a tool result, which is what
+       *  keeps Phase 6's model away from the money. */
+      confirmToken?: string;
+      /** ISO instant the hold lapses, for the countdown on the button. */
+      holdExpiresAt?: string;
+    }
+  | {
+      type: "booking_confirmed";
+      appointmentId: string;
+      /** The short code the counter asks for; null on the oldest rows. */
+      token: string | null;
+      /** Place in the queue for that salon + service + counter + day. */
+      serialNumber: number | null;
+      salonName: string;
+      salonAddress: string;
+      salonPhone: string;
+      serviceName: string;
+      date: string;
+      startTime: string;
+      endTime: string | null;
+      counterName: string | null;
+      staffName: string | null;
+      totalMinor: number;
+      depositMinor: number;
+      dueAtSalonMinor: number;
+      /** ISO instant, or null when the window has already closed. */
+      freeCancellationUntil: string | null;
+      /** Directions; null when the salon has no coordinates. */
+      mapUrl: string | null;
+      manageUrl: string;
+    };
 // Phase 5: payment_prompt
 
 /** `icon` is a name ("map-pin", "scissors", "wallet"), never markup — the
@@ -53,6 +148,43 @@ export type SalonCard = {
   /** Why this salon is in the list — "1.2 km away", "Open now", "From ৳120". */
   reasons: string[];
 };
+
+export type ServiceOption = {
+  id: string;
+  name: string;
+  category: string;
+  priceMinor: number;
+  /** Minutes. */
+  duration: number;
+  /** What this salon would hold for this service, resolved not guessed. */
+  depositMinor: number;
+  slotCount: number;
+};
+
+export type CounterOption = {
+  id: string;
+  name: string;
+  code: string | null;
+  slotCount: number;
+};
+
+export type SummarySalon = {
+  id: string;
+  name: string;
+  area: string;
+  address: string;
+  phone: string;
+};
+
+export type SummaryService = {
+  id: string;
+  name: string;
+  category: string;
+  priceMinor: number;
+  duration: number;
+};
+
+export type SummaryCounter = { id: string; name: string; code: string | null };
 
 export type SalonPolicy = {
   depositMinor: number;
@@ -98,3 +230,41 @@ export const loginRequired = (reason: string, returnPath: string): Block => ({
   reason,
   returnPath,
 });
+
+/** The rest take their whole shape from the caller: they are data the handler
+ *  assembled from a salon, a wallet and a slot list, not fields to re-derive. */
+type BlockOf<T extends Block["type"]> = Omit<Extract<Block, { type: T }>, "type">;
+
+export const walletStatus = (fields: BlockOf<"wallet_status">): Block => ({
+  type: "wallet_status",
+  ...fields,
+});
+
+export const datePicker = (fields: BlockOf<"date_picker">): Block => ({
+  type: "date_picker",
+  ...fields,
+});
+
+export const servicePicker = (fields: BlockOf<"service_picker">): Block => ({
+  type: "service_picker",
+  ...fields,
+});
+
+export const counterPicker = (counters: CounterOption[]): Block => ({
+  type: "counter_picker",
+  counters,
+});
+
+export const slotPicker = (fields: BlockOf<"slot_picker">): Block => ({
+  type: "slot_picker",
+  ...fields,
+});
+
+export const bookingSummary = (fields: BlockOf<"booking_summary">): Block => ({
+  type: "booking_summary",
+  ...fields,
+});
+
+export const bookingConfirmed = (
+  fields: BlockOf<"booking_confirmed">,
+): Block => ({ type: "booking_confirmed", ...fields });

@@ -34,6 +34,10 @@ model Appointment {
   /// salon's own repeat customer is never commissioned.
   source AppointmentSource @default(PLATFORM)
 
+  /// Which surface took the booking: WEB is the review page, ASSISTANT the
+  /// in-chat Confirm, WALK_IN the counter.
+  bookedVia BookingChannel @default(WEB)
+
   // No-show handling. A forfeit is appealable for 48 hours; publishing that is
   // what keeps the mechanic from feeling arbitrary.
   noShowMarkedAt DateTime?

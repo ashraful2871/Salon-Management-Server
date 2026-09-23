@@ -7,6 +7,7 @@ import prisma from "../../shared/prisma";
 import {
   AppointmentSource,
   AppointmentStatus,
+  BookingChannel,
   DepositStatus,
   Prisma,
   SalonStatus,
@@ -278,6 +279,8 @@ type ClaimSlotInput = {
   totalMinor: number;
   depositMinor: number;
   source: AppointmentSource;
+  /** Which surface took the booking. Defaults to the review page. */
+  bookedVia?: BookingChannel;
 };
 
 /**
@@ -290,24 +293,53 @@ const claimSlotAndCreate = async (
   tx: Prisma.TransactionClient,
   input: ClaimSlotInput,
 ) => {
+  const now = new Date();
+
   const updatedSlot = await tx.slot.updateMany({
     where: {
       id: input.slot.id,
       status: "AVAILABLE",
       isBooked: false,
+      // A hold taken in the chat blocks the website too, otherwise "held" would
+      // mean nothing the moment the customer opened a second tab. Expiry is
+      // part of the predicate, so a lapsed hold needs no sweep to clear it.
+      OR: [
+        { heldUntil: null },
+        { heldUntil: { lt: now } },
+        { heldByUserId: input.customerId },
+      ],
     },
     data: {
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
       status: "BOOKED",
       isBooked: true,
+      // The slot is BOOKED, so the hold has done its job; leaving it set would
+      // only confuse anyone reading the row later.
+      heldUntil: null,
+      heldByUserId: null,
     },
   });
 
   if (updatedSlot.count === 0) {
+    // Lost to a booking, or to somebody mid-checkout? The second is temporary
+    // and the customer should hear that, rather than be told a time is gone
+    // when it may come straight back.
+    const heldByAnother = await tx.slot.findFirst({
+      where: {
+        id: input.slot.id,
+        status: "AVAILABLE",
+        isBooked: false,
+        heldUntil: { gt: now },
+      },
+      select: { id: true },
+    });
+
     throw new ApiError(
       StatusCodes.CONFLICT,
-      "Sorry, this slot has just been booked by another customer. Please select another available slot.",
+      heldByAnother
+        ? "Someone is booking this time right now. Please try another time."
+        : "Sorry, this slot has just been booked by another customer. Please select another available slot.",
     );
   }
 
@@ -336,6 +368,7 @@ const claimSlotAndCreate = async (
       // is taken in this same transaction, and a walk-in was entered by the
       // salon itself.
       status: AppointmentStatus.CONFIRMED,
+      bookedVia: input.bookedVia ?? BookingChannel.WEB,
       totalMinor: input.totalMinor,
       depositMinor: input.depositMinor,
       depositStatus:
@@ -345,7 +378,25 @@ const claimSlotAndCreate = async (
   });
 };
 
-const bookAppointment = async (userId: string, payload: any) => {
+/**
+ * Every check a booking must pass, and what it will cost. No writes.
+ *
+ * Split out of `bookAppointment` so the in-chat assistant can quote a price
+ * and then re-quote it at Confirm time, running the same checks in the same
+ * order with the same messages. There is one booking implementation; this is
+ * its first half, and `bookAppointment` below is still the only caller that
+ * writes anything.
+ */
+const quoteBooking = async (
+  userId: string,
+  payload: {
+    salonId: string;
+    serviceId: string;
+    counterId: string;
+    slotId: string;
+    staffId?: string | null;
+  },
+) => {
   // Verify user is customer
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -464,6 +515,20 @@ const bookAppointment = async (userId: string, payload: any) => {
     totalMinor,
   );
 
+  return { user, slot, salon, service, staff, counter, totalMinor, depositMinor };
+};
+
+export type BookingQuote = Awaited<ReturnType<typeof quoteBooking>>;
+
+const bookAppointment = async (
+  userId: string,
+  payload: any,
+): Promise<Awaited<ReturnType<typeof claimSlotAndCreate>>> => {
+  const { user, slot, salon, totalMinor, depositMinor } = await quoteBooking(
+    userId,
+    payload,
+  );
+
   // Transaction for double booking prevention. The deposit hold lives in here
   // too: if the customer cannot cover it the whole thing rolls back and the
   // slot is released, rather than leaving a booking nobody has paid to keep.
@@ -483,6 +548,9 @@ const bookAppointment = async (userId: string, payload: any) => {
           totalMinor,
           depositMinor,
           source: AppointmentSource.PLATFORM,
+          // The chat passes ASSISTANT; the review page passes nothing and gets
+          // WEB. Same transaction, same emails, same token either way.
+          bookedVia: payload.bookedVia,
         });
 
         if (depositMinor > 0) {
@@ -1504,6 +1572,9 @@ const resolveAppeal = async (
 
 export const AppointmentService = {
   bookAppointment,
+  // Exported for the assistant, which quotes a price in the chat and re-quotes
+  // it at Confirm. Read-only: it never books.
+  quoteBooking,
   bookWalkIn,
   getAllAppointments,
   getMyAppointments,
