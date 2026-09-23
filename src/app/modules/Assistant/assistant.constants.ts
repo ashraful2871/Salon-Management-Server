@@ -48,12 +48,26 @@ export const HOLD_MINUTES = Math.min(
 /** More than this and a customer is parking chairs rather than choosing one. */
 export const MAX_ACTIVE_HOLDS = 2;
 
+/**
+ * "Top up & book" extends the hold to this, once. bKash's OTP round trip is the
+ * slow part of a gateway visit; ten minutes that started at the summary is not
+ * always enough to finish it, twenty nearly always is.
+ */
+export const TOPUP_HOLD_MINUTES = 20;
+
+/** A second tap on the same amount inside this window re-opens the gateway
+ *  page it already started instead of opening a second payment. */
+export const TOPUP_REUSE_MINUTES = 10;
+
+/** Poisha. Only those that cover the shortfall are offered. */
+export const TOPUP_PRESETS_MINOR = [10000, 20000, 50000];
+
+/** Display only — the gateway page is where the method is actually chosen. */
+export const PAYMENT_METHODS = ["bKash", "Nagad", "Card"];
+
 /** Signs the confirmation token. Missing, with the assistant on, is a startup
  *  failure — see assistant.token.ts. */
 export const ASSISTANT_TOKEN_SECRET = process.env.ASSISTANT_TOKEN_SECRET ?? "";
-
-/** Where the chat sends a customer who has to top up before Phase 5 lands. */
-export const WALLET_PATH = "/dashboard/wallet";
 
 /** Where "My bookings" points from a confirmation or a limit notice. */
 export const APPOINTMENTS_PATH = "/dashboard/appointments";
@@ -86,8 +100,6 @@ export const COPY = {
   slotTaken:
     "That time was just taken. Here is what is still free on the same day.",
   badDate: "I cannot book that day. Here are the days that still have space.",
-  topupSoon:
-    "Topping up inside the chat arrives shortly. For now, add money at {path} and come back — I will still be here.",
   loginToBook:
     "Sign in when you are ready to book. You can look at the times first.",
   loginToPay: "Sign in to use your wallet.",
@@ -107,4 +119,18 @@ export const COPY = {
     "Your hold on that time has run out. Here are the times that are still free.",
   bookedAlready:
     "That booking is already made — here it is again rather than a second one.",
+  // Phase 5. Money copy never says "lost", "charged" or "refund": a top-up that
+  // did not complete took nothing, and one that did is in the wallet.
+  topupOpening:
+    "Opening the payment page — come back here when you are done.",
+  topupWaiting: "Still waiting for the payment…",
+  topupPaid: "{amount} is in your wallet.",
+  topupReleased:
+    "Your {amount} is in your wallet. That time was released — here are the nearest free ones.",
+  topupNotHeld:
+    "That time is no longer held for you, so I have not started a payment. Here is what is still free.",
+  topupFailed: "The payment did not go through, so nothing was taken.",
+  topupCancelled: "The payment was cancelled, so nothing was taken.",
+  topupExpired:
+    "The payment page timed out before it was finished, so nothing was taken.",
 } as const;

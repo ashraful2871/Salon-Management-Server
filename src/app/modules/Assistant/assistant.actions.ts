@@ -43,11 +43,12 @@ import {
   quickReplies,
   salonCarousel,
   salonDetails,
+  paymentPromptBlock,
   servicePicker,
   slotPicker,
   walletStatus,
 } from "./assistant.blocks";
-import { holdSlot, releaseSlot } from "./assistant.booking";
+import { heldUntilFor, holdSlot, releaseSlot } from "./assistant.booking";
 import {
   APPOINTMENTS_PATH,
   ASSISTANT_PATH,
@@ -57,8 +58,9 @@ import {
   MAX_DAYS_AHEAD,
   NEARBY_RADIUS_KM,
   NEARBY_RADIUS_WIDE_KM,
+  PAYMENT_METHODS,
   SALON_CARDS,
-  WALLET_PATH,
+  TOPUP_PRESETS_MINOR,
 } from "./assistant.constants";
 import {
   ALLOWED_ACTIONS,
@@ -67,8 +69,13 @@ import {
   PREVIOUS_STEP,
   advance,
   clearFrom,
+  withoutAutoConfirm,
 } from "./assistant.state";
-import { signConfirm } from "./assistant.token";
+import {
+  peekConfirm,
+  signConfirm,
+  type ConfirmPayload,
+} from "./assistant.token";
 
 /**
  * Every turn in this phase is deterministic: an action comes in, the server
@@ -94,6 +101,10 @@ export type AssistantAction =
   | { type: "choose_slot"; slotId: string }
   | { type: "change"; target: ChangeTarget }
   | { type: "wallet" }
+  // "Has my top-up landed?" Answered by `AssistantPayment.checkPayment`, which
+  // the controller routes it to; `runAction` only ever draws the no-top-up
+  // answer for it.
+  | { type: "check_payment" }
   | { type: "restart" }
   | { type: "back" };
 
@@ -895,14 +906,14 @@ const advanceFunnel = async (
 
 /* --------------------------------------------------------------- the wallet */
 
-type WalletView = {
+export type WalletView = {
   signedIn: boolean;
   isFrozen: boolean;
   availableMinor: number;
   heldMinor: number;
 };
 
-const readWallet = async (userId?: string): Promise<WalletView> => {
+export const readWallet = async (userId?: string): Promise<WalletView> => {
   if (!userId) {
     return {
       signedIn: false,
@@ -940,7 +951,7 @@ const topupFor = (shortfallMinor: number): number =>
  * the service — and so the exact deposit — is known. It quotes the salon's
  * cheapest deposit and says so.
  */
-const walletBlock = (
+export const walletBlock = (
   wallet: WalletView,
   depositFromMinor: number,
   approximate: boolean,
@@ -975,14 +986,81 @@ const walletBlock = (
   });
 };
 
-/** Phase 5 replaces this with a real gateway hop; until then it points at the
- *  page that already works. */
+/** The early warning's way in, before there is a summary to book: it opens
+ *  the wallet turn, whose payment prompt is a plain top-up. */
 const topupChip = (shortfallMinor: number): QuickReply => ({
   label: `Top up ${formatBDT(topupFor(shortfallMinor))}`,
   action: { type: "wallet" },
   style: "primary",
   icon: "wallet",
 });
+
+/**
+ * The top-up card. A shortfall of ৳30 still means topping up ৳100 — the
+ * gateway refuses less — so the suggestion is never under the minimum, and
+ * every preset offered is enough to finish the booking on its own.
+ */
+export const paymentPrompt = (
+  shortfallMinor: number,
+  canAutoConfirm: boolean,
+): Block => {
+  const suggestedTopupMinor =
+    shortfallMinor > 0
+      ? topupFor(shortfallMinor)
+      : PaymentIntentService.MIN_TOPUP_MINOR;
+
+  const presets = Array.from(
+    new Set([
+      suggestedTopupMinor,
+      ...TOPUP_PRESETS_MINOR.filter((minor) => minor >= suggestedTopupMinor),
+    ]),
+  ).sort((a, b) => a - b);
+
+  return paymentPromptBlock({
+    shortfallMinor,
+    suggestedTopupMinor,
+    minTopupMinor: PaymentIntentService.MIN_TOPUP_MINOR,
+    presets,
+    methods: PAYMENT_METHODS,
+    // Nothing to book when nothing is short: the plain Confirm does that.
+    canAutoConfirm: canAutoConfirm && shortfallMinor > 0,
+  });
+};
+
+/**
+ * The summary the customer is looking at, if its hold is still theirs: the
+ * quote it was drawn with and when the hold lapses. Null whenever booking on
+ * their behalf would be booking something they are no longer looking at.
+ */
+export const heldQuote = async (
+  state: AssistantState,
+  userId?: string,
+): Promise<{ payload: ConfirmPayload; heldUntil: Date } | null> => {
+  if (!userId || state.step !== "summary" || !state.slotId) return null;
+
+  const payload = peekConfirm(state.quoteToken);
+  if (!payload || payload.sid !== state.slotId || payload.uid !== userId) {
+    return null;
+  }
+
+  const heldUntil = await heldUntilFor(state.slotId, userId);
+  return heldUntil ? { payload, heldUntil } : null;
+};
+
+/** The prompt for wherever the customer is: against the held deposit at a
+ *  live summary, as a plain top-up anywhere else. */
+export const promptFor = async (
+  state: AssistantState,
+  userId: string | undefined,
+  wallet: WalletView,
+): Promise<Block> => {
+  const quote = await heldQuote(state, userId);
+  const shortfallMinor = quote
+    ? Math.max(quote.payload.dm - wallet.availableMinor, 0)
+    : 0;
+
+  return paymentPrompt(shortfallMinor, quote !== null);
+};
 
 /* ------------------------------------------------------------- the handlers */
 
@@ -1351,8 +1429,6 @@ const handleChooseSlot = async (
     }),
   ];
 
-  const chips: QuickReply[] = [];
-
   if (wallet.signedIn && shortfallMinor > 0) {
     // "৳30 short of the ৳30 deposit" is true and reads like a mistake, so an
     // empty wallet gets said plainly instead.
@@ -1369,7 +1445,12 @@ const handleChooseSlot = async (
           : `${gap} Top up first — this time stays open unless someone else takes it.`,
       ),
     );
-    chips.push(topupChip(shortfallMinor));
+
+    // The top-up sits right under the card it unblocks. A frozen wallet cannot
+    // take a deposit whatever is in it, so it is not asked for money.
+    if (!wallet.isFrozen) {
+      blocks.push(paymentPrompt(shortfallMinor, confirmToken !== null));
+    }
   }
 
   if (!wallet.signedIn) {
@@ -1382,7 +1463,6 @@ const handleChooseSlot = async (
   blocks.push(
     quickReplies(
       funnelChips(state, [
-        ...chips,
         {
           label: "Change time",
           action: { type: "change", target: "slot" },
@@ -1401,10 +1481,15 @@ const handleChooseSlot = async (
     ? ` I am holding this time for ${HOLD_MINUTES} minutes — tap Confirm and it is yours.`
     : "";
 
+  // Set after `advance`, which drops the quote of whatever slot came before.
+  const next = advance(state, { step: "summary", slotId: slot.id });
+  if (confirmToken) next.quoteToken = confirmToken;
+  else delete next.quoteToken;
+
   return {
     text: `${service.name} at ${salon.name}, ${dateLabel(state.date)} at ${slot.startTime}. ${formatBDT(priceMinor)} in total: ${dueLine}${holdLine}`,
     blocks,
-    state: advance(state, { step: "summary", slotId: slot.id }),
+    state: next,
   };
 };
 
@@ -1479,7 +1564,8 @@ const handleWallet = async (
     text: `You have ${formatBDT(wallet.availableMinor)} available to spend.${held}`,
     blocks: [
       walletBlock(wallet, 0, false),
-      notice("info", COPY.topupSoon.replace("{path}", WALLET_PATH)),
+      // At a held summary this is "Top up & book"; anywhere else, a top-up.
+      ...(wallet.isFrozen ? [] : [await promptFor(state, ctx.userId, wallet)]),
       quickReplies([
         {
           label: "Salons near me",
@@ -1492,12 +1578,34 @@ const handleWallet = async (
   };
 };
 
+/** The wallet and nothing else — what "check my payment" means when this chat
+ *  has no top-up in flight. */
+export const walletOnly = async (
+  state: AssistantState,
+  ctx: TurnContext,
+): Promise<TurnResult> => {
+  const wallet = await readWallet(ctx.userId);
+
+  return {
+    text: wallet.signedIn
+      ? `You have ${formatBDT(wallet.availableMinor)} available to spend.`
+      : "Sign in and I will show you your wallet.",
+    blocks: [walletBlock(wallet, 0, false)],
+    state,
+  };
+};
+
 const handleRestart = (state: AssistantState): TurnResult => {
   // The location is the one thing worth carrying: it was the customer's
   // deliberate answer, not part of the draft we are throwing away.
   const fresh: AssistantState = {
     step: "greeting",
     ...(state.location ? { location: state.location } : {}),
+    // A payment already on its way is not part of the draft: the chat must
+    // still be able to say when it lands. Only its "and book" half goes.
+    ...(state.pendingTopup
+      ? { pendingTopup: withoutAutoConfirm(state.pendingTopup) }
+      : {}),
   };
 
   return {
@@ -1528,7 +1636,9 @@ const handleBack = async (state: AssistantState): Promise<TurnResult> => {
 
 /** Where the customer actually is, drawn again. Every branch is a renderer, so
  *  this can never re-enter an action handler and bounce back here. */
-const renderCurrent = async (state: AssistantState): Promise<TurnResult> => {
+export const renderCurrent = async (
+  state: AssistantState,
+): Promise<TurnResult> => {
   if (state.step === "discover") {
     return handleFindNearby(state, { type: "find_nearby" });
   }
@@ -1602,10 +1712,40 @@ const releaseHeldSlot = async (
   if (leaving) await releaseSlot(state.slotId, ctx.userId);
 };
 
+/**
+ * "Top up & book" consented to *this* summary. Once a turn moves the customer
+ * off it — another time, another salon, back, start over — the booking half of
+ * that consent is withdrawn, so a payment landing later cannot take a slot they
+ * walked away from. The money half is untouched.
+ */
+const keepConsentHonest = (
+  before: AssistantState,
+  result: TurnResult,
+): TurnResult => {
+  const pending = result.state.pendingTopup;
+  if (!pending?.autoConfirm) return result;
+
+  const stillThere =
+    result.state.step === "summary" && result.state.slotId === before.slotId;
+  if (stillThere) return result;
+
+  return {
+    ...result,
+    state: { ...result.state, pendingTopup: withoutAutoConfirm(pending) },
+  };
+};
+
 export const runAction = async (
   state: AssistantState,
   action: AssistantAction,
   ctx: TurnContext = {},
+): Promise<TurnResult> =>
+  keepConsentHonest(state, await dispatchAction(state, action, ctx));
+
+const dispatchAction = async (
+  state: AssistantState,
+  action: AssistantAction,
+  ctx: TurnContext,
 ): Promise<TurnResult> => {
   if (!ALLOWED_ACTIONS[state.step].includes(action.type)) {
     return handleStale(state);
@@ -1642,6 +1782,8 @@ export const runAction = async (
       return handleChange(state, action.target);
     case "wallet":
       return handleWallet(state, ctx);
+    case "check_payment":
+      return walletOnly(state, ctx);
     case "restart":
       return handleRestart(state);
     case "back":

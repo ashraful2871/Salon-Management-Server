@@ -46,7 +46,37 @@ export const assistantStateSchema = z.object({
   confirm: z
     .object({ key: z.string().max(200), appointmentId: z.string().uuid() })
     .optional(),
+  /**
+   * The Confirm token the current summary was drawn with. Kept server-side so
+   * "Top up & book" can carry the exact quoted figures through the gateway
+   * without the client sending them back. Like the block's copy, it never goes
+   * into a model prompt.
+   */
+  quoteToken: z.string().max(2048).optional(),
+  /** The hold on this slot has already had its one top-up extension. */
+  holdExtended: z.boolean().optional(),
+  /**
+   * A wallet top-up this chat opened and has not yet seen settle. It rides
+   * alongside whatever step the customer is at, rather than being a step: they
+   * may keep looking while the gateway page is open. `confirmToken` is present
+   * only for "Top up & book" — that tap is the consent to book when the money
+   * lands, and nothing else is.
+   */
+  pendingTopup: z
+    .object({
+      transactionId: z.string().max(100),
+      amountMinor: z.number().int().positive(),
+      autoConfirm: z.boolean(),
+      confirmToken: z.string().max(2048).optional(),
+      /** The gateway page, so a double tap re-opens it instead of starting a
+       *  second payment. */
+      redirectUrl: z.string().max(2048).optional(),
+      startedAt: z.string().max(40),
+    })
+    .optional(),
 });
+
+export type PendingTopup = NonNullable<AssistantState["pendingTopup"]>;
 
 export type AssistantState = z.infer<typeof assistantStateSchema>;
 
@@ -73,6 +103,7 @@ const ALWAYS: ActionType[] = [
   "find_nearby",
   "choose_salon",
   "wallet",
+  "check_payment",
 ];
 
 /** What a tap may do from where the customer actually is. Anything else is a
@@ -91,6 +122,7 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "choose_salon",
     "restart",
     "wallet",
+    "check_payment",
   ],
   discover: [
     "start",
@@ -102,6 +134,7 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "restart",
     "back",
     "wallet",
+    "check_payment",
   ],
   salon: [
     "find_nearby",
@@ -114,6 +147,7 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "restart",
     "back",
     "wallet",
+    "check_payment",
   ],
   // Date and service may arrive in either order, so each of the two steps
   // accepts both answers — see `nextStep` in assistant.actions.ts.
@@ -145,11 +179,20 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "choose_date",
     "choose_service",
   ],
-  payment: [], // Phase 5
+  // Never entered: a top-up rides alongside the step as `pendingTopup`, so the
+  // customer is not parked on a screen while the gateway page is open.
+  payment: [],
   // A finished booking is not a dead end: the customer may want another salon,
   // their wallet, or to start again. It is deliberately not `change` or
   // `choose_slot` — the appointment is made, and moving it is Phase 7's job.
-  booked: ["restart", "find_nearby", "set_location", "choose_salon", "wallet"],
+  booked: [
+    "restart",
+    "find_nearby",
+    "set_location",
+    "choose_salon",
+    "wallet",
+    "check_payment",
+  ],
 };
 
 /** One step back along the chain. Later phases extend it. */
@@ -183,14 +226,35 @@ const DOWNSTREAM = [
   "slotId",
 ] as const;
 
-type ClearableField = "serviceId" | "date" | "counterId" | "slotId" | "staffId";
+type ClearableField =
+  | "serviceId"
+  | "date"
+  | "counterId"
+  | "slotId"
+  | "staffId"
+  | "quoteToken"
+  | "holdExtended";
+
+/** A quote and its hold extension belong to one slot, so anything that drops
+ *  the slot drops them too. */
+const QUOTE: ClearableField[] = ["staffId", "quoteToken", "holdExtended"];
 
 const CLEARED_BY: Record<(typeof DOWNSTREAM)[number], ClearableField[]> = {
-  salonId: ["serviceId", "date", "counterId", "slotId", "staffId"],
-  serviceId: ["counterId", "slotId", "staffId"],
-  date: ["counterId", "slotId", "staffId"],
-  counterId: ["slotId", "staffId"],
-  slotId: ["staffId"],
+  salonId: ["serviceId", "date", "counterId", "slotId", ...QUOTE],
+  serviceId: ["counterId", "slotId", ...QUOTE],
+  date: ["counterId", "slotId", ...QUOTE],
+  counterId: ["slotId", ...QUOTE],
+  slotId: QUOTE,
+};
+
+/**
+ * A top-up that can no longer book anything. Leaving the summary withdraws the
+ * "and book" half of the consent — the money still lands, and the chat still
+ * asks about it, but it will not take a slot the customer walked away from.
+ */
+export const withoutAutoConfirm = (pending: PendingTopup): PendingTopup => {
+  const { confirmToken: _token, ...rest } = pending;
+  return { ...rest, autoConfirm: false };
 };
 
 /**

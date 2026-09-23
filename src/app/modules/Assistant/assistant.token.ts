@@ -64,32 +64,26 @@ export const signConfirm = (payload: ConfirmPayload): string => {
 };
 
 /**
- * 400 on anything that is not a token we signed, 410 once the quote has
- * lapsed. The distinction matters to the chat: expiry is recoverable with a
- * fresh quote, a bad signature is not something the customer can fix.
+ * A token we signed, read back — expired or not. Null for anything else. The
+ * top-up path uses this to carry a quote's exact figures across a gateway trip
+ * that may outlast it; the booking itself still goes through `verifyConfirm`.
  */
-export const verifyConfirm = (token: unknown): ConfirmPayload => {
-  const bad = () =>
-    new ApiError(
-      StatusCodes.BAD_REQUEST,
-      "That confirmation is not valid. Pick your time again and I will re-check the price.",
-    );
-
-  if (typeof token !== "string" || token.length > 2048) throw bad();
+export const peekConfirm = (token: unknown): ConfirmPayload | null => {
+  if (typeof token !== "string" || token.length > 2048) return null;
 
   const dot = token.indexOf(".");
-  if (dot <= 0 || dot === token.length - 1) throw bad();
+  if (dot <= 0 || dot === token.length - 1) return null;
 
   const body = token.slice(0, dot);
   const signature = token.slice(dot + 1);
 
-  if (!sameSignature(signature, sign(body))) throw bad();
+  if (!sameSignature(signature, sign(body))) return null;
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
   } catch {
-    throw bad();
+    return null;
   }
 
   const payload = parsed as ConfirmPayload;
@@ -110,7 +104,23 @@ export const verifyConfirm = (token: unknown): ConfirmPayload => {
     Number.isInteger(payload.dm) &&
     Number.isFinite(payload.exp);
 
-  if (!wellFormed) throw bad();
+  return wellFormed ? payload : null;
+};
+
+/**
+ * 400 on anything that is not a token we signed, 410 once the quote has
+ * lapsed. The distinction matters to the chat: expiry is recoverable with a
+ * fresh quote, a bad signature is not something the customer can fix.
+ */
+export const verifyConfirm = (token: unknown): ConfirmPayload => {
+  const payload = peekConfirm(token);
+
+  if (!payload) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "That confirmation is not valid. Pick your time again and I will re-check the price.",
+    );
+  }
 
   if (payload.exp <= Date.now()) {
     throw new ApiError(
@@ -122,4 +132,4 @@ export const verifyConfirm = (token: unknown): ConfirmPayload => {
   return payload;
 };
 
-export const AssistantToken = { signConfirm, verifyConfirm };
+export const AssistantToken = { signConfirm, verifyConfirm, peekConfirm };

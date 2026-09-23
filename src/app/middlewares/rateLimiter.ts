@@ -112,10 +112,16 @@ export const geoLimiter = rateLimit({
  * Money endpoints: starting a top-up opens a gateway session and recording a
  * payment moves real balances. Twenty per 15 minutes is far more than any
  * honest customer needs and takes the fun out of scripting either one.
+ *
+ * Per account, not per IP: every call reaches us from the Next.js server, so
+ * keyed on `req.ip` this was one bucket of twenty shared by every customer at
+ * once. Every route it guards is signed-in only, and it must be mounted after
+ * `auth(...)` so `req.user` is set.
  */
 export const paymentLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
+  keyGenerator: userOrClientKey, // auth() must run first
   standardHeaders: true,
   legacyHeaders: false,
   message: {

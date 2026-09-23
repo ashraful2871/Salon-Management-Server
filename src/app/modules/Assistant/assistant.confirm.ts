@@ -7,10 +7,15 @@ import {
   isWithinFreeCancellation,
 } from "../Appointment/appointment.deposit";
 import { AppointmentService } from "../Appointment/appointment.service";
-import { runAction, type TurnResult } from "./assistant.actions";
+import {
+  promptFor,
+  readWallet,
+  runAction,
+  type TurnResult,
+} from "./assistant.actions";
 import { Block, bookingConfirmed, notice, quickReplies } from "./assistant.blocks";
 import { releaseSlot } from "./assistant.booking";
-import { APPOINTMENTS_PATH, COPY, WALLET_PATH } from "./assistant.constants";
+import { APPOINTMENTS_PATH, COPY } from "./assistant.constants";
 import { findOwned, recordTurn, type Owner } from "./assistant.service";
 import { advance, readState, type AssistantState } from "./assistant.state";
 import { verifyConfirm, type ConfirmPayload } from "./assistant.token";
@@ -191,28 +196,31 @@ const recover = async (
 };
 
 /** Kept at the summary: a short wallet is one top-up away, not a lost booking,
- *  so the hold is deliberately *not* released. */
-const walletShort = (state: AssistantState, message: string): TurnResult => ({
-  text: message,
-  blocks: [
-    notice("warn", message),
-    notice("info", COPY.topupSoon.replace("{path}", WALLET_PATH)),
-    quickReplies([
-      {
-        label: "Add money to wallet",
-        action: { type: "wallet" },
-        style: "primary",
-        icon: "wallet",
-      },
-      {
-        label: "Change time",
-        action: { type: "change", target: "slot" },
-        style: "ghost",
-      },
-    ]),
-  ],
-  state,
-});
+ *  so the hold is deliberately *not* released — and the top-up is offered
+ *  right here, as "Top up & book" when the hold is still good. */
+const walletShort = async (
+  state: AssistantState,
+  userId: string,
+  message: string,
+): Promise<TurnResult> => {
+  const wallet = await readWallet(userId);
+
+  return {
+    text: message,
+    blocks: [
+      notice("warn", message),
+      ...(wallet.isFrozen ? [] : [await promptFor(state, userId, wallet)]),
+      quickReplies([
+        {
+          label: "Change time",
+          action: { type: "change", target: "slot" },
+          style: "ghost",
+        },
+      ]),
+    ],
+    state,
+  };
+};
 
 type ConfirmInput = {
   confirmationToken: unknown;
@@ -221,6 +229,12 @@ type ConfirmInput = {
   owner: Owner;
   /** From `auth(...)`, so always present. */
   userId: string;
+  /**
+   * False when the caller writes the transcript itself — the payment check,
+   * which books as one part of a larger turn. The returned `turn.state` then
+   * already carries `confirm`, so the caller persists exactly what this would.
+   */
+  record?: boolean;
 };
 
 const confirmBooking = async (input: ConfirmInput) => {
@@ -319,20 +333,30 @@ const confirmBooking = async (input: ConfirmInput) => {
     await releaseSlot(payload.sid, input.userId);
 
     const turn = await confirmedTurn(appointment, state);
+    const booked: TurnResult = {
+      ...turn,
+      state: {
+        ...turn.state,
+        confirm: {
+          key: input.idempotencyKey,
+          appointmentId: appointment.id,
+        },
+      },
+    };
+
+    if (input.record === false) {
+      return {
+        appointment,
+        replayed: false,
+        turn: booked,
+        conversationId: payload.cid,
+      };
+    }
 
     await recordTurn(payload.cid, {
       action: { type: "confirm_booking" },
       label: "Confirm booking",
-      result: {
-        ...turn,
-        state: {
-          ...turn.state,
-          confirm: {
-            key: input.idempotencyKey,
-            appointmentId: appointment.id,
-          },
-        },
-      },
+      result: booked,
       conversation: { status: "BOOKED", appointmentId: appointment.id },
     });
 
@@ -346,7 +370,7 @@ const confirmBooking = async (input: ConfirmInput) => {
     if (error.statusCode === StatusCodes.PAYMENT_REQUIRED) {
       throw new AssistantConfirmError(
         StatusCodes.PAYMENT_REQUIRED,
-        walletShort(state, error.message),
+        await walletShort(state, input.userId, error.message),
         payload.cid,
       );
     }

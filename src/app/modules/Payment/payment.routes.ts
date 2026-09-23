@@ -34,10 +34,11 @@ router.post(
 // ---------------------------------------------------------------------------
 router.post(
   "/",
-  paymentLimiter,
   // CUSTOMER is intentionally absent: a customer marking themselves paid was
   // the original hole here.
   auth(UserRole.ADMIN, UserRole.SALON_OWNER),
+  // After auth: the limiter counts per account.
+  paymentLimiter,
   validateRequest(PaymentValidation.createPaymentValidation),
   PaymentController.createPayment,
 );

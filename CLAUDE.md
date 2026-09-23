@@ -81,11 +81,11 @@ Appointments are booked against a pre-generated `Slot`, never a raw time. `bookA
 
 ## Rate limiting
 
-`authLimiter` (10 / 15 min / IP) guards every credential and token endpoint; `aiSearchLimiter` (15 / min) guards `POST /ai/search` because each call can spend Gemini quota up to three times; `paymentLimiter` (20 / 15 min / IP) guards the wallet and payment routes. All live in `src/app/middlewares/rateLimiter.ts`.
+`authLimiter` (10 / 15 min / IP) guards every credential and token endpoint; `aiSearchLimiter` (15 / min) guards `POST /ai/search` because each call can spend Gemini quota up to three times; `paymentLimiter` (20 / 15 min / account) guards the wallet, payment and assistant top-up routes, mounted after `auth(...)`. All live in `src/app/middlewares/rateLimiter.ts`.
 
-The frontend calls this API from its own server, so for every visitor `req.ip` is the Vercel function's address. `aiSearchLimiter` therefore keys on `userOrClientKey`: the account when `optionalAuth()` ran first, else `clientIp(req)` — the `X-Client-IP` the Next.js server forwards, trusted only with a matching `X-Internal-Key` (`INTERNAL_API_KEY`, same value on both hosts). The other limiters still key on `req.ip` and share the problem; adopting `keyGenerator: userOrClientKey` fixes each.
+The frontend calls this API from its own server, so for every visitor `req.ip` is the Vercel function's address. `aiSearchLimiter`, `assistantLimiter` and `paymentLimiter` therefore key on `userOrClientKey`: the account when `auth()`/`optionalAuth()` ran first, else `clientIp(req)` — the `X-Client-IP` the Next.js server forwards, trusted only with a matching `X-Internal-Key` (`INTERNAL_API_KEY`, same value on both hosts). `authLimiter`, `mapLimiter` and `geoLimiter` still key on `req.ip` and share the problem: their routes are public (or, for `/auth/change-email`, run the limiter before `auth`), so only the `clientIp` half of `userOrClientKey` would apply, and that needs `INTERNAL_API_KEY` forwarding on those calls first.
 
-All of them key on `req.ip`, which only resolves to the real client because `src/app.ts` sets `trust proxy` to `1` — Render forwards over plain HTTP and puts the client in `X-Forwarded-For`. Without it every visitor shares one bucket and express-rate-limit logs `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on every request. Keep it at `1` (one hop); `true` would let a client spoof the header and get a fresh bucket per request.
+`req.ip` (used directly, and as `clientIp`'s fallback) only resolves to the real client because `src/app.ts` sets `trust proxy` to `1` — Render forwards over plain HTTP and puts the client in `X-Forwarded-For`. Without it every visitor shares one bucket and express-rate-limit logs `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on every request. Keep it at `1` (one hop); `true` would let a client spoof the header and get a fresh bucket per request.
 
 ## Email
 

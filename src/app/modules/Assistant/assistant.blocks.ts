@@ -117,8 +117,27 @@ export type Block =
       /** Directions; null when the salon has no coordinates. */
       mapUrl: string | null;
       manageUrl: string;
+    }
+  | {
+      /**
+       * A doorway to the existing top-up, not a second one: the buttons post to
+       * `POST /assistant/payments/topup`, which is `initiateTopup` plus a note
+       * on the conversation. Never an action — money must not be something a
+       * replayed tap can start.
+       */
+      type: "payment_prompt";
+      /** Zero when no booking is in play (the "My wallet" chip). */
+      shortfallMinor: number;
+      /** The shortfall rounded up to a round figure, never under the minimum. */
+      suggestedTopupMinor: number;
+      minTopupMinor: number;
+      /** Poisha, ascending, every one enough to cover the shortfall. */
+      presets: number[];
+      /** Display only — the gateway page is where one is chosen. */
+      methods: string[];
+      /** "Top up & book" is offered: a live, held summary is behind this. */
+      canAutoConfirm: boolean;
     };
-// Phase 5: payment_prompt
 
 /** `icon` is a name ("map-pin", "scissors", "wallet"), never markup — the
  *  frontend maps it to a Lucide icon. */
@@ -268,3 +287,7 @@ export const bookingSummary = (fields: BlockOf<"booking_summary">): Block => ({
 export const bookingConfirmed = (
   fields: BlockOf<"booking_confirmed">,
 ): Block => ({ type: "booking_confirmed", ...fields });
+
+export const paymentPromptBlock = (
+  fields: BlockOf<"payment_prompt">,
+): Block => ({ type: "payment_prompt", ...fields });

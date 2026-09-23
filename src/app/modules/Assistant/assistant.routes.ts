@@ -3,7 +3,10 @@ import { StatusCodes } from "http-status-codes";
 import { UserRole } from "@prisma/client";
 import auth from "../../middlewares/auth";
 import optionalAuth from "../../middlewares/optionalAuth";
-import { assistantLimiter } from "../../middlewares/rateLimiter";
+import {
+  assistantLimiter,
+  paymentLimiter,
+} from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { AssistantController } from "./assistant.controller";
 import { ASSISTANT_ENABLED } from "./assistant.constants";
@@ -60,6 +63,19 @@ router.post(
   assistantLimiter,
   validateRequest(AssistantValidation.confirmBooking),
   AssistantController.confirm,
+);
+
+/**
+ * Opens a wallet top-up from the chat — the same `initiateTopup` the wallet
+ * page uses — so it takes the wallet's own `paymentLimiter`, after `auth` so
+ * the bucket is the account and not the Vercel server every call arrives from.
+ */
+router.post(
+  "/payments/topup",
+  auth(UserRole.CUSTOMER, UserRole.SALON_OWNER, UserRole.ADMIN),
+  paymentLimiter,
+  validateRequest(AssistantValidation.startTopup),
+  AssistantController.topup,
 );
 
 export const AssistantRoutes = router;

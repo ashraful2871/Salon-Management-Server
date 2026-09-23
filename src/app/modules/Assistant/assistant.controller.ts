@@ -8,6 +8,8 @@ import {
   AssistantConfirm,
   AssistantConfirmError,
 } from "./assistant.confirm";
+import { COPY } from "./assistant.constants";
+import { AssistantPayment } from "./assistant.payment";
 import { AssistantService, Owner, recordTurn } from "./assistant.service";
 
 /**
@@ -57,12 +59,21 @@ const get = catchAsync(async (req: Request, res: Response) => {
 });
 
 const act = catchAsync(async (req: Request, res: Response) => {
-  const result = await AssistantService.runTurn(
-    req.params.id,
-    ownerOf(req),
-    req.body.action,
-    req.body.label,
-  );
+  // "Has my top-up landed?" can end in a booking, so it goes to the payment
+  // module — which owns the lock and the confirm — rather than the funnel.
+  const result =
+    req.body.action?.type === "check_payment"
+      ? await AssistantPayment.checkPayment(
+          req.params.id,
+          ownerOf(req),
+          req.body.label,
+        )
+      : await AssistantService.runTurn(
+          req.params.id,
+          ownerOf(req),
+          req.body.action,
+          req.body.label,
+        );
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -139,4 +150,29 @@ const confirm = catchAsync(async (req: Request, res: Response) => {
   }
 });
 
-export const AssistantController = { create, get, act, confirm };
+/**
+ * Opens a wallet top-up from the chat. 201 with the gateway URL; or, when "Top
+ * up & book" finds the time no longer held, 409 with a turn to draw (what is
+ * free instead) and no payment started.
+ */
+const topup = catchAsync(async (req: Request, res: Response) => {
+  const result = await AssistantPayment.startTopup({
+    conversationId: req.body.conversationId,
+    owner: ownerOf(req),
+    userId: req.user!.userId,
+    amountMinor: req.body.amountMinor,
+    autoConfirm: req.body.autoConfirm ?? false,
+    label: req.body.label,
+  });
+
+  sendResponse(res, {
+    statusCode: result.started ? StatusCodes.CREATED : StatusCodes.CONFLICT,
+    success: result.started,
+    message: result.started
+      ? "Top-up session created. Redirect the customer to complete it."
+      : COPY.topupNotHeld,
+    data: result,
+  });
+});
+
+export const AssistantController = { create, get, act, confirm, topup };
