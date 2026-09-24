@@ -4,6 +4,7 @@ import { AppointmentDeposit } from "../modules/Appointment/appointment.deposit";
 import { WalletService } from "../modules/Wallet/wallet.service";
 import { syncSearchIndex } from "../modules/AI-Suggestion/ai.indexer";
 import { sendBookingReminders } from "../modules/Assistant/assistant.reminders";
+import { purgeExpiredConversations } from "../modules/Assistant/assistant.service";
 
 /**
  * Periodic money work, plus the AI search index repair.
@@ -27,6 +28,7 @@ const AI_INDEX_INTERVAL_MS = 10 * MINUTE;
 // run would step straight over half the bookings. Running more often is free
 // of risk — each reminder is claimed by its stamp, so it still sends once.
 const REMINDER_INTERVAL_MS = 15 * MINUTE;
+const RETENTION_INTERVAL_MS = 24 * HOUR;
 
 /** A job that throws must never take the server down with it. */
 const safely = async (name: string, run: () => Promise<unknown>) => {
@@ -46,6 +48,13 @@ const every = (
   // Do not hold the event loop open just for a timer.
   timer.unref?.();
   return timer;
+};
+
+/** Chat retention is a promise in the privacy notice: guests 30 days after
+ *  their last turn, signed-in customers 90. The count, and nothing else. */
+const purgeConversations = async () => {
+  const deleted = await purgeExpiredConversations();
+  console.log(`[jobs] assistant.retention: deleted ${deleted} expired conversation(s)`);
 };
 
 const auditWallets = async () => {
@@ -91,6 +100,8 @@ export const startBackgroundJobs = () => {
     sendBookingReminders(),
   );
 
+  every(RETENTION_INTERVAL_MS, "assistant.retention", purgeConversations);
+
   // Catch anything that got stuck while the process was down, but not in the
   // first seconds of boot - a restart loop should not hammer the gateway.
   const warmup = setTimeout(() => {
@@ -106,6 +117,13 @@ export const startBackgroundJobs = () => {
     void safely("ai.syncIndex", () => syncSearchIndex());
   }, 45 * 1000);
   indexWarmup.unref?.();
+
+  // A daily timer restarts with every deploy, and deploys can come more often
+  // than daily — without a run after boot, the purge might never happen.
+  const retentionWarmup = setTimeout(() => {
+    void safely("assistant.retention", purgeConversations);
+  }, 5 * MINUTE);
+  retentionWarmup.unref?.();
 
   console.log("[jobs] background jobs started");
 };

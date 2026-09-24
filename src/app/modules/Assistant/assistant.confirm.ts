@@ -17,6 +17,7 @@ import { Block, bookingConfirmed, notice, quickReplies } from "./assistant.block
 import { releaseSlot } from "./assistant.booking";
 import { completeMove } from "./assistant.manage";
 import { APPOINTMENTS_PATH, COPY } from "./assistant.constants";
+import type { TurnOutcome } from "./assistant.log";
 import { findOwned, recordTurn, type Owner } from "./assistant.service";
 import { advance, readState, type AssistantState } from "./assistant.state";
 import { verifyConfirm, type ConfirmPayload } from "./assistant.token";
@@ -63,13 +64,25 @@ type CardAppointment = {
  * a card the customer can act on rather than a stack trace.
  */
 export class AssistantConfirmError extends Error {
+  /** For the turn log: an empty wallet and a lost time are the two a funnel
+   *  report cares about; everything else is a guard doing its job. */
+  public outcome: TurnOutcome;
+
   constructor(
     public statusCode: number,
     public turn: TurnResult,
     public conversationId: string,
+    outcome?: TurnOutcome,
   ) {
     super(turn.text);
     this.name = "AssistantConfirmError";
+    this.outcome =
+      outcome ??
+      (statusCode === StatusCodes.PAYMENT_REQUIRED
+        ? "insufficient_funds"
+        : statusCode === StatusCodes.CONFLICT
+          ? "slot_taken"
+          : "blocked");
   }
 }
 
@@ -280,6 +293,7 @@ const confirmBooking = async (input: ConfirmInput) => {
       StatusCodes.CONFLICT,
       await recover(state, input.userId, payload.cid, COPY.staleTap),
       payload.cid,
+      "blocked",
     );
   }
 
@@ -315,6 +329,7 @@ const confirmBooking = async (input: ConfirmInput) => {
       StatusCodes.CONFLICT,
       await recover(state, input.userId, payload.cid, COPY.priceChanged),
       payload.cid,
+      "blocked",
     );
   }
 
@@ -375,6 +390,8 @@ const confirmBooking = async (input: ConfirmInput) => {
       label: "Confirm booking",
       result: booked,
       conversation: { status: "BOOKED", appointmentId: appointment.id },
+      step: state.step,
+      signedIn: true,
     });
 
     return { appointment, replayed: false, turn: booked, conversationId: payload.cid };
@@ -426,6 +443,7 @@ const confirmBooking = async (input: ConfirmInput) => {
             }
           : await recover(state, input.userId, payload.cid, error.message),
         payload.cid,
+        ownDiary ? "blocked" : "slot_taken",
       );
     }
 

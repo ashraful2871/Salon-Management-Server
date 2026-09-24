@@ -45,8 +45,8 @@ const actionSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("set_location"),
-    lat: z.number(),
-    lng: z.number(),
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
     label: z.string().max(80).optional(),
   }),
   z.object({

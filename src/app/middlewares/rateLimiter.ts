@@ -1,8 +1,10 @@
 import { timingSafeEqual } from "crypto";
-import { Request } from "express";
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { NextFunction, Request, Response } from "express";
+import rateLimit, { ipKeyGenerator, type Options } from "express-rate-limit";
 import { isIP } from "net";
 import config from "../../config";
+import { DAILY_CONVERSATIONS } from "../modules/Assistant/assistant.constants";
+import { logUnrecorded } from "../modules/Assistant/assistant.log";
 
 const sameSecret = (a: string, b: string) => {
   const left = Buffer.from(a);
@@ -131,6 +133,27 @@ export const paymentLimiter = rateLimit({
 });
 
 /**
+ * A refused assistant call is still a turn in the funnel report, so every
+ * assistant limiter writes the same `[assistant]` line a turn does — the id
+ * from the URL and the action type only, nothing the customer sent.
+ */
+const assistantLimited = (
+  req: Request,
+  res: Response,
+  _next: NextFunction,
+  options: Options,
+) => {
+  logUnrecorded({
+    cid: req.params?.id ?? null,
+    // A tap names its action; anything else is named by its route
+    // ("messages", "confirm", "conversations").
+    action: req.body?.action?.type ?? req.path.split("/").pop() ?? null,
+    outcome: "rate_limited",
+  });
+  res.status(options.statusCode).json(options.message);
+};
+
+/**
  * Typed messages are the one assistant call that can reach Gemini, so they get
  * their own, tighter budget — tighter still for guests, who cost the same and
  * are cheaper to multiply. The per-conversation cap is `MAX_TURNS`.
@@ -141,6 +164,7 @@ export const assistantLlmLimiter = rateLimit({
   keyGenerator: userOrClientKey, // optionalAuth() must run first
   standardHeaders: true,
   legacyHeaders: false,
+  handler: assistantLimited,
   message: {
     success: false,
     message: "You are typing faster than I can read. Please wait a minute.",
@@ -157,8 +181,34 @@ export const assistantLimiter = rateLimit({
   keyGenerator: userOrClientKey, // optionalAuth() must run first
   standardHeaders: true,
   legacyHeaders: false,
+  handler: assistantLimited,
   message: {
     success: false,
     message: "Too many messages. Please wait a minute.",
+  },
+});
+
+/**
+ * New conversations per rolling day: 30 per account, 10 per visitor address.
+ * `MAX_TURNS` caps how long one chat runs; this caps how many a script can
+ * open to get around it. Guests are counted by address because a guest's
+ * only other identity is the key we hand them *on* create.
+ *
+ * Needs `INTERNAL_API_KEY` on both hosts in production: without it every guest
+ * arrives as the Vercel server's address and ten chats a day is the whole
+ * site's guest allowance.
+ */
+export const assistantStartLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: (req: Request) =>
+    req.user?.userId ? DAILY_CONVERSATIONS.signedIn : DAILY_CONVERSATIONS.guest,
+  keyGenerator: userOrClientKey, // optionalAuth() must run first
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: assistantLimited,
+  message: {
+    success: false,
+    message:
+      "You have started a lot of chats today. Carry on with an earlier one, or try again tomorrow.",
   },
 });

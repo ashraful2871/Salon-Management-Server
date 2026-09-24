@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { Request, Response } from "express";
+import { Request, RequestHandler, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import catchAsync from "../../shared/catchAsync";
@@ -8,10 +8,12 @@ import {
   AssistantConfirm,
   AssistantConfirmError,
 } from "./assistant.confirm";
-import { COPY } from "./assistant.constants";
+import { ASSISTANT_LLM_ENABLED, COPY } from "./assistant.constants";
+import { failureOutcome, logUnrecorded } from "./assistant.log";
 import { isPaymentQuestion } from "./assistant.nlu";
 import { AssistantPayment } from "./assistant.payment";
 import { AssistantService, Owner, recordTurn } from "./assistant.service";
+import { AssistantStats } from "./assistant.stats";
 
 /**
  * The guest key travels in a header, not a cookie: a Set-Cookie from the API
@@ -25,7 +27,26 @@ const ownerOf = (req: Request): Owner => ({
     : {}),
 });
 
-const create = catchAsync(async (req: Request, res: Response) => {
+/**
+ * A turn that throws never reaches `recordTurn`, so it would leave no log line
+ * at all — and a turn nobody can see is exactly the one worth finding. `name`
+ * is the action type when the body does not carry one.
+ */
+const turnHandler = (name: string, fn: RequestHandler) =>
+  catchAsync(async (req, res, next) => {
+    try {
+      await fn(req, res, next);
+    } catch (error) {
+      logUnrecorded({
+        cid: req.params.id ?? req.body?.conversationId ?? null,
+        action: req.body?.action?.type ?? name,
+        outcome: failureOutcome(error),
+      });
+      throw error;
+    }
+  });
+
+const create = turnHandler("start", async (req: Request, res: Response) => {
   const owner: Owner = req.user?.userId
     ? { userId: req.user.userId }
     : { anonymousId: randomUUID() };
@@ -59,7 +80,7 @@ const get = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
-const act = catchAsync(async (req: Request, res: Response) => {
+const act = turnHandler("action", async (req: Request, res: Response) => {
   // "Has my top-up landed?" can end in a booking, so it goes to the payment
   // module — which owns the lock and the confirm — rather than the funnel.
   const result =
@@ -88,7 +109,7 @@ const act = catchAsync(async (req: Request, res: Response) => {
  * A typed message. "Did my payment go through?" goes where the tap would, the
  * payment module; everything else is a text turn.
  */
-const message = catchAsync(async (req: Request, res: Response) => {
+const message = turnHandler("text", async (req: Request, res: Response) => {
   const text: string = req.body.text;
   const result = isPaymentQuestion(text)
     ? {
@@ -110,7 +131,7 @@ const message = catchAsync(async (req: Request, res: Response) => {
  * Confirm without one cannot be made safe to retry, and a booking that might
  * happen twice is worse than a 400.
  */
-const confirm = catchAsync(async (req: Request, res: Response) => {
+const confirm = turnHandler("confirm_booking", async (req: Request, res: Response) => {
   const idempotencyKey = req.get("idempotency-key")?.trim();
 
   if (!idempotencyKey) {
@@ -153,9 +174,16 @@ const confirm = catchAsync(async (req: Request, res: Response) => {
       action: { type: "confirm_booking" },
       label: "Confirm booking",
       result: error.turn,
+      signedIn: true,
+      outcome: error.outcome,
     }).catch(() => {
       // The customer still gets the blocks; losing one transcript row is not
-      // worth turning a recoverable 409 into a 500.
+      // worth turning a recoverable 409 into a 500. The line still gets logged.
+      logUnrecorded({
+        cid: error.conversationId,
+        action: "confirm_booking",
+        outcome: error.outcome,
+      });
     });
 
     sendResponse(res, {
@@ -177,7 +205,7 @@ const confirm = catchAsync(async (req: Request, res: Response) => {
  * up & book" finds the time no longer held, 409 with a turn to draw (what is
  * free instead) and no payment started.
  */
-const topup = catchAsync(async (req: Request, res: Response) => {
+const topup = turnHandler("start_topup", async (req: Request, res: Response) => {
   const result = await AssistantPayment.startTopup({
     conversationId: req.body.conversationId,
     owner: ownerOf(req),
@@ -214,6 +242,50 @@ const feedback = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+/** "Delete my chats". The caller's own conversations only — see the service. */
+const deleteMine = catchAsync(async (req: Request, res: Response) => {
+  const result = await AssistantService.deleteMyConversations(
+    req.user!.userId,
+    req.get("x-assistant-key") ?? undefined,
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      result.deleted === 1
+        ? "1 chat deleted"
+        : `${result.deleted} chats deleted`,
+    data: result,
+  });
+});
+
+/** Launch numbers for ADMIN: per-day counts, the funnel, the top problems. */
+const stats = catchAsync(async (_req: Request, res: Response) => {
+  const result = await AssistantStats.getStats();
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Assistant stats retrieved",
+    data: result,
+  });
+});
+
+/**
+ * What the frontend needs to decide whether to draw the launcher and which
+ * privacy line to show. Reaching this handler at all means the assistant is on:
+ * with `ASSISTANT_ENABLED=false` the router answers 404 before it gets here.
+ */
+const status = (_req: Request, res: Response) => {
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Assistant is on",
+    data: { enabled: true, llm: ASSISTANT_LLM_ENABLED },
+  });
+};
+
 export const AssistantController = {
   create,
   get,
@@ -222,4 +294,7 @@ export const AssistantController = {
   confirm,
   topup,
   feedback,
+  deleteMine,
+  stats,
+  status,
 };

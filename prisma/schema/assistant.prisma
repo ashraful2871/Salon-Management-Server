@@ -39,6 +39,10 @@ model AssistantMessage {
   tokensOut      Int?
   feedback       Int? // 👍 1 / 👎 -1 from the customer; null when not rated
   feedbackReason String?
+  /// The turn's outcome, on the assistant row: ok | blocked | error |
+  /// rate_limited | slot_taken | insufficient_funds. The funnel report
+  /// (`GET /assistant/stats`) counts the ones that are not ok.
+  outcome        String?
   createdAt      DateTime      @default(now())
 
   conversation AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)

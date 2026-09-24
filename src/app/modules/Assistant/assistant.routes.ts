@@ -6,6 +6,7 @@ import optionalAuth from "../../middlewares/optionalAuth";
 import {
   assistantLimiter,
   assistantLlmLimiter,
+  assistantStartLimiter,
   paymentLimiter,
 } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
@@ -28,14 +29,42 @@ const assistantEnabled = (req: Request, res: Response, next: NextFunction) => {
 
 router.use(assistantEnabled);
 
+/**
+ * Every body here is replaced by its parsed form: keys the schema does not name
+ * are stripped before a handler — or the transcript, which stores the action —
+ * ever sees them.
+ */
+const validated: typeof validateRequest = (schema) =>
+  validateRequest(schema, { replaceBody: true });
+
+/**
+ * Whether to draw the launcher, and which privacy line to show. Public and
+ * free (no database), so it has no limiter; the frontend caches it for a
+ * minute. With the kill switch off it 404s like every other route here, which
+ * is what hides the launcher.
+ */
+router.get("/status", AssistantController.status);
+
 // optionalAuth runs before the limiter, as in ai.route.ts: every call reaches
 // us from the Next.js server, so without it each visitor would share one bucket.
 router.post(
   "/conversations",
   optionalAuth(),
   assistantLimiter,
-  validateRequest(AssistantValidation.createConversation),
+  assistantStartLimiter,
+  validated(AssistantValidation.createConversation),
   AssistantController.create,
+);
+
+/**
+ * "Delete my chats". Signed-in only: a guest's chat is reachable only through
+ * the key on this device and expires on its own after 30 days.
+ */
+router.delete(
+  "/conversations",
+  auth(UserRole.CUSTOMER, UserRole.SALON_OWNER, UserRole.ADMIN),
+  assistantLimiter,
+  AssistantController.deleteMine,
 );
 
 router.get(
@@ -49,7 +78,7 @@ router.post(
   "/conversations/:id/actions",
   optionalAuth(),
   assistantLimiter,
-  validateRequest(AssistantValidation.runAction),
+  validated(AssistantValidation.runAction),
   AssistantController.act,
 );
 
@@ -59,7 +88,7 @@ router.post(
   "/conversations/:id/messages",
   optionalAuth(),
   assistantLlmLimiter,
-  validateRequest(AssistantValidation.sendMessage),
+  validated(AssistantValidation.sendMessage),
   AssistantController.message,
 );
 
@@ -72,7 +101,7 @@ router.post(
   "/bookings/confirm",
   auth(UserRole.CUSTOMER, UserRole.SALON_OWNER, UserRole.ADMIN),
   assistantLimiter,
-  validateRequest(AssistantValidation.confirmBooking),
+  validated(AssistantValidation.confirmBooking),
   AssistantController.confirm,
 );
 
@@ -85,7 +114,7 @@ router.post(
   "/payments/topup",
   auth(UserRole.CUSTOMER, UserRole.SALON_OWNER, UserRole.ADMIN),
   paymentLimiter,
-  validateRequest(AssistantValidation.startTopup),
+  validated(AssistantValidation.startTopup),
   AssistantController.topup,
 );
 
@@ -95,8 +124,12 @@ router.post(
   "/messages/:id/feedback",
   optionalAuth(),
   assistantLimiter,
-  validateRequest(AssistantValidation.messageFeedback),
+  validated(AssistantValidation.messageFeedback),
   AssistantController.feedback,
 );
+
+/** Launch numbers: per-day counts, the funnel, the top problems. No
+ *  transcripts, ADMIN only. */
+router.get("/stats", auth(UserRole.ADMIN), AssistantController.stats);
 
 export const AssistantRoutes = router;

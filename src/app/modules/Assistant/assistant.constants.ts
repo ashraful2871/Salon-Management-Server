@@ -15,6 +15,14 @@ export const ASSISTANT_ENABLED = process.env.ASSISTANT_ENABLED !== "false";
 export const ASSISTANT_LLM_ENABLED = process.env.ASSISTANT_LLM_ENABLED === "true";
 
 /**
+ * The third switch, for when SSLCommerz is down: only the literal "false" turns
+ * it off. Off, the chat's top-up card becomes a pointer to the wallet page and
+ * no new top-up starts from the chat; a booking the wallet already covers is
+ * untouched. See ASSISTANT_RUNBOOK.md.
+ */
+export const ASSISTANT_TOPUP_ENABLED = process.env.ASSISTANT_TOPUP_ENABLED !== "false";
+
+/**
  * Tokens (in + out) the whole process may spend on the assistant per Dhaka
  * day. Past it, typed messages fall back to the rules until midnight: cheap
  * insurance against a loop or an abusive script.
@@ -27,8 +35,18 @@ export const ASSISTANT_DAILY_TOKEN_BUDGET = Math.max(
 /** Per conversation. A guided flow reaches a booking in well under ten turns. */
 export const MAX_TURNS = 40;
 
-/** Retention sweep for guests; signed-in chats get longer in a later phase. */
-export const CONVERSATION_TTL_DAYS = 30;
+/**
+ * Retention, pushed forward on every turn and enforced by the daily
+ * `assistant.retention` job. Guests 30 days; signed-in customers 90, since a
+ * chat that booked is part of their receipt trail. The privacy notice in the
+ * chat quotes these numbers — change both together.
+ */
+export const GUEST_TTL_DAYS = 30;
+export const SIGNED_IN_TTL_DAYS = 90;
+
+/** New conversations per rolling day, per account or (for guests) per visitor
+ *  address. A real customer starts one or two. */
+export const DAILY_CONVERSATIONS = { signedIn: 30, guest: 10 } as const;
 
 /** Salon cards per carousel page. */
 export const SALON_CARDS = 5;
@@ -150,4 +168,7 @@ export const COPY = {
   topupCancelled: "The payment was cancelled, so nothing was taken.",
   topupExpired:
     "The payment page timed out before it was finished, so nothing was taken.",
+  // Phase 8. ASSISTANT_TOPUP_ENABLED=false — the gateway is having trouble.
+  topupPaused:
+    "Topping up from the chat is paused for now. You can check your wallet at /dashboard/wallet, and a booking your balance already covers still works here.",
 } as const;

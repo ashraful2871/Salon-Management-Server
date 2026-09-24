@@ -6,15 +6,31 @@ import prisma from "../../shared/prisma";
 import { AssistantAction, runAction } from "./assistant.actions";
 import { textTurn } from "./assistant.ai";
 import { notice } from "./assistant.blocks";
-import { COPY, CONVERSATION_TTL_DAYS, MAX_TURNS } from "./assistant.constants";
+import {
+  COPY,
+  GUEST_TTL_DAYS,
+  MAX_TURNS,
+  SIGNED_IN_TTL_DAYS,
+} from "./assistant.constants";
+import {
+  logTurn,
+  logUnrecorded,
+  outcomeOf,
+  type TurnOutcome,
+} from "./assistant.log";
 import { AssistantState, readState } from "./assistant.state";
 
 /** Signed in → the account owns it. Guest → the `anonymousId` we handed back on
  *  create does, carried in `X-Assistant-Key`. */
 export type Owner = { userId?: string; anonymousId?: string };
 
-const expiry = () =>
-  new Date(Date.now() + CONVERSATION_TTL_DAYS * 24 * 60 * 60 * 1000);
+/** Pushed forward on every turn, so a chat expires that long after its *last*
+ *  turn, not its first. */
+const expiry = (signedIn: boolean) =>
+  new Date(
+    Date.now() +
+      (signedIn ? SIGNED_IN_TTL_DAYS : GUEST_TTL_DAYS) * 24 * 60 * 60 * 1000,
+  );
 
 /**
  * Ownership is part of the lookup, not a check after it: a conversation that is
@@ -77,7 +93,7 @@ const createConversation = async (
       anonymousId: owner.userId ? null : (owner.anonymousId ?? null),
       locale: locale ?? "en",
       state: state as unknown as Prisma.InputJsonValue,
-      expiresAt: expiry(),
+      expiresAt: expiry(Boolean(owner.userId)),
     },
   });
 
@@ -134,6 +150,13 @@ const runTurn = async (
   // At the limit, answer but change nothing: the draft stays exactly as it was
   // in case they want to read it, and the counter stops climbing.
   if (conversation.turnCount >= MAX_TURNS) {
+    logUnrecorded({
+      cid: conversation.id,
+      turn: conversation.turnCount,
+      step: state.step,
+      action: action.type,
+      outcome: "blocked",
+    });
     return {
       conversationId: conversation.id,
       state,
@@ -164,6 +187,8 @@ const runTurn = async (
     label,
     result,
     latencyMs,
+    step: state.step,
+    signedIn: Boolean(owner.userId || conversation.userId),
   });
 };
 
@@ -186,6 +211,13 @@ const runTextTurn = async (id: string, owner: Owner, text: string) => {
   const state = readState(conversation.state);
 
   if (conversation.turnCount >= MAX_TURNS) {
+    logUnrecorded({
+      cid: conversation.id,
+      turn: conversation.turnCount,
+      step: state.step,
+      action: "text",
+      outcome: "blocked",
+    });
     return {
       conversationId: conversation.id,
       state,
@@ -232,6 +264,8 @@ const runTextTurn = async (id: string, owner: Owner, text: string) => {
     result,
     latencyMs: Date.now() - started,
     model: meta,
+    step: state.step,
+    signedIn: Boolean(owner.userId || conversation.userId),
   });
 
   return {
@@ -253,14 +287,31 @@ export const recordTurn = async (
     action: AssistantAction | { type: string };
     label?: string;
     result: { text: string; blocks: unknown[]; state: AssistantState };
+    /** Picks the retention: 90 days for a signed-in customer, 30 for a guest. */
+    signedIn: boolean;
     latencyMs?: number;
-    /** A typed turn that reached the model: which one, and what it cost. */
-    model?: { model?: string; promptVersion?: string; tokensIn?: number; tokensOut?: number };
+    /** A typed turn: how it was answered, and — when it reached the model —
+     *  which one, the tools it ran and what it cost. */
+    model?: {
+      mode?: "guided" | "ai";
+      model?: string;
+      promptVersion?: string;
+      tokensIn?: number;
+      tokensOut?: number;
+      tools?: string[];
+    };
     /** Set when the turn is what produced the booking. */
     conversation?: { status?: string; appointmentId?: string };
+    /** Where the turn started, for the log line. */
+    step?: string;
+    /** When the blocks alone do not say it — a confirm refused for want of
+     *  funds, say. Otherwise read off the notices the turn drew. */
+    outcome?: TurnOutcome;
   },
 ) => {
-  const [userMessage, assistantMessage] = await prisma.$transaction([
+  const outcome = input.outcome ?? outcomeOf(input.result.blocks);
+
+  const [userMessage, assistantMessage, conversation] = await prisma.$transaction([
     prisma.assistantMessage.create({
       data: {
         conversationId,
@@ -275,6 +326,7 @@ export const recordTurn = async (
         role: "ASSISTANT",
         text: input.result.text,
         blocks: input.result.blocks as unknown as Prisma.InputJsonValue,
+        outcome,
         ...(input.latencyMs !== undefined ? { latencyMs: input.latencyMs } : {}),
         ...(input.model?.model
           ? {
@@ -291,7 +343,7 @@ export const recordTurn = async (
       data: {
         state: input.result.state as unknown as Prisma.InputJsonValue,
         turnCount: { increment: 1 },
-        expiresAt: expiry(),
+        expiresAt: expiry(input.signedIn),
         ...(input.conversation?.status
           ? { status: input.conversation.status }
           : {}),
@@ -301,6 +353,20 @@ export const recordTurn = async (
       },
     }),
   ]);
+
+  logTurn({
+    cid: conversationId,
+    turn: conversation.turnCount,
+    step: input.step,
+    action: input.action.type,
+    mode: input.model?.mode ?? "guided",
+    tools: input.model?.tools,
+    model: input.model?.model ?? null,
+    tokensIn: input.model?.tokensIn,
+    tokensOut: input.model?.tokensOut,
+    ms: input.latencyMs,
+    outcome,
+  });
 
   return {
     conversationId,
@@ -343,7 +409,47 @@ const rateMessage = async (
   return updated;
 };
 
+/**
+ * "Delete my chats": every conversation the signed-in caller owns, plus the
+ * guest chat on this device they still hold the key to, and by cascade every
+ * message in them. Bookings are untouched — they live in `appointments`, and
+ * nothing there points back at a conversation.
+ */
+const deleteMyConversations = async (userId: string, anonymousId?: string) => {
+  // `userId: undefined` is no filter at all to Prisma: it would match every
+  // conversation there is. The route is behind auth(), but this is the line
+  // that makes that a fact rather than an assumption.
+  if (!userId) {
+    throw new ApiError(StatusCodes.UNAUTHORIZED, "Sign in to delete your chats.");
+  }
+
+  const { count } = await prisma.assistantConversation.deleteMany({
+    where: {
+      OR: [
+        { userId },
+        ...(anonymousId ? [{ anonymousId, userId: null }] : []),
+      ],
+    },
+  });
+
+  return { deleted: count };
+};
+
+/**
+ * The retention job. `expiresAt` is written on every turn, so this only has to
+ * delete; messages cascade with their conversation, so one delete is enough.
+ * A conversation that booked only ever held the appointment's id — the booking
+ * itself is in `appointments` and is not touched.
+ */
+export const purgeExpiredConversations = async (now = new Date()) => {
+  const { count } = await prisma.assistantConversation.deleteMany({
+    where: { expiresAt: { lt: now } },
+  });
+  return count;
+};
+
 export const AssistantService = {
+  deleteMyConversations,
   rateMessage,
   createConversation,
   getConversation,

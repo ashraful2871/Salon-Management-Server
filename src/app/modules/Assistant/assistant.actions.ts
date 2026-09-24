@@ -52,6 +52,7 @@ import { heldUntilFor, holdSlot, releaseSlot } from "./assistant.booking";
 import {
   APPOINTMENTS_PATH,
   ASSISTANT_PATH,
+  ASSISTANT_TOPUP_ENABLED,
   COPY,
   HOLD_MINUTES,
   LOCATION_PRECISION,
@@ -1128,7 +1129,10 @@ export const walletBlock = (
 /** The early warning's way in, before there is a summary to book: it opens
  *  the wallet turn, whose payment prompt is a plain top-up. */
 const topupChip = (shortfallMinor: number): QuickReply => ({
-  label: `Top up ${formatBDT(topupFor(shortfallMinor))}`,
+  // With top-ups paused the same tap only shows the wallet, so it says so.
+  label: ASSISTANT_TOPUP_ENABLED
+    ? `Top up ${formatBDT(topupFor(shortfallMinor))}`
+    : "My wallet",
   action: { type: "wallet" },
   style: "primary",
   icon: "wallet",
@@ -1143,6 +1147,10 @@ export const paymentPrompt = (
   shortfallMinor: number,
   canAutoConfirm: boolean,
 ): Block => {
+  // The gateway is down: say where the wallet is instead of offering buttons
+  // that would open a payment page that cannot finish.
+  if (!ASSISTANT_TOPUP_ENABLED) return notice("info", COPY.topupPaused);
+
   const suggestedTopupMinor =
     shortfallMinor > 0
       ? topupFor(shortfallMinor)

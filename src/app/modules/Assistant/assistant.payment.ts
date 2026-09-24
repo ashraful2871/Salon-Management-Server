@@ -19,10 +19,12 @@ import { notice, quickReplies } from "./assistant.blocks";
 import { heldUntilFor, holdSlot } from "./assistant.booking";
 import { AssistantConfirm, AssistantConfirmError } from "./assistant.confirm";
 import {
+  ASSISTANT_TOPUP_ENABLED,
   COPY,
   TOPUP_HOLD_MINUTES,
   TOPUP_REUSE_MINUTES,
 } from "./assistant.constants";
+import type { TurnOutcome } from "./assistant.log";
 import { findOwned, recordTurn, type Owner } from "./assistant.service";
 import {
   readState,
@@ -155,6 +157,11 @@ type StartTopupInput = {
 
 const startTopup = (input: StartTopupInput) =>
   serialised(input.conversationId, async () => {
+    // A card drawn before the switch was flipped can still be tapped.
+    if (!ASSISTANT_TOPUP_ENABLED) {
+      throw new ApiError(StatusCodes.SERVICE_UNAVAILABLE, COPY.topupPaused);
+    }
+
     const conversation = await openConversation(
       input.conversationId,
       input.owner,
@@ -196,7 +203,13 @@ const startTopup = (input: StartTopupInput) =>
 
         return {
           started: false as const,
-          ...(await recordTurn(conversation.id, { action, label, result: turn })),
+          ...(await recordTurn(conversation.id, {
+            action,
+            label,
+            result: turn,
+            step: state.step,
+            signedIn: true,
+          })),
         };
       }
 
@@ -245,6 +258,8 @@ const startTopup = (input: StartTopupInput) =>
         blocks: [notice("info", COPY.topupOpening)],
         state: next,
       },
+      step: state.step,
+      signedIn: true,
     });
 
     return {
@@ -264,6 +279,8 @@ type Outcome = {
   /** The payment ended (or was never ours): written to the transcript. */
   terminal: boolean;
   appointmentId?: string;
+  /** Set when the booking half was refused, for the turn log. */
+  outcome?: TurnOutcome;
 };
 
 const paidLine = (pending: PendingTopup) =>
@@ -359,6 +376,7 @@ const paid = async (
             state: withoutPending(error.turn.state),
           },
           terminal: true,
+          outcome: error.outcome,
         };
       }
       if (!(error instanceof ApiError)) throw error;
@@ -483,6 +501,9 @@ const checkPayment = (conversationId: string, owner: Owner, label?: string) =>
         label,
         result: outcome.turn,
         latencyMs: Date.now() - started,
+        step: state.step,
+        signedIn: Boolean(owner.userId || conversation.userId),
+        ...(outcome.outcome ? { outcome: outcome.outcome } : {}),
         ...(outcome.appointmentId
           ? {
               conversation: {

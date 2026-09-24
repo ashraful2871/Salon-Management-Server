@@ -49,6 +49,8 @@ export type TextTurnMeta = {
   tokensOut?: number;
   /** What the last tool was doing, for the typing indicator's label. */
   toolLabel?: string;
+  /** Every tool the model called this turn, in order, for the turn log. */
+  tools?: string[];
 };
 
 export type TextTurn = { result: TurnResult; meta: TextTurnMeta };
@@ -592,6 +594,7 @@ export const textTurn = async (
   let tokensOut = 0;
   let model: string | undefined;
   let toolLabel: string | undefined;
+  const toolsRun: string[] = [];
   let reply: string | null = null;
   const toolErrors: string[] = [];
 
@@ -635,7 +638,10 @@ export const textTurn = async (
         working = outcome.result;
         current = outcome.result.state;
       }
-      if ((allowed as string[]).includes(call.name)) toolLabel = TOOL_LABELS[call.name as ToolName];
+      if ((allowed as string[]).includes(call.name)) {
+        toolLabel = TOOL_LABELS[call.name as ToolName];
+        toolsRun.push(call.name);
+      }
       if (outcome.response.ok === false) toolErrors.push(`${call.name}: ${outcome.response.error}`);
       evidence += `\n${JSON.stringify(outcome.response)}`;
       results.push({ name: call.name, response: outcome.response });
@@ -648,6 +654,7 @@ export const textTurn = async (
     mode: model ? "ai" : "guided",
     ...(model ? { model, promptVersion: PROMPT_VERSION, tokensIn, tokensOut } : {}),
     ...(toolLabel ? { toolLabel } : {}),
+    ...(toolsRun.length ? { tools: toolsRun } : {}),
   };
 
   console.log(
