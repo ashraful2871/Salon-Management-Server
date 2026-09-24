@@ -28,6 +28,16 @@ interface Config {
     cancelUrl: string;
     ipnUrl: string;
   };
+  bkash: {
+    enabled: boolean;
+    isLive: boolean;
+    baseUrl: string;
+    username: string;
+    password: string;
+    appKey: string;
+    appSecret: string;
+    callbackUrl: string;
+  };
   email: {
     provider: string;
     from: string;
@@ -163,6 +173,29 @@ export default {
     cancelUrl:
       process.env.SSLCZ_CANCEL_URL || `${apiUrl}/api/v1/payments/sslcz/cancel`,
     ipnUrl: process.env.SSLCZ_IPN_URL || `${apiUrl}/api/v1/payments/sslcz/ipn`,
+  },
+  /**
+   * bKash Tokenized Checkout. There is no server-to-server notification: the
+   * callback is the customer's browser coming back, so `localhost` works
+   * without a tunnel. Trust comes from the execute and query calls, never from
+   * the callback's own parameters.
+   */
+  bkash: {
+    enabled: process.env.BKASH_ENABLED === "true",
+    isLive: process.env.BKASH_IS_LIVE === "true",
+    baseUrl: (
+      process.env.BKASH_BASE_URL ||
+      (process.env.BKASH_IS_LIVE === "true"
+        ? "https://tokenized.pay.bka.sh/v1.2.0-beta"
+        : "https://tokenized.sandbox.bka.sh/v1.2.0-beta")
+    ).replace(/\/+$/, ""),
+    username: process.env.BKASH_USERNAME || "",
+    password: process.env.BKASH_PASSWORD || "",
+    appKey: process.env.BKASH_APP_KEY || "",
+    appSecret: process.env.BKASH_APP_SECRET || "",
+    callbackUrl:
+      process.env.BKASH_CALLBACK_URL ||
+      `${apiUrl}/api/v1/payments/bkash/callback`,
   },
 
   /**

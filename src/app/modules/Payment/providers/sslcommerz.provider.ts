@@ -2,8 +2,8 @@ import crypto from "crypto";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../../Error/error";
 import config from "../../../../config";
-import { toTaka } from "../../../utils/money";
-import { PaymentProvider } from "./types";
+import { parseGatewayAmount, toGatewayAmount } from "./amount";
+import { GatewayLookup, PaymentProvider } from "./types";
 
 /**
  * SSLCommerz v4.
@@ -20,6 +20,9 @@ const SESSION_ENDPOINT = `${BASE}/gwprocess/v4/api.php`;
 const VALIDATION_ENDPOINT = `${BASE}/validator/api/validationserverAPI.php`;
 const TRANSACTION_QUERY_ENDPOINT = `${BASE}/validator/api/merchantTransIDvalidationAPI.php`;
 
+/** A gateway that hangs must not hold a request (or the reconcile sweep) open. */
+const TIMEOUT_MS = 30_000;
+
 const md5 = (value: string) =>
   crypto.createHash("md5").update(value).digest("hex");
 
@@ -32,18 +35,45 @@ const assertConfigured = () => {
   }
 };
 
-/** The gateway speaks taka with two decimals; we hold poisha. */
-const toGatewayAmount = (amountMinor: number) => toTaka(amountMinor).toFixed(2);
-
-const parseGatewayAmount = (amount: unknown): number => {
-  const parsed = parseFloat(String(amount));
-  return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
+type SslValidation = {
+  valid: boolean;
+  transactionId: string;
+  amountMinor: number;
+  gatewayRef: string;
+  method: string | null;
+  raw: unknown;
 };
 
-export const sslCommerzProvider: PaymentProvider = {
-  name: "SSLCOMMERZ",
+type SslTransactionQuery = SslValidation & {
+  settled: boolean;
+  status: string;
+};
 
-  async initSession({ transactionId, amountMinor, customer, purpose }) {
+/**
+ * SSLCommerz-only extras on top of the shared seam: the IPN path needs the
+ * signature check and val_id validation, which no other gateway has.
+ */
+export type SslCommerzProvider = PaymentProvider & {
+  /**
+   * Independently re-query the gateway. NEVER trust the callback body: the
+   * signature proves the message came from the gateway, this proves the money
+   * actually settled.
+   */
+  validate(valId: string): Promise<SslValidation>;
+  /** Re-query by our own transaction id, for intents that never got an IPN. */
+  validateByTransactionId(transactionId: string): Promise<SslTransactionQuery>;
+  verifySignature(payload: Record<string, string>): boolean;
+};
+
+export const sslCommerzProvider: SslCommerzProvider = {
+  name: "SSLCOMMERZ",
+  displayName: "SSLCommerz",
+
+  isEnabled: () => Boolean(config.sslcz.storeId && config.sslcz.storePasswd),
+
+  isTestMode: () => !config.sslcz.isLive,
+
+  async createSession({ transactionId, amountMinor, customer, purpose }) {
     assertConfigured();
 
     const body = new URLSearchParams({
@@ -58,7 +88,8 @@ export const sslCommerzProvider: PaymentProvider = {
       ipn_url: config.sslcz.ipnUrl,
       cus_name: customer.name,
       cus_email: customer.email,
-      cus_phone: customer.phone,
+      // SSLCommerz rejects a session without a phone number.
+      cus_phone: customer.phone ?? "01700000000",
       cus_add1: "N/A",
       cus_city: "Dhaka",
       cus_country: "Bangladesh",
@@ -73,6 +104,7 @@ export const sslCommerzProvider: PaymentProvider = {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
     const json: any = await response.json();
@@ -99,7 +131,7 @@ export const sslCommerzProvider: PaymentProvider = {
     url.searchParams.set("store_passwd", config.sslcz.storePasswd);
     url.searchParams.set("format", "json");
 
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
     const json: any = await response.json();
 
     return {
@@ -125,7 +157,7 @@ export const sslCommerzProvider: PaymentProvider = {
     url.searchParams.set("store_passwd", config.sslcz.storePasswd);
     url.searchParams.set("format", "json");
 
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
     const json: any = await response.json();
 
     // The endpoint answers with every element matching the transaction id; the
@@ -144,6 +176,44 @@ export const sslCommerzProvider: PaymentProvider = {
       status,
       raw: json,
     };
+  },
+
+  /**
+   * How SSLCommerz names the ways a payment can end, mapped onto ours.
+   * Anything unrecognised is a failure - never a silent success.
+   */
+  async lookup(intent): Promise<GatewayLookup> {
+    const result = await sslCommerzProvider.validateByTransactionId(
+      intent.transactionId,
+    );
+    const raw = result.raw as any;
+    const element = Array.isArray(raw?.element) ? raw.element[0] : undefined;
+    const status = String(result.status);
+
+    const base = {
+      amountMinor: result.amountMinor,
+      invoice: (element?.tran_id as string | undefined) ?? null,
+      gatewayRef: result.gatewayRef ?? null,
+      method: result.method,
+      raw: result.raw,
+    };
+
+    if (result.settled) return { ...base, state: "SETTLED" };
+
+    switch (status.toUpperCase()) {
+      case "PENDING":
+      case "PROCESSING":
+        return { ...base, state: "PENDING" };
+      case "CANCELLED":
+      case "CANCELED":
+        return { ...base, state: "CANCELLED" };
+      case "EXPIRED":
+      case "UNATTEMPTED":
+        // Keeps the failureReason the intent got before the seam existed.
+        return { ...base, state: "EXPIRED", reason: `Gateway reported ${status}` };
+      default:
+        return { ...base, state: "FAILED", reason: `Gateway reported ${status}` };
+    }
   },
 
   /**
@@ -183,8 +253,13 @@ export const sslCommerzProvider: PaymentProvider = {
     return a.length === b.length && crypto.timingSafeEqual(a, b);
   },
 
-  async refund(gatewayRef: string, amountMinor: number, reason: string) {
-    assertConfigured();
+  async refund({ gatewayRef, amountMinor, reason }) {
+    try {
+      assertConfigured();
+    } catch (err) {
+      // Nothing was sent, so this is a plain "no".
+      return { ok: false, message: (err as Error).message };
+    }
 
     const url = new URL(TRANSACTION_QUERY_ENDPOINT);
     url.searchParams.set("bank_tran_id", gatewayRef);
@@ -194,8 +269,23 @@ export const sslCommerzProvider: PaymentProvider = {
     url.searchParams.set("refund_remarks", reason);
     url.searchParams.set("format", "json");
 
-    const response = await fetch(url);
-    const json: any = await response.json();
+    // A timeout, a dropped connection or an unreadable answer means the refund
+    // may have been accepted, so it is `unknown`, never a plain failure.
+    let json: any;
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+      json = await response.json();
+    } catch (err) {
+      const name = (err as { name?: string } | null)?.name;
+      return {
+        ok: false,
+        unknown: true,
+        message:
+          name === "TimeoutError" || name === "AbortError"
+            ? "SSLCommerz did not answer in time"
+            : "Could not read SSLCommerz's answer",
+      };
+    }
 
     const ok = json?.APIConnect === "DONE" && json?.status === "success";
 
@@ -203,6 +293,8 @@ export const sslCommerzProvider: PaymentProvider = {
       ok,
       refundRef: json?.refund_ref_id,
       message: json?.errorReason ?? json?.status,
+      // "processing": a refund on this payment is already under way.
+      unknown: (!json || (json.APIConnect === "DONE" && json.status === "processing")) || undefined,
     };
   },
 };

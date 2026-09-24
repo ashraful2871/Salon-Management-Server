@@ -36,6 +36,7 @@ const initiateTopup = catchAsync(async (req: Request, res: Response) => {
   const result = await PaymentIntentService.initiateTopup(
     req.user!.userId,
     toMinor(req.body.amount),
+    req.body.provider ?? "SSLCOMMERZ",
   );
 
   sendResponse(res, {
