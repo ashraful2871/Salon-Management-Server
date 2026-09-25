@@ -842,6 +842,122 @@ const getMyIntents = async (userId: string, query: any) => {
   return { meta: { page: pageNum, limit: limitNum, total }, data };
 };
 
+const ADMIN_TOPUP_PROVIDERS = ["BKASH", "SSLCOMMERZ"];
+
+/** Only these keys of a `rawResponse.refunds[]` entry leave the server. */
+const pickRefund = (entry: any) => ({
+  n: Number(entry?.n) || 0,
+  amountMinor: Number(entry?.amountMinor) || 0,
+  refundRef: typeof entry?.refundRef === "string" ? entry.refundRef : null,
+  status: (["COMPLETED", "UNKNOWN", "FAILED"].includes(entry?.status)
+    ? entry.status
+    : "UNKNOWN") as RefundStatus,
+  at: typeof entry?.at === "string" ? entry.at : null,
+  message: typeof entry?.message === "string" ? entry.message : null,
+});
+
+/**
+ * Wallet top-ups for the admin refund screen. `rawResponse` is read only for
+ * its `refunds` list and never returned: it holds the payer's full bKash number.
+ */
+const listTopupsForAdmin = async (query: any) => {
+  const pageNum = Math.max(1, Math.floor(Number(query.page) || 1));
+  const limitNum = Math.min(50, Math.max(1, Math.floor(Number(query.limit) || 20)));
+
+  const where: Prisma.PaymentIntentWhereInput = {
+    purpose: IntentPurpose.WALLET_TOPUP,
+  };
+
+  const status = typeof query.status === "string" ? query.status.toUpperCase() : "";
+  if (status !== "ALL") {
+    if (status && !(status in IntentStatus)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, `Unknown status "${query.status}"`);
+    }
+    where.status = (status || IntentStatus.SUCCESS) as IntentStatus;
+  }
+
+  const provider = typeof query.provider === "string" ? query.provider.toUpperCase() : "";
+  if (provider) {
+    if (!ADMIN_TOPUP_PROVIDERS.includes(provider)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, `Unknown provider "${query.provider}"`);
+    }
+    where.provider = provider;
+  }
+
+  const searchTerm = typeof query.searchTerm === "string" ? query.searchTerm.trim() : "";
+  if (searchTerm) {
+    const contains = { contains: searchTerm, mode: "insensitive" as const };
+    where.OR = [
+      { transactionId: contains },
+      { gatewayRef: contains },
+      { user: { email: contains } },
+      { user: { name: contains } },
+    ];
+  }
+
+  const [rows, total] = await Promise.all([
+    prisma.paymentIntent.findMany({
+      where,
+      skip: (pageNum - 1) * limitNum,
+      take: limitNum,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        transactionId: true,
+        provider: true,
+        amountMinor: true,
+        status: true,
+        gatewayRef: true,
+        failureReason: true,
+        completedAt: true,
+        createdAt: true,
+        rawResponse: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            wallet: { select: { balance: true, heldBalance: true } },
+          },
+        },
+      },
+    }),
+    prisma.paymentIntent.count({ where }),
+  ]);
+
+  // Nets reversals and their `refund-undo` adjustments, as refundTopup does.
+  const sums = rows.length
+    ? await prisma.walletTransaction.groupBy({
+        by: ["referenceId"],
+        where: {
+          referenceType: REFUND_REFERENCE,
+          referenceId: { in: rows.map((r) => r.id) },
+        },
+        _sum: { amount: true },
+      })
+    : [];
+  const netById = new Map(sums.map((s) => [s.referenceId, s._sum.amount ?? 0]));
+
+  const data = rows.map(({ rawResponse, user, ...intent }) => {
+    const raw = rawResponse as { refunds?: unknown } | null;
+    const refunds = Array.isArray(raw?.refunds) ? raw.refunds.map(pickRefund) : [];
+    const refundedMinor = -(netById.get(intent.id) ?? 0);
+    const wallet = user.wallet;
+
+    return {
+      ...intent,
+      customer: { id: user.id, name: user.name, email: user.email },
+      availableMinor: wallet ? wallet.balance - wallet.heldBalance : 0,
+      refundedMinor,
+      remainingMinor: intent.amountMinor - refundedMinor,
+      refunds,
+      hasUnknownRefund: refunds.some((r) => r.status === "UNKNOWN"),
+    };
+  });
+
+  return { meta: { page: pageNum, limit: limitNum, total }, data };
+};
+
 /**
  * The customer is back from the gateway on the success url. The IPN is still
  * the authority, but waiting for it is what leaves someone watching a spinner,
@@ -914,6 +1030,7 @@ export const PaymentIntentService = {
   markIntentFailed,
   reconcilePendingIntents,
   refundTopup,
+  listTopupsForAdmin,
   getMyIntents,
   getIntentStatus,
   MIN_TOPUP_MINOR,

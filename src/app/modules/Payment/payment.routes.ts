@@ -43,6 +43,13 @@ router.post(
   PaymentController.refundTopup,
 );
 
+// Wallet top-ups with what was refunded of each, for the admin refund screen.
+router.get(
+  "/admin/intents",
+  auth(UserRole.ADMIN),
+  PaymentController.getAdminTopups,
+);
+
 // Which gateways the top-up dialog may offer. Above "/:id", which would
 // otherwise swallow it.
 router.get(

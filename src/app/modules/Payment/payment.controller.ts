@@ -213,6 +213,18 @@ const refundTopup = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const getAdminTopups = catchAsync(async (req: Request, res: Response) => {
+  const result = await PaymentIntentService.listTopupsForAdmin(req.query);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Top-ups retrieved successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
 /**
  * bKash returns the customer here (GET, occasionally POST). Not catchAsync:
  * whatever happens the browser has to land on a result page, never on a JSON
@@ -255,4 +267,5 @@ export const PaymentController = {
   getPaymentMethods,
   runReconciliation,
   refundTopup,
+  getAdminTopups,
 };

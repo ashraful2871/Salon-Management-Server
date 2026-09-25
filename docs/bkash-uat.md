@@ -40,6 +40,13 @@ ids from both sides and the `[bkash]` log lines the backend wrote.
 | U15c Third refund on the same top-up (৳1) | 2026-09-24 17:23 | same | same | n/a | **Pass.** **400** "This top-up has already been refunded in full"; no ledger row | none (still 2 refund lines) |
 | U15d Refund ৳500 while available is ৳494 | 2026-09-24 17:24 | `TOPUP-1790268753604-b680963a` (U14's 1st) | `TR0011sCqfMTt1790268762379` | `DIO90PHJ2V` | **Pass.** Admin adjust −৳10,000 (available 1,049,400 → 49,400), then the refund: **400** "Insufficient available balance", refused by `WalletService.mutate` inside the reservation, so the transaction rolled back (0 TOPUP_REFUND rows on that intent) and bKash was never called. Adjust +৳10,000 reversed it (balance back to 1,067,400) | none (refund lines before 2, after 2) |
 | U16 Mobile, 360 px (৳450) | 2026-09-24 16:56 | `TOPUP-1790269006573-c60600cc` | `TR0011PREHsSG1790269015095` | `DIO60PHJOQ` | **Pass.** Dialog, bKash page and result page usable at 360 px with no horizontal scroll (checked by the tester); ৳450 credited once, receipt email sent | `[bkash] {"op":"create","tran":"TOPUP-1790269006573-c60600cc","ms":432,"code":"0000","trxStatus":"Initiated"}`<br>`[bkash] {"op":"execute","tran":"TOPUP-1790269006573-c60600cc","ms":1627,"code":"0000","trxStatus":"Completed"}`<br>`[email] sent "Payment receipt - ৳450 added to your wallet" to <customer> via resend (01a0d459-…)` |
+| U17a Admin screen: sidebar link + search `DIO10PHJ0Z` (Phase 5.5) | 2026-09-25 14:05 | `TOPUP-1790264935044-8f4bb44d` | n/a | `DIO10PHJ0Z`<br>refunds `DIO70PHJ3N`, `DIO90PHJ3P` | **Pass.** As `admin@salon.com` the sidebar shows "Top-ups & Refunds"; the row reads ৳500, Refunded ৳500, "Fully refunded", Refund disabled ("already been refunded in full"), and expands to #1 ৳200 and #2 ৳300, both Completed, with both refund TrxIDs. API: `refundedMinor: 50000`, `remainingMinor: 0` | none (read only) |
+| U17b No `rawResponse` / `payerAccount` leaves the server | 2026-09-25 14:05 | same | n/a | same | **Pass.** Neither string appears in the `GET /payments/admin/intents` JSON (9 filter variants), the page HTML, the RSC payload or the DOM | none |
+| U17c Filters, paging, validation | 2026-09-25 14:10 | n/a | n/a | n/a | **Pass.** Default = SUCCESS (49); `ALL` 76; `provider=sslcommerz` + `status=all` (case-insensitive) 37; BKASH+CANCELLED 11; email/name search; `limit=100` clamped to 50; `status=NOPE` / `provider=PAYPAL` → **400**. UI: the Method select pushes `?provider=BKASH` and resets `page=2` to 1; search submits on Enter into `?q=` | none |
+| U17d CUSTOMER: no link, `GET /payments/admin/intents` → 403 | | | | | **Not run.** Needs a customer session; Claude does not enter passwords | |
+| U17e Refund ৳100 of a SUCCESS bKash top-up from the dialog | | | | | **Not run.** Needs the user's go; Claude's auto mode also blocked filling the refund form | |
+| U17f Over-remaining amount blocked; server refusal shown inline | | | | | **Not run.** Same block. Dialog opened on `DIO40PHJ44` (৳200) showed the summary correctly; cancelled with nothing sent | |
+| U17g 360 px, and `GET /wallet/admin/drift` unchanged | | | | | **Not run** | |
 
 ## Notes per case
 
@@ -113,6 +120,13 @@ The gateway-refused path (compensating ADJUSTMENT) and the `UNKNOWN` path were n
 the sandbox. After U15: test customer 1,067,400 poisha, held 18,000. `GET /wallet/admin/drift`
 lists one wallet, another customer's, which has been off since a 2026-09-22 top-up (`balanceAfter`
 ignores the 9,996,800 already there). Nothing in this phase touched it.
+
+**U17: admin Top-ups & Refunds screen (Phase 5.5).** The brief called these U16, but U16 was
+already Phase 4's 360 px case. Checked against the user's own `ts-node-dev` on :5000 and
+`next dev` on :3000 (both reload on save), in a browser already signed in as `admin@salon.com`.
+The list reads `rawResponse` only for `refunds[]` (n, amountMinor, refundRef, status, at,
+message) and totals refunds from the TOPUP_REFUND ledger rows, so `DIO90PHJ2V` (U15d, refused and
+undone) shows "—".
 
 ## Offline checks (4.1)
 
