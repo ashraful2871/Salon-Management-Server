@@ -781,6 +781,7 @@ const bookWalkIn = async (
 
   return prisma.$transaction(
     async (tx) => {
+      // Left unverified: a placeholder address with a random password that nobody signs in to.
       const customer = await tx.user.upsert({
         where: { email },
         update: {},

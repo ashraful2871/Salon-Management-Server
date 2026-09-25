@@ -3,21 +3,40 @@ import { AuthController } from "./auth.controller";
 import validateRequest from "../../middlewares/validateRequest";
 import { AuthValidation } from "./auth.validation";
 import auth from "../../middlewares/auth";
-import { authLimiter } from "../../middlewares/rateLimiter";
+import { authLimiter, otpLimiter } from "../../middlewares/rateLimiter";
 
 const router = express.Router();
 
+// These schemas normalise as they validate (trimmed, lower-cased email; phone
+// without spaces or dashes; trimmed code), so the handler gets the parsed body.
+const parsed = { replaceBody: true };
+
 router.post(
   "/register",
-  validateRequest(AuthValidation.registerValidation),
+  authLimiter,
+  validateRequest(AuthValidation.registerValidation, parsed),
   AuthController.register,
 );
 
 router.post(
   "/login",
   authLimiter,
-  validateRequest(AuthValidation.loginValidation),
+  validateRequest(AuthValidation.loginValidation, parsed),
   AuthController.login,
+);
+
+router.post(
+  "/verify-otp",
+  otpLimiter,
+  validateRequest(AuthValidation.verifyOtpValidation, parsed),
+  AuthController.verifyOtp,
+);
+
+router.post(
+  "/resend-otp",
+  otpLimiter,
+  validateRequest(AuthValidation.resendOtpValidation, parsed),
+  AuthController.resendOtp,
 );
 
 router.post("/logout", AuthController.logout);
@@ -40,20 +59,20 @@ router.post(
   "/change-email",
   authLimiter,
   auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN", "AGENT"),
-  validateRequest(AuthValidation.changeEmailValidation),
+  validateRequest(AuthValidation.changeEmailValidation, parsed),
   AuthController.changeEmail,
 );
 
 router.get(
   "/me",
-  auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN"),
+  auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN", "AGENT"),
   AuthController.getMyProfile,
 );
 
 router.post(
   "/forgot-password",
   authLimiter,
-  validateRequest(AuthValidation.forgotPasswordValidation),
+  validateRequest(AuthValidation.forgotPasswordValidation, parsed),
   AuthController.forgotPassword,
 );
 
@@ -74,8 +93,24 @@ router.post(
 router.post(
   "/resend-verification",
   authLimiter,
-  validateRequest(AuthValidation.resendVerificationValidation),
+  validateRequest(AuthValidation.resendVerificationValidation, parsed),
   AuthController.resendVerification,
+);
+
+router.get("/providers", AuthController.providers);
+
+router.post(
+  "/google/start",
+  authLimiter,
+  validateRequest(AuthValidation.googleStartValidation, parsed),
+  AuthController.googleStart,
+);
+
+router.post(
+  "/google/callback",
+  authLimiter,
+  validateRequest(AuthValidation.googleCallbackValidation, parsed),
+  AuthController.googleCallback,
 );
 
 export const AuthRoutes = router;

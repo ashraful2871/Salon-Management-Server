@@ -30,6 +30,9 @@ const createAgent = async (payload: any) => {
         role: "AGENT",
         phone,
         gender,
+        // An admin creates agents and vouches for the address.
+        emailVerified: true,
+        emailVerifiedAt: new Date(),
       },
     });
 

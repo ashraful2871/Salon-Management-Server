@@ -22,6 +22,8 @@ export const seedAdmin = async () => {
             name: 'System Admin',
             role: 'ADMIN',
             status: 'ACTIVE',
+            emailVerified: true,
+            emailVerifiedAt: new Date(),
           },
         });
 

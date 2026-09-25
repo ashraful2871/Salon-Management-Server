@@ -4,13 +4,27 @@ import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import ApiError from "../../Error/error";
 import { clearAuthCookies, setAuthCookies } from "../../utils/authCookies";
+import { clientIp } from "../../middlewares/rateLimiter";
 import { AuthService } from "./auth.service";
+import { completeGoogleFlow, startGoogleFlow } from "./auth.google";
+import { isGoogleEnabled } from "../../../config";
 
 const register = catchAsync(async (req: Request, res: Response) => {
-  const result = await AuthService.register(req.body);
+  const result = await AuthService.register(req.body, clientIp(req));
 
-  // Registration signs the user straight in, so it hands back the same cookie
-  // and token pair as login rather than sending them to the login screen.
+  // With REQUIRE_EMAIL_VERIFICATION on, no session until the code: no cookies.
+  if (result.status === "VERIFICATION_REQUIRED") {
+    sendResponse(res, {
+      statusCode: StatusCodes.CREATED,
+      success: true,
+      message: "Account created. Enter the 6-digit code we emailed you.",
+      data: result,
+    });
+    return;
+  }
+
+  // Otherwise registration signs the user straight in, so it hands back the
+  // same cookie and token pair as login rather than sending them to sign in.
   setAuthCookies(res, result);
 
   sendResponse(res, {
@@ -18,6 +32,7 @@ const register = catchAsync(async (req: Request, res: Response) => {
     success: true,
     message: "User registered successfully",
     data: {
+      status: result.status,
       user: result.user,
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
@@ -25,19 +40,46 @@ const register = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+// The tokens stay at the top level of `data`, where older frontends read them.
 const login = catchAsync(async (req: Request, res: Response) => {
-  const result = await AuthService.login(req.body);
+  const result = await AuthService.login(req.body, clientIp(req));
+
+  if (result.status === "SIGNED_IN") {
+    setAuthCookies(res, result);
+  }
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      result.status === "SIGNED_IN"
+        ? "User logged in successfully"
+        : "Verify your email to continue",
+    data: result,
+  });
+});
+
+const verifyOtp = catchAsync(async (req: Request, res: Response) => {
+  const result = await AuthService.verifyOtp(req.body);
 
   setAuthCookies(res, result);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: "User logged in successfully",
-    data: {
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-    },
+    message: "Email verified. Welcome to SalonKhuji!",
+    data: result,
+  });
+});
+
+const resendOtp = catchAsync(async (req: Request, res: Response) => {
+  const result = await AuthService.resendOtp(req.body, clientIp(req));
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "We sent a new code.",
+    data: result,
   });
 });
 
@@ -124,7 +166,6 @@ const logout = catchAsync(async (_req: Request, res: Response) => {
 
 const getMyProfile = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
-  console.log(userId);
 
   const result = await AuthService.getMyProfile(userId);
 
@@ -183,9 +224,51 @@ const resendVerification = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const providers = catchAsync(async (_req: Request, res: Response) => {
+  res.set("Cache-Control", "public, max-age=300");
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Sign-in providers",
+    data: { google: isGoogleEnabled() },
+  });
+});
+
+const googleStart = catchAsync(async (req: Request, res: Response) => {
+  const result = startGoogleFlow(req.body);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Continue to Google",
+    data: result,
+  });
+});
+
+const googleCallback = catchAsync(async (req: Request, res: Response) => {
+  const result = await completeGoogleFlow({ ...req.body, ip: clientIp(req) });
+
+  if (result.status === "SIGNED_IN") {
+    setAuthCookies(res, result);
+  }
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      result.status === "SIGNED_IN"
+        ? "Signed in with Google"
+        : "Verify your email to finish creating your account",
+    data: result,
+  });
+});
+
 export const AuthController = {
   register,
   login,
+  verifyOtp,
+  resendOtp,
   refreshToken,
   changePassword,
   changeEmail,
@@ -195,4 +278,7 @@ export const AuthController = {
   resetPassword,
   verifyEmail,
   resendVerification,
+  providers,
+  googleStart,
+  googleCallback,
 };

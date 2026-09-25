@@ -46,13 +46,33 @@ export const userOrClientKey = (req: Request): string =>
     : ipKeyGenerator(clientIp(req));
 
 /**
- * Guards the credential and token endpoints: login, register, forgot-password,
- * reset-password, verify-email and resend-verification. Ten attempts per IP per
- * 15 minutes is generous for a human and useless for a brute-force script.
+ * Guards the credential and token endpoints: register, login, change-email,
+ * forgot-password, reset-password, verify-email and resend-verification. Ten
+ * attempts per visitor per 15 minutes is generous for a human and useless for
+ * a brute-force script. Keyed on clientIp, so it is per visitor only once the
+ * frontend forwards X-Client-IP with INTERNAL_API_KEY.
  */
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many attempts. Try again in 15 minutes.",
+  },
+});
+
+/**
+ * The code screen: verify-otp and resend-otp. Looser than authLimiter because
+ * a typo costs a request, but each code still locks after 5 wrong attempts and
+ * issueOtp throttles sends on its own.
+ */
+export const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
   standardHeaders: true,
   legacyHeaders: false,
   message: {

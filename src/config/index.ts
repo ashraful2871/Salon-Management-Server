@@ -61,6 +61,17 @@ interface Config {
     searchLimit: number;
   };
   internalApiKey: string;
+  auth: {
+    otpSecret: string;
+    requireEmailVerification: boolean;
+    devLogOtp: boolean;
+  };
+  google: {
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    signupRequiresOtp: boolean;
+  };
 }
 //
 
@@ -113,7 +124,7 @@ const emailFrom =
     ? `Salon Management <${env("SMTP_USER")}>`
     : "Salon Management <onboarding@resend.dev>");
 
-export default {
+const config = {
   env: process.env.NODE_ENV,
   port: process.env.PORT,
   database_url: process.env.DATABASE_URL,
@@ -247,4 +258,36 @@ export default {
    * that the frontend forwards in X-Client-IP. Empty turns that off.
    */
   internalApiKey: env("INTERNAL_API_KEY"),
+
+  /**
+   * Email verification by 6-digit code. `otpSecret` is the root that the OTP
+   * HMAC, the verification ticket and the Google flow token each derive their
+   * own key from (see utils/authKeys.ts); it is never JWT_SECRET. The flag
+   * turns the check on for sign-in; off, accounts sign in as they do today.
+   * `devLogOtp` prints codes to the console and can never be on in production.
+   */
+  auth: {
+    otpSecret: env("AUTH_OTP_SECRET"),
+    requireEmailVerification: env("REQUIRE_EMAIL_VERIFICATION") === "true",
+    devLogOtp: env("AUTH_DEV_LOG_OTP") === "true" && process.env.NODE_ENV !== "production",
+  },
+
+  /**
+   * Google sign-in (Authorization Code + PKCE). The redirect lands on the
+   * frontend's route handler, which hands the code to this API, so it defaults
+   * to FRONTEND_URL. A brand-new account made through Google still proves the
+   * inbox with a code unless GOOGLE_SIGNUP_REQUIRES_OTP is "false".
+   */
+  google: {
+    clientId: env("GOOGLE_CLIENT_ID"),
+    clientSecret: env("GOOGLE_CLIENT_SECRET"),
+    redirectUri: env("GOOGLE_REDIRECT_URI") || `${frontendUrl}/api/auth/google/callback`,
+    signupRequiresOtp: env("GOOGLE_SIGNUP_REQUIRES_OTP") !== "false",
+  },
 } as Config;
+
+/** Google sign-in is offered only when all three of its settings are present. */
+export const isGoogleEnabled = () =>
+  Boolean(config.google.clientId && config.google.clientSecret && config.google.redirectUri);
+
+export default config;

@@ -97,6 +97,19 @@ enum TokenType {
   EMAIL_VERIFY
 }
 
+enum OtpPurpose {
+  EMAIL_VERIFY
+  EMAIL_CHANGE
+}
+
+enum OtpChannel {
+  EMAIL
+}
+
+enum AuthProvider {
+  GOOGLE
+}
+
 enum WalletTxType {
   TOPUP // + gateway top-up
   TOPUP_REVERSAL // - failed or charged-back top-up

@@ -19,6 +19,37 @@ import {
   isWithinCooldown,
   issueToken,
 } from '../../utils/verificationToken';
+import { normalizeEmail } from '../../utils/normalizeEmail';
+import { OtpFailure, issueOtp, otpTimings, verifyOtp as checkOtp } from '../../utils/otp';
+import { readTicket } from '../../utils/verificationTicket';
+import {
+  SignedIn,
+  assertCanSignIn,
+  issueSession,
+  sendVerificationCode,
+  startEmailVerification,
+} from './auth.session';
+
+/**
+ * A cost-12 hash of random bytes nobody kept. Login compares against it when
+ * the email is unknown or has no password, so a miss takes as long as a wrong
+ * password and the timing does not reveal which addresses are registered.
+ */
+const DUMMY_HASH = '$2b$12$yPMTE67UgnQIF31ZdHwdtuTO8JnO9dbj/OAJnyXCnlJICEhgDMiYq';
+
+/** Case-insensitive until Phase 6 lower-cases the stored emails. */
+const byEmail = (email: string) => ({ equals: email, mode: 'insensitive' as const });
+
+const signedIn = (user: {
+  id: string;
+  email: string;
+  name: string;
+  role: SignedIn['user']['role'];
+}): SignedIn => ({
+  status: 'SIGNED_IN',
+  ...issueSession(user),
+  user: { id: user.id, email: user.email, name: user.name, role: user.role },
+});
 
 /**
  * Issues an EMAIL_VERIFY token and emails the link. Never throws — a dead SMTP
@@ -44,10 +75,13 @@ const sendVerificationEmail = async (user: { id: string; email: string; name: st
   }
 };
 
-const register = async (payload: any) => {
+const register = async (payload: any, ip?: string | null) => {
+  const email = normalizeEmail(payload.email);
+
   // Check if user already exists
-  const existingUser = await prisma.user.findUnique({
-    where: { email: payload.email },
+  const existingUser = await prisma.user.findFirst({
+    where: { email: byEmail(email) },
+    select: { id: true },
   });
 
   if (existingUser) {
@@ -61,7 +95,7 @@ const register = async (payload: any) => {
   const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const user = await tx.user.create({
       data: {
-        email: payload.email,
+        email,
         password: hashedPassword,
         name: payload.name,
         phone: payload.phone,
@@ -82,6 +116,7 @@ const register = async (payload: any) => {
         dateOfBirth: true,
         address: true,
         createdAt: true,
+        sessionVersion: true,
       },
     });
 
@@ -97,48 +132,41 @@ const register = async (payload: any) => {
     return user;
   });
 
-  // Generate tokens
-  const jwtPayload = {
-    userId: result.id,
-    email: result.email,
-    role: result.role,
-  };
+  if (config.auth.requireEmailVerification) {
+    return startEmailVerification(result, ip);
+  }
 
-  const accessToken = jwtHelpers.createToken(
-    jwtPayload,
-    config.jwt.jwt_secret as string,
-    config.jwt.expires_in as string
-  );
+  const { sessionVersion: _sessionVersion, ...user } = result;
+  const { accessToken, refreshToken } = issueSession(user);
 
-  const refreshToken = jwtHelpers.createToken(
-    jwtPayload,
-    config.jwt.refresh_token_secret as string,
-    config.jwt.refresh_token_expires_in as string
-  );
-
-  await sendVerificationEmail(result);
+  await sendVerificationEmail(user);
 
   return {
-    user: result,
+    status: 'SIGNED_IN' as const,
+    user,
     accessToken,
     refreshToken,
   };
 };
 
-const login = async (payload: { email: string; password: string }) => {
-  // Check if user exists
-  const user = await prisma.user.findUnique({
-    where: {
-      email: payload.email,
-      isDeleted: false,
-    },
+/**
+ * One 401 for an unknown email, a wrong password and a password-less (Google
+ * only) account, with similar timing, so login cannot be used to find out who
+ * is registered. The account status is only revealed after the password.
+ */
+const login = async (payload: { email: string; password: string }, ip?: string | null) => {
+  const user = await prisma.user.findFirst({
+    where: { email: byEmail(payload.email), isDeleted: false },
   });
 
-  if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+  const isPasswordCorrect = user?.password
+    ? await bcrypt.compare(payload.password, user.password)
+    : (await bcrypt.compare(payload.password, DUMMY_HASH), false);
+
+  if (!user || !isPasswordCorrect) {
+    throw new ApiError(StatusCodes.UNAUTHORIZED, 'Invalid email or password');
   }
 
-  // Check if user is active
   if (user.status !== 'ACTIVE') {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
@@ -146,36 +174,109 @@ const login = async (payload: { email: string; password: string }) => {
     );
   }
 
-  // Check password
-  const isPasswordCorrect = await bcrypt.compare(payload.password, user.password);
-
-  if (!isPasswordCorrect) {
-    throw new ApiError(StatusCodes.UNAUTHORIZED, 'Invalid credentials');
+  if (config.auth.requireEmailVerification && !user.emailVerified) {
+    return startEmailVerification(user, ip);
   }
 
-  // Generate tokens
-  const jwtPayload = {
+  return signedIn(user);
+};
+
+const ticketExpired = () =>
+  ApiError.withCode(
+    StatusCodes.BAD_REQUEST,
+    'Your verification session has expired. Please sign in again.',
+    'TICKET_EXPIRED'
+  );
+
+/**
+ * The account a code-screen ticket names, still unverified. A ticket stops
+ * working once sessionVersion moves on (sign-out everywhere, email change).
+ */
+const ticketUser = async (ticket: string) => {
+  const { userId, sv } = readTicket(ticket);
+
+  const user = await prisma.user.findFirst({
+    where: { id: userId, isDeleted: false },
+  });
+
+  if (!user || user.sessionVersion !== sv) {
+    throw ticketExpired();
+  }
+
+  if (user.emailVerified) {
+    throw ApiError.withCode(
+      StatusCodes.CONFLICT,
+      'Your email is already verified. Please sign in.',
+      'ALREADY_VERIFIED'
+    );
+  }
+
+  return user;
+};
+
+const OTP_ERRORS: Record<OtpFailure, { message: string; errorCode: string }> = {
+  INVALID: { message: "That code isn't right.", errorCode: 'OTP_INVALID' },
+  EXPIRED: { message: 'This code has expired. Request a new one.', errorCode: 'OTP_EXPIRED' },
+  LOCKED: { message: 'Too many wrong attempts. Request a new code.', errorCode: 'OTP_LOCKED' },
+  NONE: { message: 'No active code. Request a new one.', errorCode: 'OTP_NONE' },
+};
+
+const verifyOtp = async (payload: { ticket: string; code: string }) => {
+  const user = await ticketUser(payload.ticket);
+
+  const r = await checkOtp({
     userId: user.id,
-    email: user.email,
-    role: user.role,
-  };
+    purpose: 'EMAIL_VERIFY',
+    code: payload.code,
+    target: user.email,
+  });
 
-  const accessToken = jwtHelpers.createToken(
-    jwtPayload,
-    config.jwt.jwt_secret as string,
-    config.jwt.expires_in as string
-  );
+  if (!r.ok) {
+    const { message, errorCode } = OTP_ERRORS[r.reason];
+    throw ApiError.withCode(
+      StatusCodes.BAD_REQUEST,
+      message,
+      errorCode,
+      r.reason === 'INVALID' ? { attemptsLeft: r.attemptsLeft } : undefined
+    );
+  }
 
-  const refreshToken = jwtHelpers.createToken(
-    jwtPayload,
-    config.jwt.refresh_token_secret as string,
-    config.jwt.refresh_token_expires_in as string
-  );
+  // Conditional, so a parallel success does not move emailVerifiedAt.
+  await prisma.user.updateMany({
+    where: { id: user.id, emailVerified: false },
+    data: { emailVerified: true, emailVerifiedAt: new Date() },
+  });
 
-  return {
-    accessToken,
-    refreshToken,
-  };
+  const fresh = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+  assertCanSignIn(fresh);
+
+  return signedIn(fresh);
+};
+
+const resendOtp = async (payload: { ticket: string }, ip?: string | null) => {
+  const user = await ticketUser(payload.ticket);
+
+  const issued = await issueOtp({
+    userId: user.id,
+    purpose: 'EMAIL_VERIFY',
+    target: user.email,
+    ip,
+  });
+
+  if (!issued.ok) {
+    throw ApiError.withCode(
+      StatusCodes.TOO_MANY_REQUESTS,
+      'Please wait before requesting another code',
+      'OTP_THROTTLED',
+      { retryAfter: issued.retryAfter }
+    );
+  }
+
+  await sendVerificationCode(user, issued.code);
+
+  const { expiresIn, resendIn } = await otpTimings(user.id, 'EMAIL_VERIFY');
+
+  return { expiresIn, resendIn };
 };
 
 /**
@@ -220,23 +321,7 @@ const refreshToken = async (token: string) => {
     );
   }
 
-  const jwtPayload = {
-    userId: user.id,
-    email: user.email,
-    role: user.role,
-  };
-
-  const accessToken = jwtHelpers.createToken(
-    jwtPayload,
-    config.jwt.jwt_secret as string,
-    config.jwt.expires_in as string
-  );
-
-  const newRefreshToken = jwtHelpers.createToken(
-    jwtPayload,
-    config.jwt.refresh_token_secret as string,
-    config.jwt.refresh_token_expires_in as string
-  );
+  const { accessToken, refreshToken: newRefreshToken } = issueSession(user);
 
   return {
     accessToken,
@@ -267,7 +352,9 @@ const changePassword = async (
   }
 
   // Check old password
-  const isPasswordCorrect = await bcrypt.compare(payload.oldPassword, user.password);
+  const isPasswordCorrect = user.password
+    ? await bcrypt.compare(payload.oldPassword, user.password)
+    : false;
 
   if (!isPasswordCorrect) {
     throw new ApiError(StatusCodes.UNAUTHORIZED, 'Old password is incorrect');
@@ -310,23 +397,25 @@ const changeEmail = async (
     throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
   }
 
-  const isPasswordCorrect = await bcrypt.compare(payload.password, user.password);
+  const isPasswordCorrect = user.password
+    ? await bcrypt.compare(payload.password, user.password)
+    : false;
 
   if (!isPasswordCorrect) {
     throw new ApiError(StatusCodes.UNAUTHORIZED, 'Current password is incorrect');
   }
 
-  const newEmail = payload.newEmail.trim();
+  const newEmail = normalizeEmail(payload.newEmail);
 
-  if (newEmail === user.email) {
+  if (newEmail === normalizeEmail(user.email)) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       'New email must be different from your current email'
     );
   }
 
-  const existingUser = await prisma.user.findUnique({
-    where: { email: newEmail },
+  const existingUser = await prisma.user.findFirst({
+    where: { email: byEmail(newEmail) },
     select: { id: true },
   });
 
@@ -348,7 +437,7 @@ const changeEmail = async (
 
     return tx.user.update({
       where: { id: userId },
-      data: { email: newEmail, emailVerified: false },
+      data: { email: newEmail, emailVerified: false, emailVerifiedAt: null },
       select: {
         id: true,
         email: true,
@@ -359,23 +448,7 @@ const changeEmail = async (
     });
   });
 
-  const jwtPayload = {
-    userId: updatedUser.id,
-    email: updatedUser.email,
-    role: updatedUser.role,
-  };
-
-  const accessToken = jwtHelpers.createToken(
-    jwtPayload,
-    config.jwt.jwt_secret as string,
-    config.jwt.expires_in as string
-  );
-
-  const refreshToken = jwtHelpers.createToken(
-    jwtPayload,
-    config.jwt.refresh_token_secret as string,
-    config.jwt.refresh_token_expires_in as string
-  );
+  const { accessToken, refreshToken } = issueSession(updatedUser);
 
   // Neither of these can throw, so a mail outage never undoes the change.
   await Promise.all([
@@ -414,6 +487,8 @@ const getMyProfile = async (userId: string) => {
       emailVerified: true,
       createdAt: true,
       updatedAt: true,
+      password: true,
+      authIdentities: { select: { provider: true } },
       admin: true,
       salonOwner: {
         include: {
@@ -432,17 +507,28 @@ const getMyProfile = async (userId: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
   }
 
-  return user;
+  // The hash is read only to say whether one exists; it never leaves here.
+  const { password, authIdentities, ...profile } = user;
+
+  return {
+    ...profile,
+    hasPassword: Boolean(password),
+    signInMethods: [
+      ...(password ? ['PASSWORD'] : []),
+      ...authIdentities.map((i) => i.provider),
+    ],
+  };
 };
 
 /**
  * Always resolves, whether or not the email belongs to an account. The
  * controller returns the same 200 either way, so this endpoint cannot be used
- * to discover which addresses are registered.
+ * to discover which addresses are registered. A Google-only account (no
+ * password) gets the link too: that is how it sets a password.
  */
 const forgotPassword = async (payload: { email: string }) => {
-  const user = await prisma.user.findUnique({
-    where: { email: payload.email },
+  const user = await prisma.user.findFirst({
+    where: { email: byEmail(payload.email) },
   });
 
   if (!user || user.isDeleted || user.status !== 'ACTIVE') {
@@ -491,9 +577,13 @@ const resetPassword = async (payload: { token: string; newPassword: string }) =>
 
   const hashedPassword = await bcrypt.hash(payload.newPassword, 12);
 
+  // The link could only have been opened from that inbox, so it proves the address.
   await prisma.user.update({
     where: { id: userId },
-    data: { password: hashedPassword },
+    data: {
+      password: hashedPassword,
+      ...(user.emailVerified ? {} : { emailVerified: true, emailVerifiedAt: new Date() }),
+    },
   });
 
   return null;
@@ -509,18 +599,27 @@ const verifyEmail = async (payload: { token: string }) => {
     );
   }
 
-  await prisma.user.update({
-    where: { id: userId },
-    data: { emailVerified: true },
+  // Conditional, so an old link opened after a code keeps the first timestamp.
+  await prisma.user.updateMany({
+    where: { id: userId, emailVerified: false },
+    data: { emailVerified: true, emailVerifiedAt: new Date() },
   });
 
   return null;
 };
 
-/** Like forgotPassword, this resolves silently for unknown or already-verified addresses. */
+/**
+ * Like forgotPassword, this resolves silently for unknown or already-verified
+ * addresses. With REQUIRE_EMAIL_VERIFICATION on, links are no longer offered
+ * (sign-in sends a code), so it sends nothing and answers the same way.
+ */
 const resendVerification = async (payload: { email: string }) => {
-  const user = await prisma.user.findUnique({
-    where: { email: payload.email },
+  if (config.auth.requireEmailVerification) {
+    return null;
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { email: byEmail(payload.email) },
     select: {
       id: true,
       email: true,
@@ -549,6 +648,8 @@ const resendVerification = async (payload: { email: string }) => {
 export const AuthService = {
   register,
   login,
+  verifyOtp,
+  resendOtp,
   refreshToken,
   changePassword,
   changeEmail,
