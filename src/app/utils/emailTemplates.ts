@@ -373,23 +373,59 @@ export const getPasswordResetTemplate = (
     "If you did not request a password reset, you can safely ignore this email — your password will not change."
   );
 
-export const getEmailVerificationTemplate = (
+/**
+ * The 6-digit code for sign-up and for a new email address. Same look as the other account emails, but with no
+ * link or button at all: the code is typed into the page that asked for it, and
+ * a mail that only ever carries a code gives a phisher nothing to imitate.
+ * Tables and inline styles only, so clients that strip <style> render it too.
+ */
+export const getOtpEmailTemplate = (
   userName: string,
-  verifyUrl: string,
-  expiresInHours: number
-) =>
-  baseLayout(
-    "Verify Your Email",
-    `
-      <p style="font-size:18px;">Hi ${userName},</p>
-      <p>Welcome to Salon Management! Please confirm your email address so we can
-      keep your account secure and send you booking updates.</p>
-      <p><strong>This link expires in ${expiresInHours} hours and can only be used once.</strong></p>
-    `,
-    "Verify Email",
-    verifyUrl,
-    "If you did not create a Salon Management account, you can safely ignore this email."
-  );
+  code: string,
+  expiresInMinutes: number
+) => `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your verification code</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:#f4f7f6;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.6;color:#333333;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f7f6;">
+      <tr>
+        <td align="center" style="padding:40px 12px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 4px 15px rgba(0,0,0,0.05);">
+            <tr>
+              <td align="center" style="background-color:#2c3e50;color:#ffffff;padding:30px 20px;">
+                <h1 style="margin:0;font-size:24px;font-weight:600;letter-spacing:1px;color:#ffffff;">Your verification code</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:40px 30px;">
+                <p style="margin:0 0 16px;font-size:18px;">Hi ${escapeHtml(userName)},</p>
+                <p style="margin:0 0 24px;">Enter this code on SalonKhuji to confirm your email address:</p>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 24px;">
+                  <tr>
+                    <td align="center" style="background-color:#f8f9fa;border:1px solid #e1e5e8;border-radius:6px;padding:16px 28px;font-family:'Courier New',Courier,monospace;font-size:34px;font-weight:700;letter-spacing:10px;color:#2c3e50;">${code}</td>
+                  </tr>
+                </table>
+                <p style="margin:0 0 12px;"><strong>It expires in ${expiresInMinutes} minutes.</strong></p>
+                <p style="margin:0;">Never share this code. SalonKhuji will never ask you for it.</p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:20px;font-size:14px;color:#888888;background-color:#fdfdfd;border-top:1px solid #eeeeee;">
+                Didn't try to sign up? You can ignore this email.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+  </html>
+`;
 
 const moneyLayout = (heading: string, body: string) => `
   <!DOCTYPE html>
@@ -562,3 +598,70 @@ export const getEmailChangedNoticeTemplate = (
      <p>From now on, sign in with the new address. Booking confirmations, receipts and password reset links will be sent there instead of here.</p>
      <p style="color:#c0392b;font-size:13px;">If you did not make this change, please contact support straight away - someone may have access to your account.</p>`
   );
+
+/**
+ * Sent when a Google account is linked to an existing, verified account. From
+ * then on that Google login opens this account, so the owner has to hear of it.
+ */
+export const getGoogleLinkedNoticeTemplate = (userName: string) =>
+  moneyLayout(
+    "Google sign-in was added",
+    `<p>Hi ${escapeHtml(userName)},</p>
+     <p>Google sign-in was added to your SalonKhuji account. You can now sign in with Google as well as with your password.</p>
+     <p style="color:#c0392b;font-size:13px;">If this wasn't you, reset your password and contact support.</p>
+     <p style="color:#7f8c8d;font-size:12px;">SalonKhuji - salon.ashrafulash.com</p>`
+  );
+
+/**
+ * The 24-hour and 2-hour booking reminders. Everything the customer needs at
+ * the counter (token, serial, what is left to pay) plus the one thing that
+ * costs money if they forget it: when free cancellation closes.
+ */
+export const getBookingReminderTemplate = (reminder: {
+  customerName: string;
+  when: "tomorrow" | "in 2 hours";
+  salonName: string;
+  salonAddress: string;
+  salonPhone: string;
+  serviceName: string;
+  date: string;
+  time: string;
+  token: string | null;
+  serialNumber: number | null;
+  dueAtSalon: string;
+  /** Sentence about the cancellation deadline, already worded. */
+  cancellation: string;
+  manageUrl: string;
+}) => {
+  const row = (label: string, value: string, mono = false) => `
+    <tr>
+      <td style="padding:10px 0;color:#7f8c8d;font-size:13px;border-bottom:1px solid #eef1f3;">${label}</td>
+      <td style="padding:10px 0;text-align:right;font-size:13px;color:#2c3e50;border-bottom:1px solid #eef1f3;${
+        mono ? "font-family:'Courier New',monospace;" : ""
+      }">${value}</td>
+    </tr>`;
+
+  return moneyLayout(
+    reminder.when === "tomorrow"
+      ? "Your appointment is tomorrow"
+      : "Your appointment is in 2 hours",
+    `<p>Hi ${escapeHtml(reminder.customerName)},</p>
+     <p>A reminder of your <strong>${escapeHtml(reminder.serviceName)}</strong> at <strong>${escapeHtml(reminder.salonName)}</strong>, ${reminder.when}.</p>
+
+     <table style="width:100%;border-collapse:collapse;border-top:1px solid #eef1f3;margin:18px 0;">
+       ${row("Date", reminder.date)}
+       ${row("Time", reminder.time)}
+       ${reminder.token ? row("Token", `<strong>${reminder.token}</strong>`, true) : ""}
+       ${reminder.serialNumber ? row("Serial", `#${reminder.serialNumber}`) : ""}
+       ${row("Pay at the salon", `<strong>${reminder.dueAtSalon}</strong>`)}
+       ${row("Address", escapeHtml(reminder.salonAddress))}
+       ${row("Phone", escapeHtml(reminder.salonPhone))}
+     </table>
+
+     <p style="font-size:14px;">${reminder.cancellation}</p>
+     <p style="text-align:center;margin:24px 0;">
+       <a href="${reminder.manageUrl}" style="display:inline-block;padding:12px 24px;background-color:#2c3e50;color:#ffffff;text-decoration:none;border-radius:4px;font-weight:600;">Manage booking</a>
+     </p>
+     <p style="color:#7f8c8d;font-size:13px;">Show your token at the counter when you arrive.</p>`
+  );
+};

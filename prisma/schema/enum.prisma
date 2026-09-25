@@ -94,7 +94,20 @@ enum SlotStatus {
 
 enum TokenType {
   PASSWORD_RESET
+  EMAIL_VERIFY // legacy, unused since auth Phase 7
+}
+
+enum OtpPurpose {
   EMAIL_VERIFY
+  EMAIL_CHANGE
+}
+
+enum OtpChannel {
+  EMAIL
+}
+
+enum AuthProvider {
+  GOOGLE
 }
 
 enum WalletTxType {
@@ -165,4 +178,18 @@ enum PayoutStatus {
   PROCESSING
   PAID
   FAILED
+}
+
+enum AssistantRole {
+  USER
+  ASSISTANT
+  TOOL
+}
+
+/// How a booking reached us. Set on the appointment at creation and never
+/// changed: it is what answers "how many bookings did the chat produce".
+enum BookingChannel {
+  WEB
+  ASSISTANT
+  WALK_IN
 }

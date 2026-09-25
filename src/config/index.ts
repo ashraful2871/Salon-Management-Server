@@ -28,6 +28,16 @@ interface Config {
     cancelUrl: string;
     ipnUrl: string;
   };
+  bkash: {
+    enabled: boolean;
+    isLive: boolean;
+    baseUrl: string;
+    username: string;
+    password: string;
+    appKey: string;
+    appSecret: string;
+    callbackUrl: string;
+  };
   email: {
     provider: string;
     from: string;
@@ -43,6 +53,24 @@ interface Config {
     userAgent: string;
     nominatimUrl: string;
     photonUrl: string;
+  };
+  ai: {
+    geminiApiKey: string;
+    embeddingModel: string;
+    chatModels: string[];
+    searchLimit: number;
+  };
+  internalApiKey: string;
+  auth: {
+    otpSecret: string;
+    requireEmailVerification: boolean;
+    devLogOtp: boolean;
+  };
+  google: {
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    signupRequiresOtp: boolean;
   };
 }
 //
@@ -96,7 +124,7 @@ const emailFrom =
     ? `Salon Management <${env("SMTP_USER")}>`
     : "Salon Management <onboarding@resend.dev>");
 
-export default {
+const config = {
   env: process.env.NODE_ENV,
   port: process.env.PORT,
   database_url: process.env.DATABASE_URL,
@@ -157,6 +185,29 @@ export default {
       process.env.SSLCZ_CANCEL_URL || `${apiUrl}/api/v1/payments/sslcz/cancel`,
     ipnUrl: process.env.SSLCZ_IPN_URL || `${apiUrl}/api/v1/payments/sslcz/ipn`,
   },
+  /**
+   * bKash Tokenized Checkout. There is no server-to-server notification: the
+   * callback is the customer's browser coming back, so `localhost` works
+   * without a tunnel. Trust comes from the execute and query calls, never from
+   * the callback's own parameters.
+   */
+  bkash: {
+    enabled: process.env.BKASH_ENABLED === "true",
+    isLive: process.env.BKASH_IS_LIVE === "true",
+    baseUrl: (
+      process.env.BKASH_BASE_URL ||
+      (process.env.BKASH_IS_LIVE === "true"
+        ? "https://tokenized.pay.bka.sh/v1.2.0-beta"
+        : "https://tokenized.sandbox.bka.sh/v1.2.0-beta")
+    ).replace(/\/+$/, ""),
+    username: process.env.BKASH_USERNAME || "",
+    password: process.env.BKASH_PASSWORD || "",
+    appKey: process.env.BKASH_APP_KEY || "",
+    appSecret: process.env.BKASH_APP_SECRET || "",
+    callbackUrl:
+      process.env.BKASH_CALLBACK_URL ||
+      `${apiUrl}/api/v1/payments/bkash/callback`,
+  },
 
   /**
    * Geocoding. Photon answers search-as-you-type; Nominatim answers reverse
@@ -176,4 +227,67 @@ export default {
       "",
     ),
   },
+
+  /**
+   * AI search (Gemini). The embedding model is one fixed id: vectors from two
+   * models are not comparable, so there is no fallback for it, and changing it
+   * re-embeds every salon (the indexer notices on its own).
+   *
+   * GEMINI_CHAT_MODEL is a comma-separated preference list. The first model
+   * that answers in time wins; one that fails is skipped for a while. The
+   * default leads with gemini-2.5-flash because this project already uses it -
+   * since 2026-09-18 Google only grants 2.5 access to projects that do, so a new
+   * project should lead with a 3.x Flash-Lite instead.
+   */
+  ai: {
+    geminiApiKey: env("GEMINI_API_KEY"),
+    embeddingModel: env("GEMINI_EMBEDDING_MODEL") || "gemini-embedding-2",
+    chatModels: (
+      env("GEMINI_CHAT_MODEL") || "gemini-2.5-flash,gemini-3.5-flash-lite"
+    )
+      .split(",")
+      .map((model) => model.trim())
+      .filter(Boolean),
+    searchLimit: Math.min(Math.max(Number(env("AI_SEARCH_LIMIT")) || 6, 1), 12),
+  },
+
+  /**
+   * Shared secret between the Next.js server and this API. Every call the
+   * frontend makes comes from its server, so without it `req.ip` is Vercel's
+   * address for every visitor. With it, a limiter may trust the visitor's IP
+   * that the frontend forwards in X-Client-IP. Empty turns that off.
+   */
+  internalApiKey: env("INTERNAL_API_KEY"),
+
+  /**
+   * Email verification by 6-digit code. `otpSecret` is the root that the OTP
+   * HMAC, the verification ticket and the Google flow token each derive their
+   * own key from (see utils/authKeys.ts); it is never JWT_SECRET. The flag
+   * turns the check on for sign-in; off, accounts sign in as they do today.
+   * `devLogOtp` prints codes to the console and can never be on in production.
+   */
+  auth: {
+    otpSecret: env("AUTH_OTP_SECRET"),
+    requireEmailVerification: env("REQUIRE_EMAIL_VERIFICATION") === "true",
+    devLogOtp: env("AUTH_DEV_LOG_OTP") === "true" && process.env.NODE_ENV !== "production",
+  },
+
+  /**
+   * Google sign-in (Authorization Code + PKCE). The redirect lands on the
+   * frontend's route handler, which hands the code to this API, so it defaults
+   * to FRONTEND_URL. A brand-new account made through Google still proves the
+   * inbox with a code unless GOOGLE_SIGNUP_REQUIRES_OTP is "false".
+   */
+  google: {
+    clientId: env("GOOGLE_CLIENT_ID"),
+    clientSecret: env("GOOGLE_CLIENT_SECRET"),
+    redirectUri: env("GOOGLE_REDIRECT_URI") || `${frontendUrl}/api/auth/google/callback`,
+    signupRequiresOtp: env("GOOGLE_SIGNUP_REQUIRES_OTP") !== "false",
+  },
 } as Config;
+
+/** Google sign-in is offered only when all three of its settings are present. */
+export const isGoogleEnabled = () =>
+  Boolean(config.google.clientId && config.google.clientSecret && config.google.redirectUri);
+
+export default config;

@@ -1,7 +1,7 @@
 model User {
   id           String     @id @default(uuid())
   email        String     @unique
-  password     String
+  password     String?
   role         UserRole   @default(CUSTOMER)
   status       UserStatus @default(ACTIVE)
   name         String
@@ -11,6 +11,9 @@ model User {
   dateOfBirth  DateTime?
   address       String?
   emailVerified Boolean   @default(false)
+  emailVerifiedAt DateTime?
+  /// Bumped to revoke every outstanding session and verification ticket.
+  sessionVersion Int      @default(0)
   isDeleted    Boolean    @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
@@ -24,6 +27,9 @@ model User {
   verificationTokens VerificationToken[]
   wallet             Wallet?
   paymentIntents     PaymentIntent[]
+  assistantConversations AssistantConversation[]
+  otpChallenges          OtpChallenge[]
+  authIdentities         AuthIdentity[]
 
   @@map("users")
 }
@@ -94,4 +100,44 @@ model Agent {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("agents")
+}
+
+/// One emailed 6-digit code. Only an HMAC of it is stored. One live row per
+/// (user, purpose): issuing a new code consumes the older ones.
+model OtpChallenge {
+  id          String     @id            // generated in app code: it is part of the HMAC
+  userId      String
+  purpose     OtpPurpose
+  channel     OtpChannel @default(EMAIL)
+  target      String                    // the exact address the code went to
+  codeHash    String
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(5)
+  expiresAt   DateTime
+  consumedAt  DateTime?                 // used, superseded or locked
+  requestIp   String?
+  createdAt   DateTime   @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, createdAt])
+  @@map("otp_challenges")
+}
+
+/// A sign-in method from an outside identity provider, keyed on the provider's
+/// stable subject id (Google "sub"), never on the email.
+model AuthIdentity {
+  id             String       @id @default(uuid())
+  userId         String
+  provider       AuthProvider
+  providerUserId String
+  email          String       // at link time, for support only
+  createdAt      DateTime     @default(now())
+  lastUsedAt     DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("auth_identities")
 }

@@ -27,11 +27,11 @@ router.get(
 router.get("/me/topups", auth(...ANY_SIGNED_IN), WalletController.getMyTopups);
 
 // Starting a top-up spends a gateway session, so it gets a tighter budget than
-// an ordinary read.
+// an ordinary read. After auth: the limiter counts per account.
 router.post(
   "/topup",
-  paymentLimiter,
   auth(...ANY_SIGNED_IN),
+  paymentLimiter,
   validateRequest(WalletValidation.topupValidation),
   WalletController.initiateTopup,
 );

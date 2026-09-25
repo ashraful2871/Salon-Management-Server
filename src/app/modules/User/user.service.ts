@@ -238,7 +238,12 @@ const updateUserStatus = async (id: string, status: string) => {
 
   const result = await prisma.user.update({
     where: { id },
-    data: { status: status as any },
+    data: {
+      status: status as any,
+      // Blocking already refuses every request, but without the bump the old
+      // tokens would work again the moment the account is reactivated.
+      ...(status !== "ACTIVE" ? { sessionVersion: { increment: 1 } } : {}),
+    },
     select: {
       id: true,
       email: true,

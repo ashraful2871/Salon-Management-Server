@@ -12,6 +12,8 @@ const globalErrorHandler = (
   let statusCode = StatusCodes.INTERNAL_SERVER_ERROR;
   let message = "Something went wrong!";
   let errorDetails = null;
+  let errorCode: string | undefined;
+  let details: Record<string, unknown> | undefined;
 
   // Handle Zod validation errors
   if (err instanceof ZodError) {
@@ -64,6 +66,8 @@ const globalErrorHandler = (
   else if (err instanceof ApiError) {
     statusCode = err.statusCode;
     message = err.message;
+    errorCode = err.errorCode;
+    details = err.details;
   }
   // Handle other errors
   else if (err instanceof Error) {
@@ -74,6 +78,8 @@ const globalErrorHandler = (
     success: false,
     message,
     errorDetails,
+    errorCode: errorCode ?? undefined,
+    details: details ?? undefined,
     stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
   });
 };

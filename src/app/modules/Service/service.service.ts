@@ -2,6 +2,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { toMinor } from "../../utils/money";
+import { scheduleReindex } from "../AI-Suggestion/ai.indexer";
 
 /**
  * The API takes and returns taka, the column holds integer poisha. Converting
@@ -47,6 +48,9 @@ const createService = async (userId: string, payload: any) => {
   const service = await prisma.service.create({
     data: withMinorPrice(payload),
   });
+
+  // What a salon offers is what AI search matches on.
+  scheduleReindex(service.salonId, "service.created");
 
   return service;
 };
@@ -180,6 +184,8 @@ const updateService = async (
     data: withMinorPrice(payload),
   });
 
+  scheduleReindex(service.salonId, "service.updated");
+
   return result;
 };
 
@@ -220,6 +226,8 @@ const deleteService = async (userId: string, serviceId: string) => {
     where: { id: serviceId },
     data: { isDeleted: true },
   });
+
+  scheduleReindex(service.salonId, "service.deleted");
 
   return null;
 };

@@ -1,49 +1,46 @@
 /**
- * The gateway seam. SSLCommerz is what we launch with, but bKash and Nagad
- * direct integrations are the obvious next step, and neither should require
- * touching the wallet or the booking flow.
+ * The gateway seam. SSLCommerz and bKash direct both sit behind it, and
+ * adding another gateway should never require touching the wallet or the
+ * booking flow.
  */
-export interface PaymentProvider {
-  readonly name: string;
+import { PaymentIntent } from "@prisma/client";
 
-  initSession(args: {
+export type ProviderName = "SSLCOMMERZ" | "BKASH";
+/** Order the frontend shows them in. */
+export const PROVIDER_NAMES: ProviderName[] = ["BKASH", "SSLCOMMERZ"];
+
+/** How a gateway says a payment ended, in our words. */
+export type GatewayState = "SETTLED" | "PENDING" | "FAILED" | "CANCELLED" | "EXPIRED";
+
+export type GatewayLookup = {
+  state: GatewayState;
+  amountMinor: number;
+  invoice: string | null;      // our transactionId as the gateway echoes it (null = gateway does not echo it)
+  gatewayRef: string | null;   // SSLCommerz bank_tran_id | bKash trxID
+  method: string | null;
+  reason?: string;             // gateway's own words, for failureReason
+  raw: unknown;                // already redacted
+};
+
+export type IntentRef = Pick<PaymentIntent, "transactionId" | "sessionKey" | "createdAt">;
+
+export interface PaymentProvider {
+  readonly name: ProviderName;
+  readonly displayName: string;
+  isEnabled(): boolean;
+  isTestMode(): boolean;
+  createSession(args: {
     transactionId: string;
     amountMinor: number;
-    customer: { name: string; email: string; phone: string };
+    customer: { name: string; email: string; phone: string | null };
     purpose: "WALLET_TOPUP" | "BOOKING";
   }): Promise<{ redirectUrl: string; sessionKey: string }>;
-
-  /**
-   * Independently re-query the gateway. NEVER trust the callback body: the
-   * signature proves the message came from the gateway, this proves the money
-   * actually settled.
-   */
-  validate(valId: string): Promise<{
-    valid: boolean;
-    transactionId: string;
-    amountMinor: number;
+  /** Independent re-query. Never trusts anything the browser carried. */
+  lookup(intent: IntentRef): Promise<GatewayLookup>;
+  refund?(args: {
+    sessionKey: string | null;
     gatewayRef: string;
-    method: string | null;
-    raw: unknown;
-  }>;
-
-  /** Re-query by our own transaction id, for intents that never got an IPN. */
-  validateByTransactionId(transactionId: string): Promise<{
-    valid: boolean;
-    settled: boolean;
-    transactionId: string;
     amountMinor: number;
-    gatewayRef: string;
-    method: string | null;
-    status: string;
-    raw: unknown;
-  }>;
-
-  verifySignature(payload: Record<string, string>): boolean;
-
-  refund(
-    gatewayRef: string,
-    amountMinor: number,
-    reason: string,
-  ): Promise<{ ok: boolean; refundRef?: string; message?: string }>;
+    reason: string;
+  }): Promise<{ ok: boolean; refundRef?: string; message?: string; unknown?: boolean }>;
 }

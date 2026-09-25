@@ -36,6 +36,13 @@ export type MutateArgs = {
    */
   idempotencyKey?: string;
   metadata?: Prisma.InputJsonValue;
+  /**
+   * The appointment whose held deposit this movement settles. The hold is only
+   * drawn down if that appointment has one in this wallet; `heldBalance` is a
+   * single pooled number, so without the check a booking with no hold would
+   * quietly spend another booking's.
+   */
+  settlesHoldOf?: string;
 };
 
 /** 40001 serialization failure, 40P01 deadlock - both mean "try again". */
@@ -160,9 +167,35 @@ const mutate = async (args: MutateArgs, tx?: Prisma.TransactionClient) => {
       throw new ApiError(StatusCodes.FORBIDDEN, "Wallet is frozen");
     }
 
+    let holdDelta = args.holdDelta ?? 0;
+    let metadata = args.metadata;
+
+    if (args.settlesHoldOf && holdDelta < 0) {
+      const hold = await db.walletTransaction.findFirst({
+        where: {
+          walletId: wallet.id,
+          type: WalletTxType.DEPOSIT_HOLD,
+          referenceId: args.settlesHoldOf,
+        },
+        select: { id: true },
+      });
+
+      // The booking says its deposit is held, but this wallet never held it -
+      // a wallet deleted or edited by hand leaves exactly that. Settle from
+      // spendable balance instead: the customer pays what they agreed to, and
+      // another booking's hold is left alone for its own checkout.
+      if (!hold) {
+        console.warn(
+          `[wallet] appointment=${args.settlesHoldOf} has no hold in wallet=${wallet.id}; settling ${args.type} from spendable balance`,
+        );
+        holdDelta = 0;
+        metadata = { holdDeltaMinor: 0, missingHold: true };
+      }
+    }
+
     // 3. Compute and check.
     const newBalance = wallet.balance + args.amount;
-    const newHeld = wallet.heldBalance + (args.holdDelta ?? 0);
+    const newHeld = wallet.heldBalance + holdDelta;
 
     if (newBalance < 0) {
       throw new ApiError(
@@ -198,7 +231,7 @@ const mutate = async (args: MutateArgs, tx?: Prisma.TransactionClient) => {
         referenceType: args.referenceType,
         referenceId: args.referenceId,
         idempotencyKey: args.idempotencyKey,
-        metadata: args.metadata,
+        metadata,
       },
     });
   };
@@ -252,6 +285,7 @@ const releaseDeposit = (
       referenceType: "APPOINTMENT",
       referenceId: appointmentId,
       idempotencyKey: `release:${appointmentId}`,
+      settlesHoldOf: appointmentId,
       metadata: { holdDeltaMinor: -amountMinor },
     },
     tx,
@@ -273,6 +307,7 @@ const applyDeposit = (
       referenceType: "APPOINTMENT",
       referenceId: appointmentId,
       idempotencyKey: `apply:${appointmentId}`,
+      settlesHoldOf: appointmentId,
     },
     tx,
   );
@@ -293,6 +328,7 @@ const forfeitDeposit = (
       referenceType: "APPOINTMENT",
       referenceId: appointmentId,
       idempotencyKey: `forfeit:${appointmentId}`,
+      settlesHoldOf: appointmentId,
     },
     tx,
   );

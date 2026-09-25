@@ -126,8 +126,8 @@ On Render — **Dashboard → your service → Environment → Add Environment V
 Save — Render redeploys automatically. The `SMTP_*` variables can stay; they are
 ignored once `EMAIL_PROVIDER=resend`.
 
-**Check `FRONTEND_URL` while you are in there.** Verification and password-reset
-emails build their links from it (`${config.frontend_url}/verify-email?token=...`),
+**Check `FRONTEND_URL` while you are in there.** Password-reset emails build
+their links from it (`${config.frontend_url}/reset-password?token=...`),
 so on Render it must be `https://salon.ashrafulash.com` — not the `localhost:3000`
 that belongs in the local `.env`. A correct email with a localhost link is still
 a broken email.
@@ -165,7 +165,7 @@ All of them go through `sendEmail`, so all of them are fixed by this change:
 
 | Trigger | Template |
 |---|---|
-| Register | `getEmailVerificationTemplate` |
+| Register / sign-in (unverified) / change email | `getOtpEmailTemplate` (6-digit code) |
 | Forgot password | `getPasswordResetTemplate` |
 | Booking confirmed | `getBookingConfirmationTemplate` |
 | Wallet top-up succeeded | `getWalletTopupInvoiceTemplate` (the payment receipt) |

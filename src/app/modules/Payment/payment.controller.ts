@@ -3,6 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import config from "../../../config";
+import { toMinor } from "../../utils/money";
 import { PaymentService } from "./payment.service";
 import { PaymentIntentService } from "./paymentIntent.service";
 
@@ -193,6 +194,66 @@ const runReconciliation = catchAsync(async (_req: Request, res: Response) => {
   });
 });
 
+const refundTopup = catchAsync(async (req: Request, res: Response) => {
+  const result = await PaymentIntentService.refundTopup(
+    req.user!.userId,
+    req.params.id,
+    req.body.amount === undefined ? undefined : toMinor(req.body.amount),
+    req.body.reason,
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      result.status === "COMPLETED"
+        ? "Refund sent"
+        : "The gateway did not confirm the refund. Check it in the merchant portal before doing anything else.",
+    data: result,
+  });
+});
+
+const getAdminTopups = catchAsync(async (req: Request, res: Response) => {
+  const result = await PaymentIntentService.listTopupsForAdmin(req.query);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Top-ups retrieved successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
+/**
+ * bKash returns the customer here (GET, occasionally POST). Not catchAsync:
+ * whatever happens the browser has to land on a result page, never on a JSON
+ * error.
+ */
+const handleBkashCallback = async (req: Request, res: Response) => {
+  const params = { ...req.query, ...(req.body ?? {}) } as Record<string, unknown>;
+  const paymentID = typeof params.paymentID === "string" ? params.paymentID : "";
+  const status = typeof params.status === "string" ? params.status : "";
+
+  try {
+    const { outcome, transactionId } =
+      await PaymentIntentService.settleBkashCallback(paymentID, status);
+    res.redirect(resultPage(outcome, transactionId));
+  } catch (error) {
+    console.error("[payment.bkash] callback failed:", (error as Error).message);
+    res.redirect(resultPage("failed"));
+  }
+};
+
+const getPaymentMethods = catchAsync(async (_req: Request, res: Response) => {
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Payment methods retrieved successfully",
+    data: PaymentIntentService.listPaymentMethods(),
+  });
+});
+
 export const PaymentController = {
   createPayment,
   getAllPayments,
@@ -202,5 +263,9 @@ export const PaymentController = {
   handleSuccessRedirect,
   handleFailRedirect,
   handleCancelRedirect,
+  handleBkashCallback,
+  getPaymentMethods,
   runReconciliation,
+  refundTopup,
+  getAdminTopups,
 };

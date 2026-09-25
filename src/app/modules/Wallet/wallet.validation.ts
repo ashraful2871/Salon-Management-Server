@@ -5,7 +5,7 @@ import { z } from "zod";
  * sends. Poisha is a storage detail - controllers convert at the boundary with
  * `toMinor`, so a fractional poisha can never get in.
  */
-const takaAmount = z
+export const takaAmount = z
   .number()
   .refine((value) => Number.isFinite(value), { message: "Amount is required" })
   .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-9, {
@@ -17,6 +17,7 @@ const topupValidation = z.object({
     amount: takaAmount.refine((value) => value > 0, {
       message: "Top-up amount must be positive",
     }),
+    provider: z.enum(["SSLCOMMERZ", "BKASH"]).optional(),
   }),
 });
 

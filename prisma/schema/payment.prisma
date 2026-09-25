@@ -38,7 +38,22 @@ model PaymentIntent {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([provider, sessionKey])
   @@index([userId, createdAt])
   @@index([status, createdAt])
   @@map("payment_intents")
+}
+
+/// Gateway access tokens that must outlive a restart. bKash blocks a merchant
+/// for an hour after more than two Grant Token calls in an hour, and the dev
+/// server restarts on every save, so memory alone is not enough.
+model GatewayToken {
+  provider         String    @id
+  accessToken      String
+  refreshToken     String?
+  expiresAt        DateTime
+  refreshExpiresAt DateTime?
+  updatedAt        DateTime  @updatedAt
+
+  @@map("gateway_tokens")
 }

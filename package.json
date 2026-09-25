@@ -11,10 +11,19 @@
     "start": "node ./dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only ./src/server.ts",
     "backfill:embeddings": "ts-node-dev --transpile-only ./src/scripts/backfillEmbeddings.ts",
+    "ai:eval": "ts-node-dev --transpile-only ./src/scripts/evalAiIntent.ts",
+    "ai:diagnose": "ts-node-dev --transpile-only ./src/scripts/diagnoseAiSearch.ts",
     "backfill:locations": "ts-node-dev --transpile-only ./src/scripts/backfillSalonLocations.ts",
     "verify:payments": "ts-node-dev --transpile-only ./src/scripts/verifyPayments.ts",
+    "auth:check": "ts-node-dev --transpile-only ./src/scripts/authReadiness.ts",
+    "auth:backfill": "ts-node-dev --transpile-only ./src/scripts/backfillAuth.ts",
+    "verify:auth": "ts-node-dev --transpile-only ./src/scripts/verifyAuth.ts",
     "test:email": "ts-node-dev --transpile-only ./src/scripts/testEmail.ts",
-    "check:email": "ts-node-dev --transpile-only ./src/scripts/checkEmailKey.ts"
+    "check:email": "ts-node-dev --transpile-only ./src/scripts/checkEmailKey.ts",
+    "assistant:check": "ts-node-dev --transpile-only ./src/scripts/assistantReadiness.ts",
+    "assistant:eval": "ts-node-dev --transpile-only ./src/scripts/evalAssistant.ts",
+    "assistant:load": "ts-node-dev --transpile-only ./src/scripts/assistantLoad.ts",
+    "assistant:access": "ts-node-dev --transpile-only ./src/scripts/assistantAccessCheck.ts"
   },
   "keywords": [
     "salon",
@@ -27,7 +36,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^2.24.0",
     "@prisma/client": "^6.16.3",
     "@types/cookie-parser": "^1.4.9",
     "@types/cors": "^2.8.19",
@@ -39,6 +48,7 @@
     "dotenv": "^17.2.2",
     "express": "4.18.3",
     "express-rate-limit": "^8.7.0",
+    "google-auth-library": "^10.9.1",
     "http-status": "^2.1.0",
     "http-status-codes": "^2.3.0",
     "jsonwebtoken": "^9.0.3",

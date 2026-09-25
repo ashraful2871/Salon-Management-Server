@@ -27,7 +27,12 @@ const optionalAuth = () => {
         },
       });
 
-      if (user && user.status === "ACTIVE") {
+      // A revoked session (see auth.ts) is treated as a visitor.
+      if (
+        user &&
+        user.status === "ACTIVE" &&
+        (verifiedUser.sv ?? 0) === user.sessionVersion
+      ) {
         req.user = { ...verifiedUser, email: user.email, role: user.role };
       }
       

@@ -16,6 +16,18 @@ import prisma from "../app/shared/prisma";
 import config from "../config";
 import { WalletService } from "../app/modules/Wallet/wallet.service";
 import { sslCommerzProvider } from "../app/modules/Payment/providers/sslcommerz.provider";
+import {
+  parseGatewayAmount,
+  toGatewayAmount,
+} from "../app/modules/Payment/providers/amount";
+import {
+  maskMsisdn,
+  verifyBkashSettlement,
+} from "../app/modules/Payment/providers/bkash/bkash.provider";
+import {
+  bkashFailureReason,
+  classifyBkashError,
+} from "../app/modules/Payment/providers/bkash/bkash.errors";
 
 let passed = 0;
 let failed = 0;
@@ -30,7 +42,59 @@ const check = (name: string, condition: boolean, detail?: string) => {
   }
 };
 
+/**
+ * bKash's pure helpers. No database, no network: these are the checks that
+ * stand in for tampering with a live intent's amount or invoice.
+ */
+const bkashOfflineChecks = () => {
+  console.log("\n0. bKash (offline)");
+
+  check('"500" parses to 50000 poisha', parseGatewayAmount("500") === 50000);
+  check('"500.00" parses to 50000 poisha', parseGatewayAmount("500.00") === 50000);
+  check('"500.5" parses to 50050 poisha', parseGatewayAmount("500.5") === 50050);
+  check('"abc" parses to 0', parseGatewayAmount("abc") === 0);
+  check('50050 poisha goes out as "500.50"', toGatewayAmount(50050) === "500.50");
+
+  const intent = { transactionId: "TXN-VERIFY-1", amountMinor: 50000 };
+  const completed = {
+    paymentID: "TR0011verify",
+    trxID: "VERIFY0001",
+    transactionStatus: "Completed",
+    amount: "500.00",
+    currency: "BDT",
+    merchantInvoiceNumber: intent.transactionId,
+  };
+  const settles = (patch: Record<string, string>) =>
+    verifyBkashSettlement(intent, { ...completed, ...patch }).ok;
+
+  check("a matching Completed payment settles", settles({}));
+  check("a wrong amount does not settle", !settles({ amount: "5000.00" }));
+  check("a wrong invoice does not settle", !settles({ merchantInvoiceNumber: "TXN-OTHER" }));
+  check("a non-BDT currency does not settle", !settles({ currency: "USD" }));
+  check("an Initiated payment does not settle", !settles({ transactionStatus: "Initiated" }));
+
+  const kinds: Array<[string, string]> = [
+    ["2023", "business"],
+    ["2062", "ambiguous"],
+    ["TIMEOUT", "ambiguous"],
+    ["2002", "integration"],
+    ["9999", "unknown"],
+  ];
+  for (const [code, kind] of kinds) {
+    const actual = classifyBkashError(code).kind;
+    check(`bKash ${code} is ${kind}`, actual === kind, `got ${actual}`);
+  }
+
+  check(
+    "a failure reason names the bKash code",
+    bkashFailureReason("2023", "Insufficient Balance").endsWith("(bKash 2023)"),
+  );
+  check("a wallet number is masked", !maskMsisdn("01770618575").includes("0618"));
+};
+
 const main = async () => {
+  bkashOfflineChecks();
+
   const email = `wallet-verify-${randomUUID()}@example.invalid`;
 
   const user = await prisma.user.create({

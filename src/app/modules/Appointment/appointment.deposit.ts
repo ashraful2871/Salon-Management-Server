@@ -386,6 +386,7 @@ export const settleLateCancelledTx = async (
         referenceType: "APPOINTMENT",
         referenceId: appointment.id,
         idempotencyKey: `late-cancel-fee:${appointment.id}`,
+        settlesHoldOf: appointment.id,
       },
       tx,
     );
@@ -402,6 +403,7 @@ export const settleLateCancelledTx = async (
         referenceType: "APPOINTMENT",
         referenceId: appointment.id,
         idempotencyKey: `late-cancel-refund:${appointment.id}`,
+        settlesHoldOf: appointment.id,
         metadata: { holdDeltaMinor: -refundMinor },
       },
       tx,

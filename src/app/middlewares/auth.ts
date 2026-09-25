@@ -36,6 +36,16 @@ const auth = (...requiredRoles: string[]) => {
         throw new ApiError(StatusCodes.NOT_FOUND, "User not found!");
       }
 
+      // A password change or reset, a block, or a Google reclaim bumps
+      // sessionVersion. Tokens from before `sv` existed count as 0, which
+      // matches every account that was never bumped.
+      if ((verifiedUser.sv ?? 0) !== user.sessionVersion) {
+        throw new ApiError(
+          StatusCodes.UNAUTHORIZED,
+          "Your session has ended. Please sign in again.",
+        );
+      }
+
       if (user.status !== "ACTIVE") {
         throw new ApiError(
           StatusCodes.FORBIDDEN,
