@@ -47,7 +47,7 @@ export const userOrClientKey = (req: Request): string =>
 
 /**
  * Guards the credential and token endpoints: register, login, change-email,
- * forgot-password, reset-password, verify-email and resend-verification. Ten
+ * forgot-password, reset-password and the Google start/callback. Ten
  * attempts per visitor per 15 minutes is generous for a human and useless for
  * a brute-force script. Keyed on clientIp, so it is per visitor only once the
  * frontend forwards X-Client-IP with INTERNAL_API_KEY.

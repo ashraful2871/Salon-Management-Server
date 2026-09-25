@@ -27,12 +27,21 @@ export type VerificationRequired = {
 
 export type AuthResult = SignedIn | VerificationRequired;
 
-/** The one place an access/refresh token pair is minted. */
-export const issueSession = (user: { id: string; email: string; role: UserRole | string }) => {
+/**
+ * The one place an access/refresh token pair is minted. Both carry the user's
+ * `sessionVersion` as `sv`, so bumping the column ends every older session.
+ */
+export const issueSession = (user: {
+  id: string;
+  email: string;
+  role: UserRole | string;
+  sessionVersion: number;
+}) => {
   const jwtPayload = {
     userId: user.id,
     email: user.email,
     role: user.role,
+    sv: user.sessionVersion,
   };
 
   const accessToken = jwtHelpers.createToken(

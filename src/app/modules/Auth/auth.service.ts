@@ -8,19 +8,24 @@ import config from '../../../config';
 import { sendEmail } from '../../utils/emailSender';
 import {
   getEmailChangedNoticeTemplate,
-  getEmailVerificationTemplate,
+  getOtpEmailTemplate,
   getPasswordResetTemplate,
 } from '../../utils/emailTemplates';
 import {
-  EMAIL_VERIFY_TTL_HOURS,
   PASSWORD_RESET_TTL_MINUTES,
-  RESEND_COOLDOWN_SECONDS,
   consumeToken,
   isWithinCooldown,
   issueToken,
 } from '../../utils/verificationToken';
 import { normalizeEmail } from '../../utils/normalizeEmail';
-import { OtpFailure, issueOtp, otpTimings, verifyOtp as checkOtp } from '../../utils/otp';
+import {
+  OTP_TTL_SECONDS,
+  OtpFailure,
+  issueOtp,
+  maskEmail,
+  otpTimings,
+  verifyOtp as checkOtp,
+} from '../../utils/otp';
 import { readTicket } from '../../utils/verificationTicket';
 import {
   SignedIn,
@@ -45,35 +50,12 @@ const signedIn = (user: {
   email: string;
   name: string;
   role: SignedIn['user']['role'];
+  sessionVersion: number;
 }): SignedIn => ({
   status: 'SIGNED_IN',
   ...issueSession(user),
   user: { id: user.id, email: user.email, name: user.name, role: user.role },
 });
-
-/**
- * Issues an EMAIL_VERIFY token and emails the link. Never throws — a dead SMTP
- * server must not fail the registration it is attached to.
- */
-const sendVerificationEmail = async (user: { id: string; email: string; name: string }) => {
-  try {
-    const rawToken = await issueToken(
-      user.id,
-      TokenType.EMAIL_VERIFY,
-      EMAIL_VERIFY_TTL_HOURS * 60 * 60 * 1000
-    );
-
-    const verifyUrl = `${config.frontend_url}/verify-email?token=${rawToken}`;
-
-    await sendEmail(
-      user.email,
-      'Verify your email - Salon Management',
-      getEmailVerificationTemplate(user.name, verifyUrl, EMAIL_VERIFY_TTL_HOURS)
-    );
-  } catch (error) {
-    console.error('Failed to send verification email:', error);
-  }
-};
 
 const register = async (payload: any, ip?: string | null) => {
   const email = normalizeEmail(payload.email);
@@ -136,10 +118,8 @@ const register = async (payload: any, ip?: string | null) => {
     return startEmailVerification(result, ip);
   }
 
+  const { accessToken, refreshToken } = issueSession(result);
   const { sessionVersion: _sessionVersion, ...user } = result;
-  const { accessToken, refreshToken } = issueSession(user);
-
-  await sendVerificationEmail(user);
 
   return {
     status: 'SIGNED_IN' as const,
@@ -314,7 +294,15 @@ const refreshToken = async (token: string) => {
     },
   });
 
-  if (!user || user.status !== 'ACTIVE') {
+  // Same revocation rule as auth(): a bumped sessionVersion ends the session.
+  // Every signed-in user is verified with the flag on, so an unverified one
+  // here holds a token from before it and must go through the code first.
+  if (
+    !user ||
+    user.status !== 'ACTIVE' ||
+    (verifiedUser.sv ?? 0) !== user.sessionVersion ||
+    (config.auth.requireEmailVerification && !user.emailVerified)
+  ) {
     throw new ApiError(
       StatusCodes.UNAUTHORIZED,
       'Your session is no longer valid. Please sign in again.'
@@ -363,28 +351,28 @@ const changePassword = async (
   // Hash new password
   const hashedPassword = await bcrypt.hash(payload.newPassword, 12);
 
-  // Update password
-  await prisma.user.update({
+  // The bump signs out every other device; this one gets a fresh pair below.
+  const updated = await prisma.user.update({
     where: { id: userId },
-    data: { password: hashedPassword },
+    data: { password: hashedPassword, sessionVersion: { increment: 1 } },
+    select: { id: true, email: true, role: true, sessionVersion: true },
   });
 
-  return null;
+  return issueSession(updated);
 };
 
 /**
- * Moves the account to a new address in one step, gated on the current
- * password so a borrowed session cannot take the account over.
+ * Step 1 of an email change: checks the request and sends a code to the new
+ * address. Nothing changes until the code comes back through
+ * `confirmEmailChange`, so a typo cannot lock anyone out.
  *
- * `User.email` is the only place the address lives - booking confirmations,
- * receipts and resets all read it from the row - so updating it is what makes
- * the new address take effect everywhere. The one copy outside the database is
- * the JWT, which is why a fresh token pair is returned: without it the frontend
- * would keep showing the old address until the next refresh.
+ * The current password is required when the account has one, so a borrowed
+ * session cannot move the account; a Google-only account has none to give.
  */
 const changeEmail = async (
   userId: string,
-  payload: { newEmail: string; password: string }
+  payload: { newEmail: string; password?: string },
+  ip?: string | null
 ) => {
   const user = await prisma.user.findUnique({
     where: {
@@ -397,12 +385,14 @@ const changeEmail = async (
     throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
   }
 
-  const isPasswordCorrect = user.password
-    ? await bcrypt.compare(payload.password, user.password)
-    : false;
+  if (user.password) {
+    const isPasswordCorrect = payload.password
+      ? await bcrypt.compare(payload.password, user.password)
+      : false;
 
-  if (!isPasswordCorrect) {
-    throw new ApiError(StatusCodes.UNAUTHORIZED, 'Current password is incorrect');
+    if (!isPasswordCorrect) {
+      throw new ApiError(StatusCodes.UNAUTHORIZED, 'Current password is incorrect');
+    }
   }
 
   const newEmail = normalizeEmail(payload.newEmail);
@@ -423,48 +413,107 @@ const changeEmail = async (
     throw new ApiError(StatusCodes.CONFLICT, 'This email is already in use by another account');
   }
 
-  const oldEmail = user.email;
+  const issued = await issueOtp({ userId, purpose: 'EMAIL_CHANGE', target: newEmail, ip });
 
-  // A race with a registration for the same address still ends in a 409: the
-  // unique index raises P2002, which the global error handler maps.
-  const updatedUser = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    // Links already sent to the old inbox must stop working. A verify link from
-    // there would otherwise mark the new, unconfirmed address as verified.
-    await tx.verificationToken.updateMany({
-      where: { userId, usedAt: null },
-      data: { usedAt: new Date() },
-    });
+  if (!issued.ok) {
+    throw ApiError.withCode(
+      StatusCodes.TOO_MANY_REQUESTS,
+      'Please wait before requesting another code',
+      'OTP_THROTTLED',
+      { retryAfter: issued.retryAfter }
+    );
+  }
 
-    return tx.user.update({
-      where: { id: userId },
-      data: { email: newEmail, emailVerified: false, emailVerifiedAt: null },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        emailVerified: true,
-      },
-    });
+  await sendEmail(
+    newEmail,
+    `${issued.code} is your SalonKhuji code to confirm your new email`,
+    getOtpEmailTemplate(user.name, issued.code, OTP_TTL_SECONDS / 60)
+  );
+
+  const { expiresIn, resendIn } = await otpTimings(userId, 'EMAIL_CHANGE');
+
+  return { maskedEmail: maskEmail(newEmail), expiresIn, resendIn };
+};
+
+/**
+ * Step 2: the code proves the new inbox, so the address switches already
+ * verified. `User.email` is the only place the address lives, and the JWT is
+ * the only copy outside the database, hence the fresh token pair.
+ */
+const confirmEmailChange = async (userId: string, payload: { code: string }) => {
+  const r = await checkOtp({ userId, purpose: 'EMAIL_CHANGE', code: payload.code });
+
+  if (!r.ok) {
+    const { message, errorCode } = OTP_ERRORS[r.reason];
+    throw ApiError.withCode(
+      StatusCodes.BAD_REQUEST,
+      message,
+      errorCode,
+      r.reason === 'INVALID' ? { attemptsLeft: r.attemptsLeft } : undefined
+    );
+  }
+
+  const inUse = () =>
+    new ApiError(StatusCodes.CONFLICT, 'This email is already in use by another account');
+
+  const old = await prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { email: true },
   });
 
-  const { accessToken, refreshToken } = issueSession(updatedUser);
+  let updatedUser;
+  try {
+    updatedUser = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // Someone may have registered the address since the code was sent.
+      const taken = await tx.user.findFirst({
+        where: { email: byEmail(r.target), NOT: { id: userId } },
+        select: { id: true },
+      });
+      if (taken) throw inUse();
 
-  // Neither of these can throw, so a mail outage never undoes the change.
-  await Promise.all([
-    sendVerificationEmail(updatedUser),
-    sendEmail(
-      oldEmail,
-      'Your email was changed - Salon Management',
-      getEmailChangedNoticeTemplate(updatedUser.name, updatedUser.email)
-    ),
-  ]);
+      // Reset links sent to the old inbox must stop working.
+      await tx.verificationToken.updateMany({
+        where: { userId, usedAt: null },
+        data: { usedAt: new Date() },
+      });
 
-  return {
-    user: updatedUser,
-    accessToken,
-    refreshToken,
-  };
+      // The bump signs out every other device; this one gets a fresh pair below.
+      return tx.user.update({
+        where: { id: userId },
+        data: {
+          email: r.target,
+          emailVerified: true,
+          emailVerifiedAt: new Date(),
+          sessionVersion: { increment: 1 },
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          emailVerified: true,
+          sessionVersion: true,
+        },
+      });
+    });
+  } catch (e) {
+    // A registration raced the check above and won the unique index.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      throw inUse();
+    }
+    throw e;
+  }
+
+  // Cannot throw, so a mail outage never undoes the change.
+  await sendEmail(
+    old.email,
+    'Your email was changed - Salon Management',
+    getEmailChangedNoticeTemplate(updatedUser.name, updatedUser.email)
+  );
+
+  const { sessionVersion: _sessionVersion, ...user } = updatedUser;
+
+  return { user, ...issueSession(updatedUser) };
 };
 
 const getMyProfile = async (userId: string) => {
@@ -577,70 +626,16 @@ const resetPassword = async (payload: { token: string; newPassword: string }) =>
 
   const hashedPassword = await bcrypt.hash(payload.newPassword, 12);
 
-  // The link could only have been opened from that inbox, so it proves the address.
+  // The link could only have been opened from that inbox, so it proves the
+  // address. The bump ends every session, including whoever knew the old one.
   await prisma.user.update({
     where: { id: userId },
     data: {
       password: hashedPassword,
+      sessionVersion: { increment: 1 },
       ...(user.emailVerified ? {} : { emailVerified: true, emailVerifiedAt: new Date() }),
     },
   });
-
-  return null;
-};
-
-const verifyEmail = async (payload: { token: string }) => {
-  const userId = await consumeToken(payload.token, TokenType.EMAIL_VERIFY);
-
-  if (!userId) {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      'This verification link is invalid or has expired. Please request a new one.'
-    );
-  }
-
-  // Conditional, so an old link opened after a code keeps the first timestamp.
-  await prisma.user.updateMany({
-    where: { id: userId, emailVerified: false },
-    data: { emailVerified: true, emailVerifiedAt: new Date() },
-  });
-
-  return null;
-};
-
-/**
- * Like forgotPassword, this resolves silently for unknown or already-verified
- * addresses. With REQUIRE_EMAIL_VERIFICATION on, links are no longer offered
- * (sign-in sends a code), so it sends nothing and answers the same way.
- */
-const resendVerification = async (payload: { email: string }) => {
-  if (config.auth.requireEmailVerification) {
-    return null;
-  }
-
-  const user = await prisma.user.findFirst({
-    where: { email: byEmail(payload.email) },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      status: true,
-      isDeleted: true,
-      emailVerified: true,
-    },
-  });
-
-  if (!user || user.isDeleted || user.status !== 'ACTIVE' || user.emailVerified) {
-    return null;
-  }
-
-  // Drop the request rather than answering 429: a distinct status here would
-  // tell an attacker the address exists and is unverified.
-  if (await isWithinCooldown(user.id, TokenType.EMAIL_VERIFY, RESEND_COOLDOWN_SECONDS)) {
-    return null;
-  }
-
-  await sendVerificationEmail(user);
 
   return null;
 };
@@ -653,9 +648,8 @@ export const AuthService = {
   refreshToken,
   changePassword,
   changeEmail,
+  confirmEmailChange,
   getMyProfile,
   forgotPassword,
   resetPassword,
-  verifyEmail,
-  resendVerification,
 };

@@ -25,8 +25,9 @@ const FLOW_AUDIENCE = 'salon:google-flow';
 const client = () =>
   new OAuth2Client(config.google.clientId, config.google.clientSecret, config.google.redirectUri);
 const b64url = (b: Buffer) => b.toString('base64url');
+// `\` and whitespace too: browsers read `/\evil.com` as `//evil.com`.
 const safeRedirect = (r?: string | null) =>
-  r && r.startsWith('/') && !r.startsWith('//') ? r : undefined;
+  r && r.startsWith('/') && !r.startsWith('//') && !/[\\\s]/.test(r) ? r : undefined;
 
 const sameString = (a: string, b: string) => {
   const x = Buffer.from(a);

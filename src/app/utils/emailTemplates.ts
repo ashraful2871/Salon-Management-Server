@@ -373,26 +373,8 @@ export const getPasswordResetTemplate = (
     "If you did not request a password reset, you can safely ignore this email — your password will not change."
   );
 
-export const getEmailVerificationTemplate = (
-  userName: string,
-  verifyUrl: string,
-  expiresInHours: number
-) =>
-  baseLayout(
-    "Verify Your Email",
-    `
-      <p style="font-size:18px;">Hi ${userName},</p>
-      <p>Welcome to Salon Management! Please confirm your email address so we can
-      keep your account secure and send you booking updates.</p>
-      <p><strong>This link expires in ${expiresInHours} hours and can only be used once.</strong></p>
-    `,
-    "Verify Email",
-    verifyUrl,
-    "If you did not create a Salon Management account, you can safely ignore this email."
-  );
-
 /**
- * The 6-digit sign-up code. Same look as the verify-link email, but with no
+ * The 6-digit code for sign-up and for a new email address. Same look as the other account emails, but with no
  * link or button at all: the code is typed into the page that asked for it, and
  * a mail that only ever carries a code gives a phisher nothing to imitate.
  * Tables and inline styles only, so clients that strip <style> render it too.

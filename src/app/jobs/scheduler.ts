@@ -5,6 +5,7 @@ import { WalletService } from "../modules/Wallet/wallet.service";
 import { syncSearchIndex } from "../modules/AI-Suggestion/ai.indexer";
 import { sendBookingReminders } from "../modules/Assistant/assistant.reminders";
 import { purgeExpiredConversations } from "../modules/Assistant/assistant.service";
+import prisma from "../shared/prisma";
 
 /**
  * Periodic money work, plus the AI search index repair.
@@ -29,6 +30,8 @@ const AI_INDEX_INTERVAL_MS = 10 * MINUTE;
 // of risk — each reminder is claimed by its stamp, so it still sends once.
 const REMINDER_INTERVAL_MS = 15 * MINUTE;
 const RETENTION_INTERVAL_MS = 24 * HOUR;
+const AUTH_CLEANUP_INTERVAL_MS = 24 * HOUR;
+const AUTH_CODE_KEEP_MS = 7 * 24 * HOUR;
 
 /** A job that throws must never take the server down with it. */
 const safely = async (name: string, run: () => Promise<unknown>) => {
@@ -55,6 +58,23 @@ const every = (
 const purgeConversations = async () => {
   const deleted = await purgeExpiredConversations();
   console.log(`[jobs] assistant.retention: deleted ${deleted} expired conversation(s)`);
+};
+
+/** Sign-up/email-change codes and reset links are dead long before a week;
+ *  the rows only matter to the throttle, which looks back a day. Counts only. */
+const purgeAuthCodes = async () => {
+  const cutoff = new Date(Date.now() - AUTH_CODE_KEEP_MS);
+
+  const [otps, tokens] = await Promise.all([
+    prisma.otpChallenge.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+    prisma.verificationToken.deleteMany({
+      where: { OR: [{ usedAt: { lt: cutoff } }, { expiresAt: { lt: cutoff } }] },
+    }),
+  ]);
+
+  console.log(
+    `[jobs] auth.cleanup: deleted ${otps.count} code(s) and ${tokens.count} link token(s)`,
+  );
 };
 
 const auditWallets = async () => {
@@ -102,6 +122,8 @@ export const startBackgroundJobs = () => {
 
   every(RETENTION_INTERVAL_MS, "assistant.retention", purgeConversations);
 
+  every(AUTH_CLEANUP_INTERVAL_MS, "auth.cleanup", purgeAuthCodes);
+
   // Catch anything that got stuck while the process was down, but not in the
   // first seconds of boot - a restart loop should not hammer the gateway.
   const warmup = setTimeout(() => {
@@ -122,6 +144,7 @@ export const startBackgroundJobs = () => {
   // than daily — without a run after boot, the purge might never happen.
   const retentionWarmup = setTimeout(() => {
     void safely("assistant.retention", purgeConversations);
+    void safely("auth.cleanup", purgeAuthCodes);
   }, 5 * MINUTE);
   retentionWarmup.unref?.();
 

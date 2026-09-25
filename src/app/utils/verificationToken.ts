@@ -3,7 +3,6 @@ import { TokenType } from "@prisma/client";
 import prisma from "../shared/prisma";
 
 export const PASSWORD_RESET_TTL_MINUTES = 15;
-export const EMAIL_VERIFY_TTL_HOURS = 24;
 export const RESEND_COOLDOWN_SECONDS = 60;
 
 /** The emailed value is random; only its sha256 is ever persisted. */

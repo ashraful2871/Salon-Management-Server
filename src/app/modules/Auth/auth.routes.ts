@@ -63,6 +63,14 @@ router.post(
   AuthController.changeEmail,
 );
 
+router.post(
+  "/change-email/confirm",
+  otpLimiter,
+  auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN", "AGENT"),
+  validateRequest(AuthValidation.confirmEmailChangeValidation, parsed),
+  AuthController.confirmEmailChange,
+);
+
 router.get(
   "/me",
   auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN", "AGENT"),
@@ -81,20 +89,6 @@ router.post(
   authLimiter,
   validateRequest(AuthValidation.resetPasswordValidation),
   AuthController.resetPassword,
-);
-
-router.post(
-  "/verify-email",
-  authLimiter,
-  validateRequest(AuthValidation.verifyEmailValidation),
-  AuthController.verifyEmail,
-);
-
-router.post(
-  "/resend-verification",
-  authLimiter,
-  validateRequest(AuthValidation.resendVerificationValidation, parsed),
-  AuthController.resendVerification,
 );
 
 router.get("/providers", AuthController.providers);

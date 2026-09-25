@@ -78,7 +78,15 @@ const changePasswordValidation = z.object({
 const changeEmailValidation = z.object({
   body: z.object({
     newEmail: email("New email is required"),
-    password: z.string().nonempty({ message: "Current password is required" }),
+    // Required by the service when the account has a password; Google-only
+    // accounts have none to give.
+    password: z.string().optional(),
+  }),
+});
+
+const confirmEmailChangeValidation = z.object({
+  body: z.object({
+    code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code"),
   }),
 });
 
@@ -109,18 +117,6 @@ const resetPasswordValidation = z.object({
   }),
 });
 
-const verifyEmailValidation = z.object({
-  body: z.object({
-    token: z.string().nonempty({ message: 'Verification token is required' }),
-  }),
-});
-
-const resendVerificationValidation = z.object({
-  body: z.object({
-    email: email(),
-  }),
-});
-
 const googleStartValidation = z.object({
   body: z.object({
     redirect: z.string().max(300).optional(),
@@ -142,11 +138,10 @@ export const AuthValidation = {
   resendOtpValidation,
   changePasswordValidation,
   changeEmailValidation,
+  confirmEmailChangeValidation,
   refreshTokenValidation,
   forgotPasswordValidation,
   resetPasswordValidation,
-  verifyEmailValidation,
-  resendVerificationValidation,
   googleStartValidation,
   googleCallbackValidation,
 };

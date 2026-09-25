@@ -94,7 +94,7 @@ enum SlotStatus {
 
 enum TokenType {
   PASSWORD_RESET
-  EMAIL_VERIFY
+  EMAIL_VERIFY // legacy, unused since auth Phase 7
 }
 
 enum OtpPurpose {

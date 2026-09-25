@@ -119,35 +119,46 @@ const refreshToken = catchAsync(async (req: Request, res: Response) => {
 const changePassword = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
 
-  await AuthService.changePassword(userId, req.body);
+  const result = await AuthService.changePassword(userId, req.body);
+
+  // Every other session was just ended; this one continues on a fresh pair.
+  setAuthCookies(res, result);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: "Password changed successfully",
-    data: null,
+    message: "Password changed. Other devices have been signed out.",
+    data: result,
   });
 });
 
 const changeEmail = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
 
-  const result = await AuthService.changeEmail(userId, req.body);
+  const result = await AuthService.changeEmail(userId, req.body, clientIp(req));
 
-  // The old tokens still name the old address, so the caller is handed a new
-  // pair the same way login does.
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "We sent a code to your new email",
+    data: result,
+  });
+});
+
+const confirmEmailChange = catchAsync(async (req: Request, res: Response) => {
+  const userId = req.user?.userId;
+
+  const result = await AuthService.confirmEmailChange(userId, req.body);
+
+  // The old tokens name the old address and an older sessionVersion, so the
+  // caller is handed a new pair the same way login does.
   setAuthCookies(res, result);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message:
-      "Email changed successfully. We sent a verification link to your new address.",
-    data: {
-      user: result.user,
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-    },
+    message: "Your email has been changed",
+    data: result,
   });
 });
 
@@ -201,29 +212,6 @@ const resetPassword = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
-const verifyEmail = catchAsync(async (req: Request, res: Response) => {
-  await AuthService.verifyEmail(req.body);
-
-  sendResponse(res, {
-    statusCode: StatusCodes.OK,
-    success: true,
-    message: 'Email verified successfully',
-    data: null,
-  });
-});
-
-const resendVerification = catchAsync(async (req: Request, res: Response) => {
-  await AuthService.resendVerification(req.body);
-
-  sendResponse(res, {
-    statusCode: StatusCodes.OK,
-    success: true,
-    message:
-      'If that account exists and is not yet verified, a new verification link has been sent.',
-    data: null,
-  });
-});
-
 const providers = catchAsync(async (_req: Request, res: Response) => {
   res.set("Cache-Control", "public, max-age=300");
 
@@ -272,12 +260,11 @@ export const AuthController = {
   refreshToken,
   changePassword,
   changeEmail,
+  confirmEmailChange,
   logout,
   getMyProfile,
   forgotPassword,
   resetPassword,
-  verifyEmail,
-  resendVerification,
   providers,
   googleStart,
   googleCallback,
