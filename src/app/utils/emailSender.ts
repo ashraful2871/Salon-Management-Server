@@ -95,6 +95,15 @@ const activeProvider = () => {
 export const getEmailProviderName = () => activeProvider()?.name ?? "none";
 
 /**
+ * Domains reserved by RFC 2606 / 6761 that can never receive mail. The seeded
+ * test customers and staff (`npm run seed:dhaka`) live on example.com, so a
+ * reminder or a cancellation for one of their bookings is dropped here rather
+ * than spending provider quota on a guaranteed bounce.
+ */
+const UNDELIVERABLE_DOMAIN =
+  /@(?:[^@\s]+\.)?(?:example\.(?:com|net|org)|example|test|invalid|localhost)$/i;
+
+/**
  * Sends one email and never throws: a receipt that cannot be delivered must not
  * roll back the payment that earned it. Failures are logged loudly and returned,
  * so a caller that does care can check.
@@ -104,6 +113,11 @@ export const sendEmail = async (
   subject: string,
   html: string,
 ): Promise<EmailResult> => {
+  if (UNDELIVERABLE_DOMAIN.test(to.trim())) {
+    console.log(`[email] skipped "${subject}" to ${to}: reserved test domain`);
+    return { ok: false, provider: "none", error: "Reserved test domain, not sent" };
+  }
+
   const provider = activeProvider();
 
   if (!provider) {

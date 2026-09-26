@@ -84,7 +84,12 @@ export const findSalonMarkers = async (
   minLat: number,
   maxLng: number,
   maxLat: number,
+  // The nearby map shows only what the list next to it can show.
+  near?: { lat: number; lng: number; radiusKm: number },
 ) => {
+  const withinReach = near
+    ? Prisma.sql`AND ST_DWithin(${SALON_GEOG}, ST_SetSRID(ST_MakePoint(${near.lng}::float8, ${near.lat}::float8), 4326)::geography, ${near.radiusKm * 1000}::float8)`
+    : Prisma.empty;
   const rows = await prisma.$queryRaw<any[]>`
     SELECT s.id, s.name, s.latitude, s.longitude, s."locationAccuracy", s.rating, s."totalReviews",
            s.images[1] AS image,
@@ -94,6 +99,7 @@ export const findSalonMarkers = async (
     WHERE s."isDeleted" = false AND s.status = 'ACTIVE'
       AND s.latitude  BETWEEN ${minLat}::float8 AND ${maxLat}::float8
       AND s.longitude BETWEEN ${minLng}::float8 AND ${maxLng}::float8
+      ${withinReach}
     ORDER BY s.rating DESC, s."totalReviews" DESC, s.id
     LIMIT 201`;
   return { markers: rows.slice(0, 200), truncated: rows.length > 200 };

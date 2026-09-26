@@ -51,12 +51,10 @@ export const DAILY_CONVERSATIONS = { signedIn: 30, guest: 10 } as const;
 /** Salon cards per carousel page. */
 export const SALON_CARDS = 5;
 
-/** Matches salonListQuery's own default, so "nearby" means the same thing
- *  in the chat as it does on the salons page. */
-export const NEARBY_RADIUS_KM = 5;
-
-/** Retried once when 5 km finds nothing, rather than answering "none". */
-export const NEARBY_RADIUS_WIDE_KM = 15;
+/** NEARBY_MAX_RADIUS_KM, so "nearby" means the same thing in the chat as it
+ *  does on the salons page and the map. Never widened: a salon further away
+ *  is not near. */
+export const NEARBY_RADIUS_KM = 1;
 
 /** Coordinates are rounded to this many decimals (~110 m), matching the
  *  precision the frontend already stores in its `sm_loc` cookie. */
@@ -116,7 +114,7 @@ export const COPY = {
   locationReason:
     "So I can show the closest salons and real travel distances.",
   noneNearby:
-    "Nothing within 5 km, so here is a little wider.",
+    "There is no salon within 1 km of there yet. Try another spot, or search by area.",
   nothingFound:
     "I could not find a salon there. Try another area, or start over.",
   salonGone:

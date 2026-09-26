@@ -9,6 +9,15 @@ export const BD_BOUNDS = {
   maxLng: 92.8,
 } as const;
 
+/**
+ * How far "near me" reaches, in the salon list, on the map and in the chat.
+ * Nobody crosses Dhaka for a haircut, so a salon further than this is not
+ * shown as nearby at all. The schema below still accepts up to 50 km because
+ * the assistant's search-by-name uses a wide radius only to order its matches
+ * by distance; the public endpoints clamp to this.
+ */
+export const NEARBY_MAX_RADIUS_KM = 1;
+
 const latitude = z
   .number()
   .min(BD_BOUNDS.minLat, "Location must be inside Bangladesh")
@@ -107,7 +116,7 @@ const salonListQuery = z
       .min(BD_BOUNDS.minLng)
       .max(BD_BOUNDS.maxLng)
       .optional(),
-    radiusKm: z.coerce.number().min(0.5).max(50).default(5),
+    radiusKm: z.coerce.number().min(0.5).max(50).default(NEARBY_MAX_RADIUS_KM),
     sort: z.enum(["distance", "rating", "newest"]).optional(),
   })
   .refine((q) => (q.lat === undefined) === (q.lng === undefined), {
@@ -127,6 +136,10 @@ const salonMapQuery = z
       .string()
       .transform((s) => s.split(",").map(Number))
       .pipe(z.tuple([z.number(), z.number(), z.number(), z.number()])),
+    // Optional: only pins within radiusKm of this point (the nearby map).
+    lat: z.coerce.number().min(BD_BOUNDS.minLat).max(BD_BOUNDS.maxLat).optional(),
+    lng: z.coerce.number().min(BD_BOUNDS.minLng).max(BD_BOUNDS.maxLng).optional(),
+    radiusKm: z.coerce.number().min(0.5).max(50).default(NEARBY_MAX_RADIUS_KM),
   })
   .refine(
     ({ bbox: [minLng, minLat, maxLng, maxLat] }) =>
@@ -138,7 +151,11 @@ const salonMapQuery = z
       message: "bbox must be minLng,minLat,maxLng,maxLat and at most 1.5° wide",
       path: ["bbox"],
     },
-  );
+  )
+  .refine((q) => (q.lat === undefined) === (q.lng === undefined), {
+    message: "lat and lng must be sent together",
+    path: ["lat"],
+  });
 
 export const SalonValidation = {
   createSalonValidation,
