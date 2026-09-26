@@ -34,12 +34,17 @@ export type AuthResult = SignedIn | VerificationRequired;
 export const issueSession = (user: {
   id: string;
   email: string;
+  name?: string | null;
   role: UserRole | string;
   sessionVersion: number;
 }) => {
+  // `name` is display-only: the frontend verifies the token locally and shows
+  // it in the header. It is a snapshot, so a rename shows after the next
+  // refresh; nothing authorizes on it.
   const jwtPayload = {
     userId: user.id,
     email: user.email,
+    ...(user.name ? { name: user.name } : {}),
     role: user.role,
     sv: user.sessionVersion,
   };

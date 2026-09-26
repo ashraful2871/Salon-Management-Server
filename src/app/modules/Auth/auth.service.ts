@@ -355,7 +355,7 @@ const changePassword = async (
   const updated = await prisma.user.update({
     where: { id: userId },
     data: { password: hashedPassword, sessionVersion: { increment: 1 } },
-    select: { id: true, email: true, role: true, sessionVersion: true },
+    select: { id: true, email: true, name: true, role: true, sessionVersion: true },
   });
 
   return issueSession(updated);

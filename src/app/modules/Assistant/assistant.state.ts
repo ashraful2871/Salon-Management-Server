@@ -116,6 +116,9 @@ export const assistantStateSchema = z.object({
       /** The gateway page, so a double tap re-opens it instead of starting a
        *  second payment. */
       redirectUrl: z.string().max(2048).optional(),
+      /** Absent on states written before the chat offered a choice, which
+       *  were all SSLCommerz. */
+      provider: z.enum(["SSLCOMMERZ", "BKASH"]).optional(),
       startedAt: z.string().max(40),
     })
     .optional(),

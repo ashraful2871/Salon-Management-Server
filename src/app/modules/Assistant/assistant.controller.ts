@@ -213,6 +213,7 @@ const topup = turnHandler("start_topup", async (req: Request, res: Response) => 
     amountMinor: req.body.amountMinor,
     autoConfirm: req.body.autoConfirm ?? false,
     label: req.body.label,
+    provider: req.body.provider,
   });
 
   sendResponse(res, {

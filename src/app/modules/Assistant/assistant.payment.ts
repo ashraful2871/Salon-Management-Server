@@ -5,6 +5,7 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
 import { PaymentIntentService } from "../Payment/paymentIntent.service";
+import type { ProviderName } from "../Payment/providers/types";
 import {
   promptFor,
   readWallet,
@@ -153,6 +154,7 @@ type StartTopupInput = {
   amountMinor: number;
   autoConfirm: boolean;
   label?: string;
+  provider?: ProviderName;
 };
 
 const startTopup = (input: StartTopupInput) =>
@@ -172,10 +174,12 @@ const startTopup = (input: StartTopupInput) =>
       conversationId: conversation.id,
     };
 
+    const provider: ProviderName = input.provider ?? "SSLCOMMERZ";
     const action = {
       type: "start_topup",
       amountMinor: input.amountMinor,
       autoConfirm: input.autoConfirm,
+      provider,
     };
     const label =
       input.label ??
@@ -218,11 +222,13 @@ const startTopup = (input: StartTopupInput) =>
     }
 
     // A second tap on the same payment re-opens its page: one intent, not two.
-    // The latest tap decides whether it also books.
+    // The latest tap decides whether it also books. Another gateway is another
+    // payment page, so switching method opens a new intent.
     const open = state.pendingTopup;
     const reuse =
       open !== undefined &&
       open.amountMinor === input.amountMinor &&
+      (open.provider ?? "SSLCOMMERZ") === provider &&
       (await stillOpen(input.userId, open));
 
     const payment =
@@ -235,6 +241,7 @@ const startTopup = (input: StartTopupInput) =>
         : await PaymentIntentService.initiateTopup(
             input.userId,
             input.amountMinor,
+            provider,
           );
 
     next = {
@@ -245,6 +252,7 @@ const startTopup = (input: StartTopupInput) =>
         autoConfirm: input.autoConfirm,
         ...(confirmToken ? { confirmToken } : {}),
         redirectUrl: payment.redirectUrl,
+        provider,
         startedAt:
           reuse && open ? open.startedAt : new Date().toISOString(),
       },
