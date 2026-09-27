@@ -19,6 +19,7 @@ type NearbyArgs = {
   division?: string;
   district?: string;
   area?: string;
+  category?: string;
 };
 
 const originOf = (a: NearbyArgs) =>
@@ -36,9 +37,13 @@ const nearbyWhere = (a: NearbyArgs) => {
   if (a.searchTerm) {
     const t = escapeLike(a.searchTerm);
     conds.push(
-      Prisma.sql`(s.name ILIKE ${t} OR s.description ILIKE ${t} OR s.city ILIKE ${t})`,
+      Prisma.sql`(s.name ILIKE ${t} OR s.description ILIKE ${t} OR s.city ILIKE ${t} OR EXISTS (SELECT 1 FROM services sv WHERE sv."salonId" = s.id AND sv."isActive" AND NOT sv."isDeleted" AND sv.name ILIKE ${t}))`,
     );
   }
+  if (a.category)
+    conds.push(
+      Prisma.sql`EXISTS (SELECT 1 FROM services sv WHERE sv."salonId" = s.id AND sv."isActive" AND NOT sv."isDeleted" AND sv.category = ${a.category}::"ServiceCategory")`,
+    );
   if (a.city) conds.push(Prisma.sql`s.city ILIKE ${escapeLike(a.city)}`);
   if (a.division)
     conds.push(Prisma.sql`s.division ILIKE ${escapeLike(a.division)}`);

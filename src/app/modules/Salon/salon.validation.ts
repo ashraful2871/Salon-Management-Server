@@ -118,6 +118,22 @@ const salonListQuery = z
       .optional(),
     radiusKm: z.coerce.number().min(0.5).max(50).default(NEARBY_MAX_RADIUS_KM),
     sort: z.enum(["distance", "rating", "newest"]).optional(),
+    category: z
+      .enum([
+        "HAIRCUT",
+        "STYLING",
+        "COLORING",
+        "TREATMENT",
+        "SPA",
+        "FACIAL",
+        "MANICURE",
+        "PEDICURE",
+        "MAKEUP",
+        "WAXING",
+        "MASSAGE",
+        "OTHER",
+      ])
+      .optional(),
   })
   .refine((q) => (q.lat === undefined) === (q.lng === undefined), {
     message: "lat and lng must be sent together",

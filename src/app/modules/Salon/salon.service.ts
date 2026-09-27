@@ -89,6 +89,7 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
     lng,
     radiusKm,
     sort,
+    category,
   } = query;
 
   // Only ADMIN/AGENT may pick a status (or see every status by omitting it).
@@ -170,6 +171,7 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
       division,
       district,
       area,
+      category,
     };
     const rows = await findNearbySalonIds(args);
 
@@ -211,6 +213,11 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
       ? [{ area: { contains: area, mode: Prisma.QueryMode.insensitive } }]
       : []),
   ];
+  if (category) {
+    areaConditions.push({
+      services: { some: { isDeleted: false, isActive: true, category } },
+    });
+  }
   if (areaConditions.length) {
     whereConditions.AND = areaConditions;
   }
@@ -220,6 +227,15 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
       { name: { contains: searchTerm, mode: "insensitive" } },
       { description: { contains: searchTerm, mode: "insensitive" } },
       { city: { contains: searchTerm, mode: "insensitive" } },
+      {
+        services: {
+          some: {
+            isDeleted: false,
+            isActive: true,
+            name: { contains: searchTerm, mode: "insensitive" },
+          },
+        },
+      },
     ];
   }
 
