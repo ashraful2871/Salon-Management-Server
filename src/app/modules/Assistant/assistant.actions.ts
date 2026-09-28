@@ -58,7 +58,6 @@ import {
   LOCATION_PRECISION,
   MAX_DAYS_AHEAD,
   NEARBY_RADIUS_KM,
-  NEARBY_RADIUS_WIDE_KM,
   PAYMENT_METHODS,
   SALON_CARDS,
   TOPUP_PRESETS_MINOR,
@@ -292,38 +291,29 @@ const handleFindNearby = async (
   const { lat, lng } = state.location;
   const page = action.page ?? 1;
 
-  // Built through parse, not as a literal: page, limit and radiusKm are
-  // required on SalonListQuery and only get their defaults by parsing.
-  const search = (radiusKm: number) =>
-    SalonService.getAllSalons(
-      SalonValidation.salonListQuery.parse({
-        lat,
-        lng,
-        radiusKm,
-        sort: "distance",
-        page,
-        limit: SALON_CARDS,
-      }),
-      // The chat is a customer surface: no user means the public projection.
-      undefined,
-    );
-
-  let result = await search(NEARBY_RADIUS_KM);
-  let widened = false;
-
-  if (result.data.length === 0 && page === 1) {
-    result = await search(NEARBY_RADIUS_WIDE_KM);
-    widened = true;
-  }
+  // Built through parse, not as a literal: page and limit are required on
+  // SalonListQuery and only get their defaults by parsing.
+  const result = await SalonService.getAllSalons(
+    SalonValidation.salonListQuery.parse({
+      lat,
+      lng,
+      radiusKm: NEARBY_RADIUS_KM,
+      sort: "distance",
+      page,
+      limit: SALON_CARDS,
+    }),
+    // The chat is a customer surface: no user means the public projection.
+    undefined,
+  );
 
   const cards = toCards(result.data as SalonRow[]);
   const next = advance(state, { step: "discover" });
 
   if (cards.length === 0) {
     return {
-      text: COPY.nothingFound,
+      text: COPY.noneNearby,
       blocks: [
-        notice("info", COPY.nothingFound),
+        notice("info", COPY.noneNearby),
         quickReplies([
           {
             label: "Change location",
@@ -338,9 +328,7 @@ const handleFindNearby = async (
   }
 
   const hasMore = result.meta.total > page * SALON_CARDS;
-  const text = widened
-    ? COPY.noneNearby
-    : `${cards.length} salon${cards.length === 1 ? "" : "s"} near ${state.location.label}, closest first.`;
+  const text = `${cards.length} salon${cards.length === 1 ? "" : "s"} near ${state.location.label}, closest first.`;
 
   return {
     text,

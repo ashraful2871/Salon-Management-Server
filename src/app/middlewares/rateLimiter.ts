@@ -65,6 +65,23 @@ export const authLimiter = rateLimit({
 });
 
 /**
+ * The public contact form (POST /contact). Every accepted request sends an
+ * email, so five an hour per visitor keeps the inbox and the provider quota
+ * safe from a script.
+ */
+export const contactLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many messages. Try again in an hour.",
+  },
+});
+
+/**
  * The code screen: verify-otp and resend-otp. Looser than authLimiter because
  * a typo costs a request, but each code still locks after 5 wrong attempts and
  * issueOtp throttles sends on its own.

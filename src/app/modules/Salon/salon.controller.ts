@@ -4,7 +4,7 @@ import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { SalonService } from "./salon.service";
 import { findSalonMarkers } from "./salon.geo";
-import { SalonValidation } from "./salon.validation";
+import { NEARBY_MAX_RADIUS_KM, SalonValidation } from "./salon.validation";
 
 const createSalon = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
@@ -22,7 +22,10 @@ const createSalon = catchAsync(async (req: Request, res: Response) => {
 const getAllSalons = catchAsync(async (req: Request, res: Response) => {
   // Parsed here, not in validateRequest, so the coerced numbers survive.
   const query = SalonValidation.salonListQuery.parse(req.query);
-  const result = await SalonService.getAllSalons(query, req.user);
+  const result = await SalonService.getAllSalons(
+    { ...query, radiusKm: Math.min(query.radiusKm, NEARBY_MAX_RADIUS_KM) },
+    req.user,
+  );
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -36,8 +39,15 @@ const getAllSalons = catchAsync(async (req: Request, res: Response) => {
 const getSalonMarkers = catchAsync(async (req: Request, res: Response) => {
   const {
     bbox: [minLng, minLat, maxLng, maxLat],
+    lat,
+    lng,
+    radiusKm,
   } = SalonValidation.salonMapQuery.parse(req.query);
-  const result = await findSalonMarkers(minLng, minLat, maxLng, maxLat);
+  const near =
+    lat !== undefined && lng !== undefined
+      ? { lat, lng, radiusKm: Math.min(radiusKm, NEARBY_MAX_RADIUS_KM) }
+      : undefined;
+  const result = await findSalonMarkers(minLng, minLat, maxLng, maxLat, near);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

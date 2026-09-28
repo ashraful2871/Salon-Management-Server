@@ -525,7 +525,7 @@ export const getDepositForfeitedTemplate = (
 
 // For text a customer typed, such as their name. It lands in the salon owner's
 // inbox, so it must not be able to add links or markup of its own.
-const escapeHtml = (value: string) =>
+export const escapeHtml = (value: string) =>
   value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

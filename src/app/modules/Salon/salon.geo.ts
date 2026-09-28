@@ -19,6 +19,7 @@ type NearbyArgs = {
   division?: string;
   district?: string;
   area?: string;
+  category?: string;
 };
 
 const originOf = (a: NearbyArgs) =>
@@ -36,9 +37,13 @@ const nearbyWhere = (a: NearbyArgs) => {
   if (a.searchTerm) {
     const t = escapeLike(a.searchTerm);
     conds.push(
-      Prisma.sql`(s.name ILIKE ${t} OR s.description ILIKE ${t} OR s.city ILIKE ${t})`,
+      Prisma.sql`(s.name ILIKE ${t} OR s.description ILIKE ${t} OR s.city ILIKE ${t} OR EXISTS (SELECT 1 FROM services sv WHERE sv."salonId" = s.id AND sv."isActive" AND NOT sv."isDeleted" AND sv.name ILIKE ${t}))`,
     );
   }
+  if (a.category)
+    conds.push(
+      Prisma.sql`EXISTS (SELECT 1 FROM services sv WHERE sv."salonId" = s.id AND sv."isActive" AND NOT sv."isDeleted" AND sv.category = ${a.category}::"ServiceCategory")`,
+    );
   if (a.city) conds.push(Prisma.sql`s.city ILIKE ${escapeLike(a.city)}`);
   if (a.division)
     conds.push(Prisma.sql`s.division ILIKE ${escapeLike(a.division)}`);
@@ -84,7 +89,12 @@ export const findSalonMarkers = async (
   minLat: number,
   maxLng: number,
   maxLat: number,
+  // The nearby map shows only what the list next to it can show.
+  near?: { lat: number; lng: number; radiusKm: number },
 ) => {
+  const withinReach = near
+    ? Prisma.sql`AND ST_DWithin(${SALON_GEOG}, ST_SetSRID(ST_MakePoint(${near.lng}::float8, ${near.lat}::float8), 4326)::geography, ${near.radiusKm * 1000}::float8)`
+    : Prisma.empty;
   const rows = await prisma.$queryRaw<any[]>`
     SELECT s.id, s.name, s.latitude, s.longitude, s."locationAccuracy", s.rating, s."totalReviews",
            s.images[1] AS image,
@@ -94,6 +104,7 @@ export const findSalonMarkers = async (
     WHERE s."isDeleted" = false AND s.status = 'ACTIVE'
       AND s.latitude  BETWEEN ${minLat}::float8 AND ${maxLat}::float8
       AND s.longitude BETWEEN ${minLng}::float8 AND ${maxLng}::float8
+      ${withinReach}
     ORDER BY s.rating DESC, s."totalReviews" DESC, s.id
     LIMIT 201`;
   return { markers: rows.slice(0, 200), truncated: rows.length > 200 };

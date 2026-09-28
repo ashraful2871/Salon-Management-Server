@@ -23,7 +23,8 @@
     "assistant:check": "ts-node-dev --transpile-only ./src/scripts/assistantReadiness.ts",
     "assistant:eval": "ts-node-dev --transpile-only ./src/scripts/evalAssistant.ts",
     "assistant:load": "ts-node-dev --transpile-only ./src/scripts/assistantLoad.ts",
-    "assistant:access": "ts-node-dev --transpile-only ./src/scripts/assistantAccessCheck.ts"
+    "assistant:access": "ts-node-dev --transpile-only ./src/scripts/assistantAccessCheck.ts",
+    "seed:dhaka": "ts-node-dev --transpile-only ./src/scripts/seedDhakaSalons.ts"
   },
   "keywords": [
     "salon",

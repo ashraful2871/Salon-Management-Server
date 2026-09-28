@@ -151,6 +151,9 @@ const startTopup = z.object({
       ),
     autoConfirm: z.boolean().optional(),
     label: z.string().max(80).optional(),
+    /** The gateway picked on the card. Absent means SSLCommerz, which is what
+     *  every card drawn before the choice existed sends. */
+    provider: z.enum(["SSLCOMMERZ", "BKASH"]).optional(),
   }),
 });
 

@@ -9,3 +9,6 @@ uploads/*
 # Claude Code: personal overrides only; .claude/settings.json is shared
 .claude/settings.local.json
 .claude/worktrees/
+
+# npm run seed:dhaka writes a backup of the salons it replaces here
+seed-backups/

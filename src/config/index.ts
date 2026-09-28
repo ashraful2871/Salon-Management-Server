@@ -41,6 +41,7 @@ interface Config {
   email: {
     provider: string;
     from: string;
+    contactInbox: string;
     resendApiKey: string;
     smtp: {
       host: string;
@@ -155,6 +156,8 @@ const config = {
   email: {
     provider: env("EMAIL_PROVIDER"),
     from: emailFrom,
+    // Where the public contact form delivers. Unset → POST /contact replies 503.
+    contactInbox: env("CONTACT_INBOX"),
     resendApiKey: env("RESEND_API_KEY"),
     smtp: {
       host: env("SMTP_HOST"),

@@ -19,7 +19,12 @@ npm run backfill:embeddings          # embed salons whose vector is missing or s
 npm run backfill:embeddings -- --all # re-embed every ACTIVE salon
 npm run ai:eval                      # offline query-understanding checks (no DB, no Gemini)
 npm run ai:diagnose -- "query" ...   # index coverage + live searches (spends Gemini quota)
+
+npm run seed:dhaka                   # dry run: ~583 test salons across Dhaka, counts + projected DB size
+npm run seed:dhaka -- --apply        # REPLACES every salon of ashrafulash2871@gmail.com (backup in seed-backups/)
 ```
+
+`seed:dhaka` reads pins from `src/scripts/data/dhaka-salons.json` (OSM streets, every Dhaka street within ~1 km of a salon) and generates menus, staff, 30 days of slots, bookings and reviews. Seeded users are on `@seed.example.com` with no password; `sendEmail` drops reserved test domains. Slots are ~390 bytes each and the Neon project caps storage at 512 MB, so the script refuses to go past 70% of the cap.
 
 There is **no test runner, linter, or formatter** configured — no `npm test`, no ESLint/Prettier config. Verification is `npm run build` (strict tsc) plus hitting endpoints manually. Deployment runs `render-build.sh` (install → `prisma generate` → `tsc` → `prisma migrate deploy`); a `.vercel/` project also exists.
 
