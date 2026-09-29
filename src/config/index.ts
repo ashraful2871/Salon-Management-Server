@@ -272,7 +272,9 @@ const config = {
   auth: {
     otpSecret: env("AUTH_OTP_SECRET"),
     requireEmailVerification: env("REQUIRE_EMAIL_VERIFICATION") === "true",
-    devLogOtp: env("AUTH_DEV_LOG_OTP") === "true" && process.env.NODE_ENV !== "production",
+    devLogOtp:
+      env("AUTH_DEV_LOG_OTP") === "true" &&
+      process.env.NODE_ENV !== "production",
   },
 
   /**
@@ -284,13 +286,18 @@ const config = {
   google: {
     clientId: env("GOOGLE_CLIENT_ID"),
     clientSecret: env("GOOGLE_CLIENT_SECRET"),
-    redirectUri: env("GOOGLE_REDIRECT_URI") || `${frontendUrl}/api/auth/google/callback`,
+    redirectUri:
+      env("GOOGLE_REDIRECT_URI") || `${frontendUrl}/api/auth/google/callback`,
     signupRequiresOtp: env("GOOGLE_SIGNUP_REQUIRES_OTP") !== "false",
   },
 } as Config;
 
 /** Google sign-in is offered only when all three of its settings are present. */
 export const isGoogleEnabled = () =>
-  Boolean(config.google.clientId && config.google.clientSecret && config.google.redirectUri);
+  Boolean(
+    config.google.clientId &&
+    config.google.clientSecret &&
+    config.google.redirectUri,
+  );
 
 export default config;
