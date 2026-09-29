@@ -1,23 +1,23 @@
-import bcrypt from 'bcryptjs';
-import { StatusCodes } from 'http-status-codes';
-import { Prisma, TokenType } from '@prisma/client';
-import ApiError from '../../Error/error';
-import prisma from '../../shared/prisma';
-import { jwtHelpers } from '../../helper/jwtHelper';
-import config from '../../../config';
-import { sendEmail } from '../../utils/emailSender';
+import bcrypt from "bcryptjs";
+import { StatusCodes } from "http-status-codes";
+import { Prisma, TokenType } from "@prisma/client";
+import ApiError from "../../Error/error";
+import prisma from "../../shared/prisma";
+import { jwtHelpers } from "../../helper/jwtHelper";
+import config from "../../../config";
+import { sendEmail } from "../../utils/emailSender";
 import {
   getEmailChangedNoticeTemplate,
   getOtpEmailTemplate,
   getPasswordResetTemplate,
-} from '../../utils/emailTemplates';
+} from "../../utils/emailTemplates";
 import {
   PASSWORD_RESET_TTL_MINUTES,
   consumeToken,
   isWithinCooldown,
   issueToken,
-} from '../../utils/verificationToken';
-import { normalizeEmail } from '../../utils/normalizeEmail';
+} from "../../utils/verificationToken";
+import { normalizeEmail } from "../../utils/normalizeEmail";
 import {
   OTP_TTL_SECONDS,
   OtpFailure,
@@ -25,34 +25,38 @@ import {
   maskEmail,
   otpTimings,
   verifyOtp as checkOtp,
-} from '../../utils/otp';
-import { readTicket } from '../../utils/verificationTicket';
+} from "../../utils/otp";
+import { readTicket } from "../../utils/verificationTicket";
 import {
   SignedIn,
   assertCanSignIn,
   issueSession,
   sendVerificationCode,
   startEmailVerification,
-} from './auth.session';
+} from "./auth.session";
 
 /**
  * A cost-12 hash of random bytes nobody kept. Login compares against it when
  * the email is unknown or has no password, so a miss takes as long as a wrong
  * password and the timing does not reveal which addresses are registered.
  */
-const DUMMY_HASH = '$2b$12$yPMTE67UgnQIF31ZdHwdtuTO8JnO9dbj/OAJnyXCnlJICEhgDMiYq';
+const DUMMY_HASH =
+  "$2b$12$yPMTE67UgnQIF31ZdHwdtuTO8JnO9dbj/OAJnyXCnlJICEhgDMiYq";
 
 /** Case-insensitive until Phase 6 lower-cases the stored emails. */
-const byEmail = (email: string) => ({ equals: email, mode: 'insensitive' as const });
+const byEmail = (email: string) => ({
+  equals: email,
+  mode: "insensitive" as const,
+});
 
 const signedIn = (user: {
   id: string;
   email: string;
   name: string;
-  role: SignedIn['user']['role'];
+  role: SignedIn["user"]["role"];
   sessionVersion: number;
 }): SignedIn => ({
-  status: 'SIGNED_IN',
+  status: "SIGNED_IN",
   ...issueSession(user),
   user: { id: user.id, email: user.email, name: user.name, role: user.role },
 });
@@ -67,52 +71,59 @@ const register = async (payload: any, ip?: string | null) => {
   });
 
   if (existingUser) {
-    throw new ApiError(StatusCodes.CONFLICT, 'User already exists with this email');
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "User already exists with this email",
+    );
   }
 
   // Hash password
   const hashedPassword = await bcrypt.hash(payload.password, 12);
 
   // Create user in a transaction
-  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const user = await tx.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        name: payload.name,
-        phone: payload.phone,
-        gender: payload.gender,
-        dateOfBirth: payload.dateOfBirth ? new Date(payload.dateOfBirth) : undefined,
-        address: payload.address,
-        role: payload.role || 'CUSTOMER',
-      },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        status: true,
-        phone: true,
-        profilePhoto: true,
-        gender: true,
-        dateOfBirth: true,
-        address: true,
-        createdAt: true,
-        sessionVersion: true,
-      },
-    });
-
-    // If role is SALON_OWNER, create salon owner profile
-    if (user.role === 'SALON_OWNER') {
-      await tx.salonOwner.create({
+  const result = await prisma.$transaction(
+    async (tx: Prisma.TransactionClient) => {
+      const user = await tx.user.create({
         data: {
-          userId: user.id,
+          email,
+          password: hashedPassword,
+          name: payload.name,
+          phone: payload.phone,
+          gender: payload.gender,
+          dateOfBirth: payload.dateOfBirth
+            ? new Date(payload.dateOfBirth)
+            : undefined,
+          address: payload.address,
+          role: payload.role || "CUSTOMER",
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          status: true,
+          phone: true,
+          profilePhoto: true,
+          gender: true,
+          dateOfBirth: true,
+          address: true,
+          createdAt: true,
+          sessionVersion: true,
         },
       });
-    }
 
-    return user;
-  });
+      // If role is SALON_OWNER, create salon owner profile
+      if (user.role === "SALON_OWNER") {
+        await tx.salonOwner.create({
+          data: {
+            userId: user.id,
+          },
+        });
+      }
+
+      return user;
+    },
+  );
 
   if (config.auth.requireEmailVerification) {
     return startEmailVerification(result, ip);
@@ -122,7 +133,7 @@ const register = async (payload: any, ip?: string | null) => {
   const { sessionVersion: _sessionVersion, ...user } = result;
 
   return {
-    status: 'SIGNED_IN' as const,
+    status: "SIGNED_IN" as const,
     user,
     accessToken,
     refreshToken,
@@ -134,7 +145,10 @@ const register = async (payload: any, ip?: string | null) => {
  * only) account, with similar timing, so login cannot be used to find out who
  * is registered. The account status is only revealed after the password.
  */
-const login = async (payload: { email: string; password: string }, ip?: string | null) => {
+const login = async (
+  payload: { email: string; password: string },
+  ip?: string | null,
+) => {
   const user = await prisma.user.findFirst({
     where: { email: byEmail(payload.email), isDeleted: false },
   });
@@ -144,13 +158,13 @@ const login = async (payload: { email: string; password: string }, ip?: string |
     : (await bcrypt.compare(payload.password, DUMMY_HASH), false);
 
   if (!user || !isPasswordCorrect) {
-    throw new ApiError(StatusCodes.UNAUTHORIZED, 'Invalid email or password');
+    throw new ApiError(StatusCodes.UNAUTHORIZED, "Invalid email or password");
   }
 
-  if (user.status !== 'ACTIVE') {
+  if (user.status !== "ACTIVE") {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      `User account is ${user.status.toLowerCase()}`
+      `User account is ${user.status.toLowerCase()}`,
     );
   }
 
@@ -164,8 +178,8 @@ const login = async (payload: { email: string; password: string }, ip?: string |
 const ticketExpired = () =>
   ApiError.withCode(
     StatusCodes.BAD_REQUEST,
-    'Your verification session has expired. Please sign in again.',
-    'TICKET_EXPIRED'
+    "Your verification session has expired. Please sign in again.",
+    "TICKET_EXPIRED",
   );
 
 /**
@@ -186,8 +200,8 @@ const ticketUser = async (ticket: string) => {
   if (user.emailVerified) {
     throw ApiError.withCode(
       StatusCodes.CONFLICT,
-      'Your email is already verified. Please sign in.',
-      'ALREADY_VERIFIED'
+      "Your email is already verified. Please sign in.",
+      "ALREADY_VERIFIED",
     );
   }
 
@@ -195,10 +209,19 @@ const ticketUser = async (ticket: string) => {
 };
 
 const OTP_ERRORS: Record<OtpFailure, { message: string; errorCode: string }> = {
-  INVALID: { message: "That code isn't right.", errorCode: 'OTP_INVALID' },
-  EXPIRED: { message: 'This code has expired. Request a new one.', errorCode: 'OTP_EXPIRED' },
-  LOCKED: { message: 'Too many wrong attempts. Request a new code.', errorCode: 'OTP_LOCKED' },
-  NONE: { message: 'No active code. Request a new one.', errorCode: 'OTP_NONE' },
+  INVALID: { message: "That code isn't right.", errorCode: "OTP_INVALID" },
+  EXPIRED: {
+    message: "This code has expired. Request a new one.",
+    errorCode: "OTP_EXPIRED",
+  },
+  LOCKED: {
+    message: "Too many wrong attempts. Request a new code.",
+    errorCode: "OTP_LOCKED",
+  },
+  NONE: {
+    message: "No active code. Request a new one.",
+    errorCode: "OTP_NONE",
+  },
 };
 
 const verifyOtp = async (payload: { ticket: string; code: string }) => {
@@ -206,7 +229,7 @@ const verifyOtp = async (payload: { ticket: string; code: string }) => {
 
   const r = await checkOtp({
     userId: user.id,
-    purpose: 'EMAIL_VERIFY',
+    purpose: "EMAIL_VERIFY",
     code: payload.code,
     target: user.email,
   });
@@ -217,7 +240,7 @@ const verifyOtp = async (payload: { ticket: string; code: string }) => {
       StatusCodes.BAD_REQUEST,
       message,
       errorCode,
-      r.reason === 'INVALID' ? { attemptsLeft: r.attemptsLeft } : undefined
+      r.reason === "INVALID" ? { attemptsLeft: r.attemptsLeft } : undefined,
     );
   }
 
@@ -238,7 +261,7 @@ const resendOtp = async (payload: { ticket: string }, ip?: string | null) => {
 
   const issued = await issueOtp({
     userId: user.id,
-    purpose: 'EMAIL_VERIFY',
+    purpose: "EMAIL_VERIFY",
     target: user.email,
     ip,
   });
@@ -246,15 +269,15 @@ const resendOtp = async (payload: { ticket: string }, ip?: string | null) => {
   if (!issued.ok) {
     throw ApiError.withCode(
       StatusCodes.TOO_MANY_REQUESTS,
-      'Please wait before requesting another code',
-      'OTP_THROTTLED',
-      { retryAfter: issued.retryAfter }
+      "Please wait before requesting another code",
+      "OTP_THROTTLED",
+      { retryAfter: issued.retryAfter },
     );
   }
 
   await sendVerificationCode(user, issued.code);
 
-  const { expiresIn, resendIn } = await otpTimings(user.id, 'EMAIL_VERIFY');
+  const { expiresIn, resendIn } = await otpTimings(user.id, "EMAIL_VERIFY");
 
   return { expiresIn, resendIn };
 };
@@ -278,12 +301,12 @@ const refreshToken = async (token: string) => {
   try {
     verifiedUser = jwtHelpers.verifyToken(
       token,
-      config.jwt.refresh_token_secret as string
+      config.jwt.refresh_token_secret as string,
     );
   } catch {
     throw new ApiError(
       StatusCodes.UNAUTHORIZED,
-      'Your session has expired. Please sign in again.'
+      "Your session has expired. Please sign in again.",
     );
   }
 
@@ -299,13 +322,13 @@ const refreshToken = async (token: string) => {
   // here holds a token from before it and must go through the code first.
   if (
     !user ||
-    user.status !== 'ACTIVE' ||
+    user.status !== "ACTIVE" ||
     (verifiedUser.sv ?? 0) !== user.sessionVersion ||
     (config.auth.requireEmailVerification && !user.emailVerified)
   ) {
     throw new ApiError(
       StatusCodes.UNAUTHORIZED,
-      'Your session is no longer valid. Please sign in again.'
+      "Your session is no longer valid. Please sign in again.",
     );
   }
 
@@ -325,7 +348,7 @@ const refreshToken = async (token: string) => {
 
 const changePassword = async (
   userId: string,
-  payload: { oldPassword: string; newPassword: string }
+  payload: { oldPassword: string; newPassword: string },
 ) => {
   // Get user
   const user = await prisma.user.findUnique({
@@ -336,7 +359,7 @@ const changePassword = async (
   });
 
   if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
   // Check old password
@@ -345,7 +368,7 @@ const changePassword = async (
     : false;
 
   if (!isPasswordCorrect) {
-    throw new ApiError(StatusCodes.UNAUTHORIZED, 'Old password is incorrect');
+    throw new ApiError(StatusCodes.UNAUTHORIZED, "Old password is incorrect");
   }
 
   // Hash new password
@@ -355,7 +378,13 @@ const changePassword = async (
   const updated = await prisma.user.update({
     where: { id: userId },
     data: { password: hashedPassword, sessionVersion: { increment: 1 } },
-    select: { id: true, email: true, name: true, role: true, sessionVersion: true },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      sessionVersion: true,
+    },
   });
 
   return issueSession(updated);
@@ -372,7 +401,7 @@ const changePassword = async (
 const changeEmail = async (
   userId: string,
   payload: { newEmail: string; password?: string },
-  ip?: string | null
+  ip?: string | null,
 ) => {
   const user = await prisma.user.findUnique({
     where: {
@@ -382,7 +411,7 @@ const changeEmail = async (
   });
 
   if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
   if (user.password) {
@@ -391,7 +420,10 @@ const changeEmail = async (
       : false;
 
     if (!isPasswordCorrect) {
-      throw new ApiError(StatusCodes.UNAUTHORIZED, 'Current password is incorrect');
+      throw new ApiError(
+        StatusCodes.UNAUTHORIZED,
+        "Current password is incorrect",
+      );
     }
   }
 
@@ -400,7 +432,7 @@ const changeEmail = async (
   if (newEmail === normalizeEmail(user.email)) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      'New email must be different from your current email'
+      "New email must be different from your current email",
     );
   }
 
@@ -410,27 +442,35 @@ const changeEmail = async (
   });
 
   if (existingUser) {
-    throw new ApiError(StatusCodes.CONFLICT, 'This email is already in use by another account');
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "This email is already in use by another account",
+    );
   }
 
-  const issued = await issueOtp({ userId, purpose: 'EMAIL_CHANGE', target: newEmail, ip });
+  const issued = await issueOtp({
+    userId,
+    purpose: "EMAIL_CHANGE",
+    target: newEmail,
+    ip,
+  });
 
   if (!issued.ok) {
     throw ApiError.withCode(
       StatusCodes.TOO_MANY_REQUESTS,
-      'Please wait before requesting another code',
-      'OTP_THROTTLED',
-      { retryAfter: issued.retryAfter }
+      "Please wait before requesting another code",
+      "OTP_THROTTLED",
+      { retryAfter: issued.retryAfter },
     );
   }
 
   await sendEmail(
     newEmail,
     `${issued.code} is your SalonKhuji code to confirm your new email`,
-    getOtpEmailTemplate(user.name, issued.code, OTP_TTL_SECONDS / 60)
+    getOtpEmailTemplate(user.name, issued.code, OTP_TTL_SECONDS / 60),
   );
 
-  const { expiresIn, resendIn } = await otpTimings(userId, 'EMAIL_CHANGE');
+  const { expiresIn, resendIn } = await otpTimings(userId, "EMAIL_CHANGE");
 
   return { maskedEmail: maskEmail(newEmail), expiresIn, resendIn };
 };
@@ -440,8 +480,15 @@ const changeEmail = async (
  * verified. `User.email` is the only place the address lives, and the JWT is
  * the only copy outside the database, hence the fresh token pair.
  */
-const confirmEmailChange = async (userId: string, payload: { code: string }) => {
-  const r = await checkOtp({ userId, purpose: 'EMAIL_CHANGE', code: payload.code });
+const confirmEmailChange = async (
+  userId: string,
+  payload: { code: string },
+) => {
+  const r = await checkOtp({
+    userId,
+    purpose: "EMAIL_CHANGE",
+    code: payload.code,
+  });
 
   if (!r.ok) {
     const { message, errorCode } = OTP_ERRORS[r.reason];
@@ -449,12 +496,15 @@ const confirmEmailChange = async (userId: string, payload: { code: string }) => 
       StatusCodes.BAD_REQUEST,
       message,
       errorCode,
-      r.reason === 'INVALID' ? { attemptsLeft: r.attemptsLeft } : undefined
+      r.reason === "INVALID" ? { attemptsLeft: r.attemptsLeft } : undefined,
     );
   }
 
   const inUse = () =>
-    new ApiError(StatusCodes.CONFLICT, 'This email is already in use by another account');
+    new ApiError(
+      StatusCodes.CONFLICT,
+      "This email is already in use by another account",
+    );
 
   const old = await prisma.user.findUniqueOrThrow({
     where: { id: userId },
@@ -463,42 +513,47 @@ const confirmEmailChange = async (userId: string, payload: { code: string }) => 
 
   let updatedUser;
   try {
-    updatedUser = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // Someone may have registered the address since the code was sent.
-      const taken = await tx.user.findFirst({
-        where: { email: byEmail(r.target), NOT: { id: userId } },
-        select: { id: true },
-      });
-      if (taken) throw inUse();
+    updatedUser = await prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        // Someone may have registered the address since the code was sent.
+        const taken = await tx.user.findFirst({
+          where: { email: byEmail(r.target), NOT: { id: userId } },
+          select: { id: true },
+        });
+        if (taken) throw inUse();
 
-      // Reset links sent to the old inbox must stop working.
-      await tx.verificationToken.updateMany({
-        where: { userId, usedAt: null },
-        data: { usedAt: new Date() },
-      });
+        // Reset links sent to the old inbox must stop working.
+        await tx.verificationToken.updateMany({
+          where: { userId, usedAt: null },
+          data: { usedAt: new Date() },
+        });
 
-      // The bump signs out every other device; this one gets a fresh pair below.
-      return tx.user.update({
-        where: { id: userId },
-        data: {
-          email: r.target,
-          emailVerified: true,
-          emailVerifiedAt: new Date(),
-          sessionVersion: { increment: 1 },
-        },
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          role: true,
-          emailVerified: true,
-          sessionVersion: true,
-        },
-      });
-    });
+        // The bump signs out every other device; this one gets a fresh pair below.
+        return tx.user.update({
+          where: { id: userId },
+          data: {
+            email: r.target,
+            emailVerified: true,
+            emailVerifiedAt: new Date(),
+            sessionVersion: { increment: 1 },
+          },
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+            emailVerified: true,
+            sessionVersion: true,
+          },
+        });
+      },
+    );
   } catch (e) {
     // A registration raced the check above and won the unique index.
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === "P2002"
+    ) {
       throw inUse();
     }
     throw e;
@@ -507,8 +562,8 @@ const confirmEmailChange = async (userId: string, payload: { code: string }) => 
   // Cannot throw, so a mail outage never undoes the change.
   await sendEmail(
     old.email,
-    'Your email was changed - Salon Management',
-    getEmailChangedNoticeTemplate(updatedUser.name, updatedUser.email)
+    "Your email was changed - Salon Management",
+    getEmailChangedNoticeTemplate(updatedUser.name, updatedUser.email),
   );
 
   const { sessionVersion: _sessionVersion, ...user } = updatedUser;
@@ -553,17 +608,17 @@ const getMyProfile = async (userId: string) => {
   });
 
   if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
   // The hash is read only to say whether one exists; it never leaves here.
   const { password, authIdentities, ...profile } = user;
-
+  console.log(user);
   return {
     ...profile,
     hasPassword: Boolean(password),
     signInMethods: [
-      ...(password ? ['PASSWORD'] : []),
+      ...(password ? ["PASSWORD"] : []),
       ...authIdentities.map((i) => i.provider),
     ],
   };
@@ -580,7 +635,7 @@ const forgotPassword = async (payload: { email: string }) => {
     where: { email: byEmail(payload.email) },
   });
 
-  if (!user || user.isDeleted || user.status !== 'ACTIVE') {
+  if (!user || user.isDeleted || user.status !== "ACTIVE") {
     return null;
   }
 
@@ -592,27 +647,30 @@ const forgotPassword = async (payload: { email: string }) => {
   const rawToken = await issueToken(
     user.id,
     TokenType.PASSWORD_RESET,
-    PASSWORD_RESET_TTL_MINUTES * 60 * 1000
+    PASSWORD_RESET_TTL_MINUTES * 60 * 1000,
   );
 
   const resetUrl = `${config.frontend_url}/reset-password?token=${rawToken}`;
 
   await sendEmail(
     user.email,
-    'Reset your password - Salon Management',
-    getPasswordResetTemplate(user.name, resetUrl, PASSWORD_RESET_TTL_MINUTES)
+    "Reset your password - Salon Management",
+    getPasswordResetTemplate(user.name, resetUrl, PASSWORD_RESET_TTL_MINUTES),
   );
 
   return null;
 };
 
-const resetPassword = async (payload: { token: string; newPassword: string }) => {
+const resetPassword = async (payload: {
+  token: string;
+  newPassword: string;
+}) => {
   const userId = await consumeToken(payload.token, TokenType.PASSWORD_RESET);
 
   if (!userId) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      'This reset link is invalid or has expired. Please request a new one.'
+      "This reset link is invalid or has expired. Please request a new one.",
     );
   }
 
@@ -621,7 +679,7 @@ const resetPassword = async (payload: { token: string; newPassword: string }) =>
   });
 
   if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
   const hashedPassword = await bcrypt.hash(payload.newPassword, 12);
@@ -633,7 +691,9 @@ const resetPassword = async (payload: { token: string; newPassword: string }) =>
     data: {
       password: hashedPassword,
       sessionVersion: { increment: 1 },
-      ...(user.emailVerified ? {} : { emailVerified: true, emailVerifiedAt: new Date() }),
+      ...(user.emailVerified
+        ? {}
+        : { emailVerified: true, emailVerifiedAt: new Date() }),
     },
   });
 
