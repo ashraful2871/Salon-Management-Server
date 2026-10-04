@@ -19,6 +19,15 @@ interface Config {
     api_key: string | undefined;
     api_secret: string | undefined;
   };
+  hairTryOn: {
+    enabled: boolean;
+    provider: string;
+    model: string;
+    dailyCap: number;
+    concurrency: number;
+    uploadPreset: string;
+    turnstileSecret: string;
+  };
   sslcz: {
     storeId: string;
     storePasswd: string;
@@ -140,6 +149,20 @@ const config = {
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
+  },
+  /**
+   * Hairstyle try-on. Originals go up through a signed, authenticated
+   * Cloudinary preset; the edit runs on an image model (Gemini by default).
+   * `dailyCap` is the process-wide ceiling on generations per day.
+   */
+  hairTryOn: {
+    enabled: env("HAIR_TRYON_ENABLED") === "true",
+    provider: env("HAIR_IMAGE_PROVIDER") || "gemini",
+    model: env("HAIR_IMAGE_MODEL") || "gemini-2.5-flash-image",
+    dailyCap: Number(env("HAIR_TRYON_DAILY_CAP") || 300),
+    concurrency: Number(env("HAIR_TRYON_CONCURRENCY") || 2),
+    uploadPreset: env("CLOUDINARY_HAIR_UPLOAD_PRESET") || "hair_tryon_original",
+    turnstileSecret: env("TURNSTILE_SECRET_KEY"),
   },
   /**
    * Email. `provider` pins the transport ("resend" | "smtp"); left empty, the

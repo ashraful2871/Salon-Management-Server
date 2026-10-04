@@ -24,7 +24,9 @@
     "assistant:eval": "ts-node-dev --transpile-only ./src/scripts/evalAssistant.ts",
     "assistant:load": "ts-node-dev --transpile-only ./src/scripts/assistantLoad.ts",
     "assistant:access": "ts-node-dev --transpile-only ./src/scripts/assistantAccessCheck.ts",
-    "seed:dhaka": "ts-node-dev --transpile-only ./src/scripts/seedDhakaSalons.ts"
+    "seed:dhaka": "ts-node-dev --transpile-only ./src/scripts/seedDhakaSalons.ts",
+    "hair:check": "ts-node-dev --transpile-only ./src/scripts/hairTryOnCheck.ts",
+    "hair:spike": "ts-node-dev --transpile-only ./src/scripts/hairTryOnSpike.ts"
   },
   "keywords": [
     "salon",

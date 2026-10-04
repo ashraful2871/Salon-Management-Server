@@ -12,3 +12,8 @@ uploads/*
 
 # npm run seed:dhaka writes a backup of the salons it replaces here
 seed-backups/
+
+# npm run hair:spike reads consented test photos here and writes results here
+spike-photos/
+spike-out/
+eval-photos/

@@ -5,6 +5,10 @@ import { WalletService } from "../modules/Wallet/wallet.service";
 import { syncSearchIndex } from "../modules/AI-Suggestion/ai.indexer";
 import { sendBookingReminders } from "../modules/Assistant/assistant.reminders";
 import { purgeExpiredConversations } from "../modules/Assistant/assistant.service";
+import {
+  purgeHairTryOn,
+  sweepHairTryOnTag,
+} from "../modules/HairTryOn/hairTryOn.cleanup";
 import prisma from "../shared/prisma";
 
 /**
@@ -32,6 +36,10 @@ const REMINDER_INTERVAL_MS = 15 * MINUTE;
 const RETENTION_INTERVAL_MS = 24 * HOUR;
 const AUTH_CLEANUP_INTERVAL_MS = 24 * HOUR;
 const AUTH_CODE_KEEP_MS = 7 * 24 * HOUR;
+// Try-on photos expire 24 h after upload; a 30-minute run keeps "deleted
+// within 24 hours" true with at most half an hour of slack.
+const HAIR_CLEANUP_INTERVAL_MS = 30 * MINUTE;
+const HAIR_SWEEP_INTERVAL_MS = 24 * HOUR;
 
 /** A job that throws must never take the server down with it. */
 const safely = async (name: string, run: () => Promise<unknown>) => {
@@ -123,6 +131,11 @@ export const startBackgroundJobs = () => {
   every(RETENTION_INTERVAL_MS, "assistant.retention", purgeConversations);
 
   every(AUTH_CLEANUP_INTERVAL_MS, "auth.cleanup", purgeAuthCodes);
+
+  // Expired try-on photos and results, then a daily sweep of the Cloudinary
+  // tag for anything the database lost track of.
+  every(HAIR_CLEANUP_INTERVAL_MS, "hair.cleanup", purgeHairTryOn);
+  every(HAIR_SWEEP_INTERVAL_MS, "hair.sweep", sweepHairTryOnTag);
 
   // Catch anything that got stuck while the process was down, but not in the
   // first seconds of boot - a restart loop should not hammer the gateway.

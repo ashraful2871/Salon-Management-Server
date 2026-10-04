@@ -3,6 +3,7 @@ import app from "./app";
 import config from "./config";
 import { seedAdmin } from "./app/seed/admin.seed";
 import { startBackgroundJobs } from "./app/jobs/scheduler";
+import { startHairWorker } from "./app/modules/HairTryOn/hairTryOn.worker";
 
 async function main() {
   // Slot "HH:mm" times are read as server-local. Anywhere but Dhaka, every
@@ -23,6 +24,9 @@ async function main() {
     const server: Server = app.listen(config.port, () => {
       console.log(`Server is running on port ${config.port}`);
     });
+
+    // Re-queues PENDING try-ons and fails any a dead process left RUNNING.
+    startHairWorker().catch(() => console.error("[hair] worker start failed"));
 
     const exitHandler = () => {
       if (server) {
