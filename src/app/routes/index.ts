@@ -18,6 +18,7 @@ import { SettlementRoutes } from "../modules/Settlement/settlement.routes";
 import { GeoRoutes } from "../modules/Geo/geo.route";
 import { AssistantRoutes } from "../modules/Assistant/assistant.routes";
 import { ContactRoutes } from "../modules/Contact/contact.routes";
+import { HairTryOnRoutes } from "../modules/HairTryOn/hairTryOn.routes";
 
 const router = express.Router();
 
@@ -97,6 +98,10 @@ const moduleRoutes = [
   {
     path: "/contact",
     route: ContactRoutes,
+  },
+  {
+    path: "/hairstyle",
+    route: HairTryOnRoutes,
   },
 ];
 

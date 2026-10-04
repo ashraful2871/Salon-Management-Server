@@ -249,3 +249,47 @@ export const assistantStartLimiter = rateLimit({
       "You have started a lot of chats today. Carry on with an earlier one, or try again tomorrow.",
   },
 });
+
+/**
+ * Hairstyle try-on upload tickets (POST /hairstyle/uploads). Each one lets a
+ * visitor store a photo on Cloudinary, so five an hour per visitor.
+ */
+export const hairUploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "You've uploaded a lot of photos. Try again in an hour.",
+  },
+});
+
+/**
+ * Hairstyle generations cost an AI edit each. The jobs route uses both: ten an
+ * hour and twenty a day per visitor.
+ */
+export const hairGenerateHourLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "You've tried a lot of styles. Try again in an hour.",
+  },
+});
+
+export const hairGenerateDayLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "You've reached today's try-on limit. Come back tomorrow.",
+  },
+});

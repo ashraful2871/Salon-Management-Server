@@ -19,6 +19,15 @@ interface Config {
     api_key: string | undefined;
     api_secret: string | undefined;
   };
+  hairTryOn: {
+    enabled: boolean;
+    provider: string;
+    model: string;
+    dailyCap: number;
+    concurrency: number;
+    uploadPreset: string;
+    turnstileSecret: string;
+  };
   sslcz: {
     storeId: string;
     storePasswd: string;
@@ -140,6 +149,20 @@ const config = {
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
+  },
+  /**
+   * Hairstyle try-on. Originals go up through a signed, authenticated
+   * Cloudinary preset; the edit runs on an image model (Gemini by default).
+   * `dailyCap` is the process-wide ceiling on generations per day.
+   */
+  hairTryOn: {
+    enabled: env("HAIR_TRYON_ENABLED") === "true",
+    provider: env("HAIR_IMAGE_PROVIDER") || "gemini",
+    model: env("HAIR_IMAGE_MODEL") || "gemini-2.5-flash-image",
+    dailyCap: Number(env("HAIR_TRYON_DAILY_CAP") || 300),
+    concurrency: Number(env("HAIR_TRYON_CONCURRENCY") || 2),
+    uploadPreset: env("CLOUDINARY_HAIR_UPLOAD_PRESET") || "hair_tryon_original",
+    turnstileSecret: env("TURNSTILE_SECRET_KEY"),
   },
   /**
    * Email. `provider` pins the transport ("resend" | "smtp"); left empty, the
@@ -272,7 +295,9 @@ const config = {
   auth: {
     otpSecret: env("AUTH_OTP_SECRET"),
     requireEmailVerification: env("REQUIRE_EMAIL_VERIFICATION") === "true",
-    devLogOtp: env("AUTH_DEV_LOG_OTP") === "true" && process.env.NODE_ENV !== "production",
+    devLogOtp:
+      env("AUTH_DEV_LOG_OTP") === "true" &&
+      process.env.NODE_ENV !== "production",
   },
 
   /**
@@ -284,13 +309,18 @@ const config = {
   google: {
     clientId: env("GOOGLE_CLIENT_ID"),
     clientSecret: env("GOOGLE_CLIENT_SECRET"),
-    redirectUri: env("GOOGLE_REDIRECT_URI") || `${frontendUrl}/api/auth/google/callback`,
+    redirectUri:
+      env("GOOGLE_REDIRECT_URI") || `${frontendUrl}/api/auth/google/callback`,
     signupRequiresOtp: env("GOOGLE_SIGNUP_REQUIRES_OTP") !== "false",
   },
 } as Config;
 
 /** Google sign-in is offered only when all three of its settings are present. */
 export const isGoogleEnabled = () =>
-  Boolean(config.google.clientId && config.google.clientSecret && config.google.redirectUri);
+  Boolean(
+    config.google.clientId &&
+    config.google.clientSecret &&
+    config.google.redirectUri,
+  );
 
 export default config;

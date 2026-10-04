@@ -1,0 +1,45 @@
+enum HairTryOnStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
+model HairTryOnUpload {
+  id             String         @id @default(uuid())
+  ownerTokenHash String
+  clientKey      String // sha256 of the visitor IP, never the raw IP
+  publicId       String         @unique
+  confirmed      Boolean        @default(false)
+  width          Int?
+  height         Int?
+  bytes          Int?
+  createdAt      DateTime       @default(now())
+  expiresAt      DateTime
+  deletedAt      DateTime?
+  jobs           HairTryOnJob[]
+
+  @@index([expiresAt])
+  @@map("hair_tryon_uploads")
+}
+
+model HairTryOnJob {
+  id             String          @id @default(uuid())
+  uploadId       String
+  upload         HairTryOnUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  styleId        String
+  colorId        String          @default("natural")
+  status         HairTryOnStatus @default(PENDING)
+  resultPublicId String?
+  provider       String
+  model          String?
+  errorCode      String?
+  latencyMs      Int?
+  createdAt      DateTime        @default(now())
+  startedAt      DateTime?
+  finishedAt     DateTime?
+
+  @@unique([uploadId, styleId, colorId])
+  @@index([status, createdAt])
+  @@map("hair_tryon_jobs")
+}
