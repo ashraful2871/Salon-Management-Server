@@ -10,6 +10,7 @@ const runPayoutBatchValidation = z.object({
   body: z.object({
     periodStart: z.string().optional(),
     periodEnd: z.string().optional(),
+    reason: z.string().trim().max(500).optional(),
   }),
 });
 
@@ -21,6 +22,7 @@ const updatePayoutStatusValidation = z.object({
     // with no transfer reference cannot be traced later.
     reference: z.string().trim().optional(),
     failureReason: z.string().trim().optional(),
+    reason: z.string().trim().max(500).optional(),
   }),
 });
 
@@ -33,6 +35,7 @@ const commissionRuleBody = {
   percentBps: z.number().int().min(0).max(10000).nullable().optional(),
   appliesTo: z.enum(["NEW_CUSTOMER", "OFF_PEAK", "ALL"]),
   priority: z.number().int().optional(),
+  reason: z.string().trim().max(500).optional(),
 };
 
 const createCommissionRuleValidation = z.object({

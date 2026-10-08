@@ -2,6 +2,7 @@ import { Prisma, WalletTransaction, WalletTxType } from "@prisma/client";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { AuditCtx, auditTx } from "../../utils/audit";
 
 /**
  * Every movement of customer money goes through `mutate`. Nothing else writes
@@ -404,6 +405,7 @@ const getMyTransactions = async (userId: string, query: any) => {
 const adminAdjust = async (
   adminUserId: string,
   payload: { userId: string; amountMinor: number; reason: string },
+  auditCtx?: AuditCtx,
 ) => {
   const reason = payload.reason?.trim();
 
@@ -430,14 +432,30 @@ const adminAdjust = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
-  const transaction = await mutate({
-    userId: payload.userId,
-    type: WalletTxType.ADJUSTMENT,
-    amount: payload.amountMinor,
-    description: `Admin adjustment: ${reason}`,
-    referenceType: "ADJUSTMENT",
-    referenceId: adminUserId,
-    metadata: { adminUserId, reason },
+  // The ledger row and its audit row commit together, or neither does.
+  const transaction = await prisma.$transaction(async (tx) => {
+    const row = await mutate(
+      {
+        userId: payload.userId,
+        type: WalletTxType.ADJUSTMENT,
+        amount: payload.amountMinor,
+        description: `Admin adjustment: ${reason}`,
+        referenceType: "ADJUSTMENT",
+        referenceId: adminUserId,
+        metadata: { adminUserId, reason },
+      },
+      tx,
+    );
+
+    await auditTx(tx, auditCtx, {
+      action: "wallet.adjust",
+      entityType: "wallet",
+      entityId: payload.userId,
+      after: { amountMinor: payload.amountMinor, walletTransactionId: row.id },
+      reason,
+    });
+
+    return row;
   });
 
   return serializeTransaction(transaction);

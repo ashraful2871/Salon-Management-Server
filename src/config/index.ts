@@ -76,6 +76,9 @@ interface Config {
     requireEmailVerification: boolean;
     devLogOtp: boolean;
   };
+  mfa: {
+    key: string;
+  };
   google: {
     clientId: string;
     clientSecret: string;
@@ -298,6 +301,14 @@ const config = {
     devLogOtp:
       env("AUTH_DEV_LOG_OTP") === "true" &&
       process.env.NODE_ENV !== "production",
+  },
+
+  /**
+   * Admin/agent TOTP secrets are AES-256-GCM encrypted with this key: 32 bytes,
+   * base64 (openssl rand -base64 32). Checked at first use, not at boot.
+   */
+  mfa: {
+    key: env("MFA_ENCRYPTION_KEY"),
   },
 
   /**

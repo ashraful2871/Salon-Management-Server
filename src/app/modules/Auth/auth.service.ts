@@ -33,6 +33,9 @@ import {
   issueSession,
   sendVerificationCode,
   startEmailVerification,
+  isStaffAccount,
+  twoFactorGate,
+  ADMIN_SESSION_MAX_SECONDS,
 } from "./auth.session";
 
 /**
@@ -172,7 +175,8 @@ const login = async (
     return startEmailVerification(user, ip);
   }
 
-  return signedIn(user);
+  // ADMIN/AGENT with 2FA on: no session until the authenticator code.
+  return (await twoFactorGate(user)) ?? signedIn(user);
 };
 
 const ticketExpired = () =>
@@ -253,7 +257,7 @@ const verifyOtp = async (payload: { ticket: string; code: string }) => {
   const fresh = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
   assertCanSignIn(fresh);
 
-  return signedIn(fresh);
+  return (await twoFactorGate(fresh)) ?? signedIn(fresh);
 };
 
 const resendOtp = async (payload: { ticket: string }, ip?: string | null) => {
@@ -332,7 +336,21 @@ const refreshToken = async (token: string) => {
     );
   }
 
-  const { accessToken, refreshToken: newRefreshToken } = issueSession(user);
+  // The original sign-in time rides along in every refresh token. Admin and
+  // agent sessions end 12 h after it (a token from before `at` existed counts
+  // as expired), so the password and second factor are asked for again.
+  const now = Math.floor(Date.now() / 1000);
+  const at = Number(verifiedUser.at) || 0;
+  if (isStaffAccount(user.role) && (!at || now - at > ADMIN_SESSION_MAX_SECONDS)) {
+    throw new ApiError(
+      StatusCodes.UNAUTHORIZED,
+      "Your admin session has ended. Please sign in again.",
+    );
+  }
+
+  const { accessToken, refreshToken: newRefreshToken } = issueSession(user, {
+    at: at || now,
+  });
 
   return {
     accessToken,

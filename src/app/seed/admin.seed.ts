@@ -2,7 +2,19 @@ import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import prisma from '../shared/prisma';
 
+/**
+ * Development convenience only: a well-known admin login on an empty database.
+ * In production the first admin comes from `npm run admin:create`, which sets
+ * no password and emails a set-password link instead.
+ */
 export const seedAdmin = async () => {
+  if (
+    process.env.NODE_ENV === 'production' &&
+    process.env.ALLOW_DEFAULT_ADMIN !== 'true'
+  ) {
+    return;
+  }
+
   try {
     // Check if admin already exists
     const adminExists = await prisma.user.findFirst({
@@ -10,8 +22,6 @@ export const seedAdmin = async () => {
     });
 
     if (!adminExists) {
-      console.log('Seeding admin user...');
-
       const hashedPassword = await bcrypt.hash('admin123456', 12);
 
       await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -34,13 +44,14 @@ export const seedAdmin = async () => {
             canManageSalons: true,
             canManageServices: true,
             canViewReports: true,
+            adminRole: "SUPER_ADMIN",
           },
         });
       });
 
-      console.log('Admin user seeded successfully!');
-      console.log('Email: admin@salon.com');
-      console.log('Password: admin123456');
+      console.log(
+        '[seed] dev admin admin@salon.com created — change its password',
+      );
     }
   } catch (error) {
     console.error('Error seeding admin:', error);

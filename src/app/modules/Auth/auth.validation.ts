@@ -62,6 +62,24 @@ const verifyOtpValidation = z.object({
   }),
 });
 
+// Exactly one of an authenticator code or a recovery code.
+const twoFactorVerifyValidation = z.object({
+  body: z
+    .object({
+      ticket,
+      code: z.string().trim().regex(/^d{6}$/, "Enter the 6-digit code").optional(),
+      recoveryCode: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z0-9-s]{10,14}$/, "Enter a recovery code")
+        .optional(),
+    })
+    .refine((b) => !!b.code !== !!b.recoveryCode, {
+      message: "Enter the 6-digit code or a recovery code",
+      path: ["code"],
+    }),
+});
+
 const resendOtpValidation = z.object({
   body: z.object({
     ticket,
@@ -135,6 +153,7 @@ export const AuthValidation = {
   registerValidation,
   loginValidation,
   verifyOtpValidation,
+  twoFactorVerifyValidation,
   resendOtpValidation,
   changePasswordValidation,
   changeEmailValidation,

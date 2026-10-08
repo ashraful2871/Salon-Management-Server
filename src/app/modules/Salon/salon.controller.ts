@@ -3,6 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { SalonService } from "./salon.service";
+import { assertAdminPermission, loadAdminContext } from "../Admin/admin.middleware";
 import { findSalonMarkers } from "./salon.geo";
 import { NEARBY_MAX_RADIUS_KM, SalonValidation } from "./salon.validation";
 
@@ -120,7 +121,12 @@ const updateSalonLocation = catchAsync(async (req: Request, res: Response) => {
 const updateSalonStatus = catchAsync(async (req: Request, res: Response) => {
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
-  const result = await SalonService.updateSalonStatus(id, req.body.status, req.user);
+  const result = await SalonService.updateSalonStatus(
+    id,
+    req.body.status,
+    await loadAdminContext(req),
+    { ctx: req.auditCtx, reason: req.body.reason },
+  );
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -136,7 +142,11 @@ const deleteSalon = catchAsync(async (req: Request, res: Response) => {
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  await SalonService.deleteSalon(userId, userRole, id);
+  await assertAdminPermission(req, "salons.delete");
+  await SalonService.deleteSalon(userId, userRole, id, {
+    ctx: req.auditCtx,
+    reason: typeof req.body?.reason === "string" ? req.body.reason : undefined,
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

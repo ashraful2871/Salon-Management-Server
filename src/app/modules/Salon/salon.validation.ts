@@ -89,6 +89,7 @@ const updateSalonLocationValidation = z.object({
 const updateSalonStatusValidation = z.object({
   body: z.object({
     status: z.enum(["ACTIVE", "INACTIVE", "PENDING_APPROVAL", "REJECTED"]),
+    reason: z.string().trim().max(500).optional(),
   }),
 });
 

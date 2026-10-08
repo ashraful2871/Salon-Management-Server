@@ -1,6 +1,11 @@
 import express from "express";
 import { SalonController } from "./salon.controller";
 import auth from "../../middlewares/auth";
+import {
+  adminAuth,
+  adminSensitiveForStaff,
+  requireStepUp,
+} from "../Admin/admin.middleware";
 import validateRequest from "../../middlewares/validateRequest";
 import { SalonValidation } from "./salon.validation";
 
@@ -41,7 +46,8 @@ router.patch(
 
 router.patch(
   "/:id/status",
-  auth("ADMIN", "AGENT"),
+  // salons.review or salons.manage depending on the status; checked in the service.
+  adminAuth(),
   validateRequest(SalonValidation.updateSalonStatusValidation),
   SalonController.updateSalonStatus,
 );
@@ -49,6 +55,8 @@ router.patch(
 router.delete(
   "/:id",
   auth("SALON_OWNER", "ADMIN"),
+  adminSensitiveForStaff,
+  requireStepUp(),
   SalonController.deleteSalon,
 );
 

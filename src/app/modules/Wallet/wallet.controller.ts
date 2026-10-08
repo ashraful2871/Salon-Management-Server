@@ -83,7 +83,7 @@ const adminAdjust = catchAsync(async (req: Request, res: Response) => {
     userId: req.body.userId,
     amountMinor: toMinor(req.body.amount),
     reason: req.body.reason,
-  });
+  }, req.auditCtx);
 
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,

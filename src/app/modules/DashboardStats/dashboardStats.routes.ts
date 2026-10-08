@@ -1,10 +1,11 @@
 import express from 'express';
 import { DashboardStatsController } from './dashboardStats.controller';
 import auth from '../../middlewares/auth';
+import { adminAuth } from '../Admin/admin.middleware';
 
 const router = express.Router();
 
-router.get('/admin', auth('ADMIN'), DashboardStatsController.getAdminDashboardStats);
+router.get('/admin', adminAuth('analytics.view'), DashboardStatsController.getAdminDashboardStats);
 
 router.get(
   '/salon-owner',

@@ -1,6 +1,8 @@
 import express from "express";
 import { UserRole } from "@prisma/client";
 import auth from "../../middlewares/auth";
+import { adminAuth, requireStepUp } from "../Admin/admin.middleware";
+import { adminSensitiveLimiter } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { SettlementController } from "./settlement.controller";
 import { SettlementValidation } from "./settlement.validation";
@@ -27,55 +29,63 @@ router.get(
 // ---------------------------------------------------------------------------
 router.get(
   "/platform-earnings",
-  auth(UserRole.ADMIN),
+  adminAuth("finance.view"),
   SettlementController.getPlatformEarnings,
 );
 
-router.get("/payouts", auth(UserRole.ADMIN), SettlementController.getAllPayouts);
+router.get("/payouts", adminAuth("finance.view"), SettlementController.getAllPayouts);
 
 router.post(
   "/payouts/run",
-  auth(UserRole.ADMIN),
+  adminAuth("finance.payouts"),
   validateRequest(SettlementValidation.runPayoutBatchValidation),
+  adminSensitiveLimiter,
+  requireStepUp(),
   SettlementController.runPayoutBatch,
 );
 
 router.patch(
   "/payouts/:id",
-  auth(UserRole.ADMIN),
+  adminAuth("finance.payouts"),
   validateRequest(SettlementValidation.updatePayoutStatusValidation),
+  adminSensitiveLimiter,
+  requireStepUp(),
   SettlementController.updatePayoutStatus,
 );
 
 router.get(
   "/balance/:salonId",
-  auth(UserRole.ADMIN),
+  adminAuth("finance.view"),
   SettlementController.getSalonBalance,
 );
 
 router.get(
   "/audit/unbalanced",
-  auth(UserRole.ADMIN),
+  adminAuth("finance.view"),
   SettlementController.getLedgerAudit,
 );
 
 router.get(
   "/commission-rules",
-  auth(UserRole.ADMIN),
+  adminAuth("settings.view"),
   SettlementController.getCommissionRules,
 );
 
 router.post(
   "/commission-rules",
-  auth(UserRole.ADMIN),
+  adminAuth("settings.manage"),
   validateRequest(SettlementValidation.createCommissionRuleValidation),
+  adminSensitiveLimiter,
+  requireStepUp(),
   SettlementController.createCommissionRule,
 );
 
 router.patch(
   "/commission-rules/:id",
-  auth(UserRole.ADMIN),
+  adminAuth("settings.manage"),
   validateRequest(SettlementValidation.updateCommissionRuleValidation),
+  adminSensitiveLimiter,
+  requireStepUp(),
   SettlementController.updateCommissionRule,
 );
 

@@ -7,6 +7,7 @@ import { clearAuthCookies, setAuthCookies } from "../../utils/authCookies";
 import { clientIp } from "../../middlewares/rateLimiter";
 import { AuthService } from "./auth.service";
 import { completeGoogleFlow, startGoogleFlow } from "./auth.google";
+import { verifyTwoFactor as verifyTwoFactorCode } from "./auth.twoFactor";
 import { isGoogleEnabled } from "../../../config";
 
 const register = catchAsync(async (req: Request, res: Response) => {
@@ -54,7 +55,28 @@ const login = catchAsync(async (req: Request, res: Response) => {
     message:
       result.status === "SIGNED_IN"
         ? "User logged in successfully"
-        : "Verify your email to continue",
+        : result.status === "TWO_FACTOR_REQUIRED"
+          ? "Enter the code from your authenticator app"
+          : "Verify your email to continue",
+    data: result,
+  });
+});
+
+// Issues the session like login: cookies and the tokens in the body.
+const verifyTwoFactor = catchAsync(async (req: Request, res: Response) => {
+  const result = await verifyTwoFactorCode(req.body, {
+    source: "api",
+    ip: clientIp(req),
+    userAgent: req.get("user-agent")?.slice(0, 200) ?? null,
+    requestId: req.get("x-request-id")?.slice(0, 100) ?? null,
+  });
+
+  setAuthCookies(res, result);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "User logged in successfully",
     data: result,
   });
 });
@@ -62,12 +84,18 @@ const login = catchAsync(async (req: Request, res: Response) => {
 const verifyOtp = catchAsync(async (req: Request, res: Response) => {
   const result = await AuthService.verifyOtp(req.body);
 
-  setAuthCookies(res, result);
+  // An admin or agent with 2FA on still has the authenticator step to go.
+  if (result.status === "SIGNED_IN") {
+    setAuthCookies(res, result);
+  }
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: "Email verified. Welcome to SalonKhuji!",
+    message:
+      result.status === "SIGNED_IN"
+        ? "Email verified. Welcome to SalonKhuji!"
+        : "Email verified. Enter the code from your authenticator app",
     data: result,
   });
 });
@@ -247,7 +275,9 @@ const googleCallback = catchAsync(async (req: Request, res: Response) => {
     message:
       result.status === "SIGNED_IN"
         ? "Signed in with Google"
-        : "Verify your email to finish creating your account",
+        : result.status === "TWO_FACTOR_REQUIRED"
+          ? "Enter the code from your authenticator app"
+          : "Verify your email to finish creating your account",
     data: result,
   });
 });
@@ -256,6 +286,7 @@ export const AuthController = {
   register,
   login,
   verifyOtp,
+  verifyTwoFactor,
   resendOtp,
   refreshToken,
   changePassword,

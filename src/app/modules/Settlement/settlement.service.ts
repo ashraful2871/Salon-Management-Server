@@ -8,6 +8,7 @@ import {
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { AuditOpts, auditTx, diff, systemAuditCtx } from "../../utils/audit";
 import { getSalonEarnings } from "./settlement.earnings";
 
 /**
@@ -263,10 +264,14 @@ const getSalonBalance = async (salonId: string) => {
  * are claimed with a `payoutId: null` filter, so two concurrent runs cannot
  * put the same entry into two payouts.
  */
-const runPayoutBatch = async (input?: {
-  periodStart?: Date;
-  periodEnd?: Date;
-}) => {
+const runPayoutBatch = async (
+  input?: {
+    periodStart?: Date;
+    periodEnd?: Date;
+  },
+  opts: AuditOpts = {},
+) => {
+  const auditCtx = opts.ctx ?? systemAuditCtx("job");
   const periodEnd = input?.periodEnd ?? new Date();
   const periodStart =
     input?.periodStart ?? new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -345,6 +350,22 @@ const runPayoutBatch = async (input?: {
         );
       }
 
+      await auditTx(tx, auditCtx, {
+        action: "payout.run",
+        entityType: "payout",
+        entityId: row.id,
+        salonId,
+        after: {
+          periodStart: periodStart.toISOString(),
+          periodEnd: periodEnd.toISOString(),
+          grossMinor,
+          commissionMinor,
+          netMinor: settledNet,
+          entries: entries.length,
+        },
+        reason: opts.reason,
+      });
+
       return row;
     });
 
@@ -393,6 +414,7 @@ const updatePayoutStatus = async (
     reference?: string;
     failureReason?: string;
   },
+  opts: AuditOpts = {},
 ) => {
   const payout = await prisma.payout.findUnique({ where: { id } });
 
@@ -414,15 +436,31 @@ const updatePayoutStatus = async (
     );
   }
 
-  return prisma.payout.update({
-    where: { id },
-    data: {
-      status: payload.status,
-      method: payload.method,
-      reference: payload.reference,
-      failureReason: payload.failureReason,
-      paidAt: payload.status === PayoutStatus.PAID ? new Date() : null,
-    },
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.payout.update({
+      where: { id },
+      data: {
+        status: payload.status,
+        method: payload.method,
+        reference: payload.reference,
+        failureReason: payload.failureReason,
+        paidAt: payload.status === PayoutStatus.PAID ? new Date() : null,
+      },
+    });
+
+    await auditTx(tx, opts.ctx ?? systemAuditCtx("job"), {
+      action: "payout.update",
+      entityType: "payout",
+      entityId: id,
+      salonId: payout.salonId,
+      ...diff(
+        { status: payout.status, method: payout.method, reference: payout.reference, failureReason: payout.failureReason },
+        { status: updated.status, method: updated.method, reference: updated.reference, failureReason: updated.failureReason },
+      ),
+      reason: opts.reason,
+    });
+
+    return updated;
   });
 };
 

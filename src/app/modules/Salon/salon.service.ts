@@ -3,6 +3,9 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { scheduleReindex } from "../AI-Suggestion/ai.indexer";
+import { audit, AuditOpts } from "../../utils/audit";
+import type { AdminContext } from "../Admin/admin.middleware";
+import { can, normalizeArea } from "../Admin/admin.permissions";
 import { countNearbySalons, findNearbySalonIds } from "./salon.geo";
 import { SalonListQuery } from "./salon.validation";
 
@@ -562,7 +565,17 @@ const updateSalonLocation = async (
   return result;
 };
 
-const updateSalonStatus = async (salonId: string, status: string, user?: any) => {
+/**
+ * Approve/reject needs salons.review; any other status needs salons.manage.
+ * An AGENT may only approve or reject, and only inside their own area - a
+ * salon elsewhere answers 404, as if it did not exist.
+ */
+const updateSalonStatus = async (
+  salonId: string,
+  status: string,
+  admin: AdminContext,
+  opts: AuditOpts = {},
+) => {
   const salon = await prisma.salon.findUnique({
     where: {
       id: salonId,
@@ -574,13 +587,15 @@ const updateSalonStatus = async (salonId: string, status: string, user?: any) =>
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
-  if (user?.role === "AGENT") {
-    const agent = await prisma.agent.findUnique({
-      where: { userId: user.userId },
-    });
-    if (!agent || agent.area !== salon.area) {
-      throw new ApiError(StatusCodes.FORBIDDEN, "You can only manage salons in your assigned area");
+  if (admin.accountRole === "AGENT") {
+    if (!admin.area || normalizeArea(admin.area) !== normalizeArea(salon.area)) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
     }
+  }
+
+  const isReview = status === "ACTIVE" || status === "REJECTED";
+  if (!can(admin, isReview ? "salons.review" : "salons.manage")) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "Forbidden");
   }
 
   const result = await prisma.salon.update({
@@ -591,6 +606,21 @@ const updateSalonStatus = async (salonId: string, status: string, user?: any) =>
   // Approval is when a salon becomes searchable.
   scheduleReindex(salonId, "salon.status");
 
+  await audit(opts.ctx, {
+    action:
+      status === "ACTIVE" && salon.status === "PENDING_APPROVAL"
+        ? "salon.approve"
+        : status === "REJECTED"
+          ? "salon.reject"
+          : "salon.status_change",
+    entityType: "salon",
+    entityId: salonId,
+    salonId,
+    before: { status: salon.status },
+    after: { status: result.status },
+    reason: opts.reason,
+  });
+
   return result;
 };
 
@@ -598,6 +628,7 @@ const deleteSalon = async (
   userId: string,
   userRole: string,
   salonId: string,
+  opts: AuditOpts = {},
 ) => {
   const salon = await prisma.salon.findUnique({
     where: {
@@ -629,6 +660,18 @@ const deleteSalon = async (
     where: { id: salonId },
     data: { isDeleted: true },
   });
+
+  if (userRole === "ADMIN") {
+    await audit(opts.ctx, {
+      action: "salon.delete",
+      entityType: "salon",
+      entityId: salonId,
+      salonId,
+      before: { status: salon.status, isDeleted: false },
+      after: { isDeleted: true },
+      reason: opts.reason,
+    });
+  }
 
   return null;
 };

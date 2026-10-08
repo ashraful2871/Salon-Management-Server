@@ -11,7 +11,9 @@ const applySalonOwnerValidation = z.object({
 });
 
 const approveSalonOwnerValidation = z.object({
-  body: z.object({}).optional(),
+  body: z
+    .object({ reason: z.string().trim().max(500).optional() })
+    .optional(),
 });
 
 const rejectSalonOwnerValidation = z.object({
@@ -19,6 +21,7 @@ const rejectSalonOwnerValidation = z.object({
     rejectionReason: z
       .string()
       .min(5, "Rejection reason must be at least 5 characters"),
+    reason: z.string().trim().max(500).optional(),
   }),
 });
 

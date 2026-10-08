@@ -5,6 +5,8 @@ import ApiError from "../../Error/error";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { ownedSalonIds } from "../../utils/salonAccess";
+import { audit } from "../../utils/audit";
+import { assertAdminPermission } from "../Admin/admin.middleware";
 import { isGeminiConfigured } from "./ai.gemini";
 import { aiService } from "./ai.service";
 import { AiValidation } from "./ai.validation";
@@ -51,6 +53,7 @@ const INDEX_MESSAGES = {
 const generateEmbedding = catchAsync(async (req: Request, res: Response) => {
   const { id } = req.params;
   const isAdmin = req.user?.role === "ADMIN";
+  await assertAdminPermission(req, "system.operate");
 
   if (!isAdmin && !(await ownedSalonIds(req.user?.userId)).includes(id)) {
     throw new ApiError(StatusCodes.FORBIDDEN, "You can only re-index your own salons");
@@ -82,6 +85,12 @@ const backfillEmbeddings = catchAsync(async (req: Request, res: Response) => {
   const force = req.query.all === "true";
 
   const result = await aiService.reindexAll({ force });
+  await audit(req.auditCtx, {
+    action: "ai.backfill",
+    entityType: "system",
+    entityId: "ai.index",
+    after: { force, ...result },
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

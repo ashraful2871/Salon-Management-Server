@@ -665,3 +665,77 @@ export const getBookingReminderTemplate = (reminder: {
      <p style="color:#7f8c8d;font-size:13px;">Show your token at the counter when you arrive.</p>`
   );
 };
+
+/**
+ * An invitation to join the back office as an admin or an area agent. The
+ * link carries the only copy of the token; accepting needs a signed-in,
+ * verified account on this same address.
+ */
+export const getAdminInvitationTemplate = (invite: {
+  name?: string | null;
+  inviterName: string;
+  roleLabel: string;
+  link: string;
+  expiresAt: Date;
+}) =>
+  moneyLayout(
+    "You are invited to the SalonKhuji team",
+    `<p>Hi ${escapeHtml(invite.name || "there")},</p>
+     <p>${escapeHtml(invite.inviterName)} invited you to join SalonKhuji as <strong>${escapeHtml(invite.roleLabel)}</strong>.</p>
+     <p><a href="${escapeHtml(invite.link)}" style="display:inline-block;padding:10px 20px;background:#1f2937;color:#fff;border-radius:999px;text-decoration:none;">Accept the invitation</a></p>
+     <p>Sign in (or create an account) with this email address, then accept. You will set up an authenticator app before you can use the console.</p>
+     <p style="color:#7f8c8d;font-size:12px;">This link expires on ${invite.expiresAt.toUTCString()}. If you did not expect it, ignore this email.</p>`
+  );
+
+const contactLine = (contactUrl: string) =>
+  `<p>If you think this is a mistake, <a href="${escapeHtml(contactUrl)}">contact us</a> and quote this email.</p>`;
+
+export const getAccountSuspendedTemplate = (notice: {
+  name: string;
+  reason: string;
+  until?: Date | null;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    "Your SalonKhuji account is suspended",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>We have suspended your SalonKhuji account${notice.until ? ` until <strong>${notice.until.toUTCString()}</strong>` : ""}. While it is suspended you cannot sign in or book.</p>
+     <p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>
+     ${notice.until ? "<p>Your account reactivates on its own when the suspension ends.</p>" : ""}
+     ${contactLine(notice.contactUrl)}`
+  );
+
+export const getAccountBlockedTemplate = (notice: {
+  name: string;
+  reason: string;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    "Your SalonKhuji account is blocked",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>We have blocked your SalonKhuji account. You can no longer sign in or book.</p>
+     <p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>
+     ${contactLine(notice.contactUrl)}`
+  );
+
+export const getAccountReactivatedTemplate = (notice: { name: string; signInUrl: string }) =>
+  moneyLayout(
+    "Your SalonKhuji account is active again",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>Your SalonKhuji account is active again. You can <a href="${escapeHtml(notice.signInUrl)}">sign in</a> and book as usual.</p>`
+  );
+
+/** Sent to the affected admin and every SUPER_ADMIN on a team change. */
+export const getAdminTeamChangeTemplate = (notice: {
+  heading: string;
+  summary: string;
+  actorName: string;
+  reason?: string | null;
+}) =>
+  moneyLayout(
+    notice.heading,
+    `<p>${escapeHtml(notice.summary)}</p>
+     <p><strong>Changed by:</strong> ${escapeHtml(notice.actorName)}</p>
+     ${notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : ""}
+     <p style="color:#7f8c8d;font-size:12px;">If you did not expect this change, contact another super admin at once.</p>`
+  );

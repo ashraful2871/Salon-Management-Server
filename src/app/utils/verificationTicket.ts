@@ -50,3 +50,53 @@ export const readTicket = (t: string) => {
     );
   }
 };
+
+const TWO_FACTOR_AUDIENCE = "salon:2fa";
+export const TWO_FACTOR_TICKET_SECONDS = 5 * 60;
+
+/**
+ * The proof, handed out after a correct password or Google round trip for an
+ * ADMIN/AGENT with 2FA on, that lets its bearer enter one authenticator code.
+ * Five minutes, its own audience, and single use: `ls` pins the account's
+ * lastUsedStep, which every accepted code or recovery code moves on.
+ */
+export const createTwoFactorTicket = ({
+  userId,
+  sessionVersion,
+  lastUsedStep,
+}: {
+  userId: string;
+  sessionVersion: number;
+  lastUsedStep: number | null;
+}) =>
+  jwt.sign({ sv: sessionVersion, ls: lastUsedStep }, authKey("ticket"), {
+    subject: userId,
+    audience: TWO_FACTOR_AUDIENCE,
+    expiresIn: TWO_FACTOR_TICKET_SECONDS,
+    algorithm: "HS256",
+  });
+
+export const readTwoFactorTicket = (t: string) => {
+  const key = authKey("ticket");
+
+  try {
+    const p = jwt.verify(t, key, {
+      audience: TWO_FACTOR_AUDIENCE,
+      algorithms: ["HS256"],
+    }) as JwtPayload;
+
+    if (!p.sub) throw new Error("ticket without subject");
+
+    return {
+      userId: String(p.sub),
+      sv: Number(p.sv ?? 0),
+      ls: p.ls === null || p.ls === undefined ? null : Number(p.ls),
+    };
+  } catch {
+    throw ApiError.withCode(
+      400,
+      "Your sign-in has expired. Please sign in again.",
+      "TICKET_EXPIRED"
+    );
+  }
+};

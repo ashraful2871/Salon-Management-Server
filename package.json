@@ -18,6 +18,7 @@
     "auth:check": "ts-node-dev --transpile-only ./src/scripts/authReadiness.ts",
     "auth:backfill": "ts-node-dev --transpile-only ./src/scripts/backfillAuth.ts",
     "verify:auth": "ts-node-dev --transpile-only ./src/scripts/verifyAuth.ts",
+    "verify:admin": "ts-node-dev --transpile-only ./src/scripts/verifyAdmin.ts",
     "test:email": "ts-node-dev --transpile-only ./src/scripts/testEmail.ts",
     "check:email": "ts-node-dev --transpile-only ./src/scripts/checkEmailKey.ts",
     "assistant:check": "ts-node-dev --transpile-only ./src/scripts/assistantReadiness.ts",
@@ -26,7 +27,9 @@
     "assistant:access": "ts-node-dev --transpile-only ./src/scripts/assistantAccessCheck.ts",
     "seed:dhaka": "ts-node-dev --transpile-only ./src/scripts/seedDhakaSalons.ts",
     "hair:check": "ts-node-dev --transpile-only ./src/scripts/hairTryOnCheck.ts",
-    "hair:spike": "ts-node-dev --transpile-only ./src/scripts/hairTryOnSpike.ts"
+    "hair:spike": "ts-node-dev --transpile-only ./src/scripts/hairTryOnSpike.ts",
+    "admin:create": "ts-node-dev --transpile-only ./src/scripts/adminCreate.ts",
+    "admin:reset-mfa": "ts-node-dev --transpile-only ./src/scripts/adminResetMfa.ts"
   },
   "keywords": [
     "salon",
@@ -56,6 +59,8 @@
     "http-status-codes": "^2.3.0",
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^9.0.6",
+    "otplib": "^13.5.0",
+    "qrcode": "^1.5.4",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -63,6 +68,7 @@
     "@types/multer": "^2.0.0",
     "@types/node": "^24.5.0",
     "@types/nodemailer": "^8.0.1",
+    "@types/qrcode": "^1.5.6",
     "multer": "^2.0.2",
     "prisma": "^6.17.0",
     "ts-node-dev": "^2.0.0",

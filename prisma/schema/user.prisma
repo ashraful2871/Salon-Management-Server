@@ -14,6 +14,14 @@ model User {
   emailVerifiedAt DateTime?
   /// Bumped to revoke every outstanding session and verification ticket.
   sessionVersion Int      @default(0)
+  /// Seed or demo account; hidden from admin lists by default.
+  isTest          Boolean   @default(false)
+  statusReason    String?
+  statusChangedAt DateTime?
+  /// SUSPENDED until then; the users.unsuspend job reactivates after it.
+  suspendedUntil  DateTime?
+  /// Bumped by auth() at most every 15 minutes.
+  lastActiveAt    DateTime?
   isDeleted    Boolean    @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
@@ -30,7 +38,10 @@ model User {
   assistantConversations AssistantConversation[]
   otpChallenges          OtpChallenge[]
   authIdentities         AuthIdentity[]
+  mfa                    UserMfa?
 
+  @@index([status, suspendedUntil])
+  @@index([createdAt])
   @@map("users")
 }
 
@@ -56,6 +67,9 @@ model Admin {
   canManageSalons   Boolean  @default(true)
   canManageServices Boolean  @default(true)
   canViewReports    Boolean  @default(true)
+  adminRole         AdminRole @default(ANALYST)
+  invitedById       String?
+  alertEmails       Boolean  @default(true)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -140,4 +154,46 @@ model AuthIdentity {
   @@unique([provider, providerUserId])
   @@index([userId])
   @@map("auth_identities")
+}
+
+/// TOTP second factor for ADMIN and AGENT accounts. The secret is stored
+/// AES-256-GCM encrypted ("iv:tag:ciphertext"); recovery codes as sha256.
+model UserMfa {
+  userId             String    @id
+  secretEnc          String
+  enabledAt          DateTime? // null while enrolling
+  lastUsedStep       Int?      // replay guard: the last accepted 30 s step
+  recoveryCodeHashes String[]
+  failedAttempts     Int       @default(0)
+  lockedUntil        DateTime?
+  stepUpUntil        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_mfa")
+}
+
+/// An emailed invitation to join as an ADMIN or AGENT. Only the sha256 of the
+/// token is stored; accepting claims the row once.
+model AdminInvitation {
+  id               String           @id @default(uuid())
+  email            String           // normalised
+  kind             String           // ADMIN | AGENT
+  name             String?
+  adminRole        AdminRole?
+  division         String?
+  district         String?
+  area             String?
+  tokenHash        String           @unique
+  status           InvitationStatus @default(PENDING)
+  invitedById      String
+  expiresAt        DateTime
+  acceptedAt       DateTime?
+  acceptedByUserId String?
+  createdAt        DateTime         @default(now())
+
+  @@index([email, status])
+  @@map("admin_invitations")
 }

@@ -1,57 +1,5 @@
-import bcrypt from "bcryptjs";
-import ApiError from "../../Error/error";
-import { StatusCodes } from "http-status-codes";
 import prisma from "../../shared/prisma";
 import { Prisma } from "@prisma/client";
-
-const createAgent = async (payload: any) => {
-  const { name, email, password, division, district, area, phone, gender } =
-    payload;
-
-  const existingUser = await prisma.user.findUnique({
-    where: { email },
-  });
-
-  if (existingUser) {
-    throw new ApiError(
-      StatusCodes.CONFLICT,
-      "User with this email already exists",
-    );
-  }
-
-  const hashedPassword = await bcrypt.hash(password, Number(12));
-
-  const result = await prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role: "AGENT",
-        phone,
-        gender,
-        // An admin creates agents and vouches for the address.
-        emailVerified: true,
-        emailVerifiedAt: new Date(),
-      },
-    });
-
-    const agent = await tx.agent.create({
-      data: {
-        userId: user.id,
-        division,
-        district,
-        area,
-      },
-    });
-
-    return { ...user, agent };
-  });
-
-  // Exclude password from the returned result
-  const { password: _password, ...userWithoutPassword } = result;
-  return userWithoutPassword;
-};
 
 const getAllAgents = async (query: any) => {
   const { searchTerm, page = 1, limit = 10 } = query;
@@ -106,6 +54,5 @@ const getAllAgents = async (query: any) => {
 };
 
 export const AgentService = {
-  createAgent,
   getAllAgents,
 };

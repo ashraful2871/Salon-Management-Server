@@ -1,0 +1,43 @@
+// Append-only record of every admin write (and later, jobs and CLI actions).
+// A trigger in the migration rejects UPDATE, and DELETE unless the retention
+// job sets app.audit_purge = 'on' for its transaction.
+model AuditLog {
+  id               String   @id @default(uuid())
+  actorUserId      String?
+  actorRole        String
+  onBehalfOfUserId String?
+  source           String   @default("api") // api | job | cli
+  salonId          String?
+  action           String
+  entityType       String
+  entityId         String?
+  before           Json?
+  after            Json?
+  reason           String?
+  ip               String?
+  userAgent        String?
+  requestId        String?
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([entityType, entityId])
+  @@index([salonId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+// Internal notes admins leave on a user, salon, booking, ... Soft-deleted.
+model AdminNote {
+  id         String    @id @default(uuid())
+  entityType String
+  entityId   String
+  authorId   String
+  body       String    @db.VarChar(2000)
+  pinned     Boolean   @default(false)
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@map("admin_notes")
+}

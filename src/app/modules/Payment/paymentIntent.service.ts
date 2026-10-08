@@ -10,6 +10,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
+import { audit, AuditCtx, auditTx } from "../../utils/audit";
 import { sendEmail } from "../../utils/emailSender";
 import { getWalletTopupInvoiceTemplate } from "../../utils/emailTemplates";
 import { WalletService } from "../Wallet/wallet.service";
@@ -645,6 +646,7 @@ const refundTopup = async (
   intentId: string,
   amountMinor: number | undefined,
   reason: string,
+  auditCtx?: AuditCtx,
 ) => {
   // The admin is more likely to have the transaction id (it is on the wallet
   // row) than our internal id.
@@ -739,6 +741,16 @@ const refundTopup = async (
         tx,
       );
 
+      // In the same transaction: no wallet debit without its audit row.
+      await auditTx(tx, auditCtx, {
+        action: "topup.refund",
+        entityType: "intent",
+        entityId: intent.id,
+        before: { remainingMinor: remaining },
+        after: { amountMinor: amount, remainingMinor: remaining - amount, attempt: n, provider: intent.provider },
+        reason,
+      });
+
       return { amount, remainingMinor: remaining - amount, n };
     },
     { maxWait: 10_000, timeout: 20_000 },
@@ -759,15 +771,24 @@ const refundTopup = async (
   }
 
   const entry = { n, amountMinor: amount, at: new Date().toISOString(), by: adminId };
+  const auditOutcome = (status: RefundStatus, message?: string | null) =>
+    audit(auditCtx, {
+      action: "topup.refund_result",
+      entityType: "intent",
+      entityId: intent.id,
+      after: { attempt: n, amountMinor: amount, status, message: message ?? null },
+    });
 
   if (result.ok) {
     const refundRef = result.refundRef ?? null;
     await recordRefund(intent.id, { ...entry, refundRef, status: "COMPLETED" });
+    await auditOutcome("COMPLETED");
     return { refundedMinor: amount, remainingMinor, status: "COMPLETED" as RefundStatus, refundRef };
   }
 
   if (result.unknown) {
     await recordRefund(intent.id, { ...entry, status: "UNKNOWN", message: result.message ?? null });
+    await auditOutcome("UNKNOWN", result.message);
     console.error(
       `[payment.refund] needs manual check: intent=${intent.id} tran=${intent.transactionId} refund #${n} of ${amount} poisha via ${intent.provider} (${gatewayRef}) - ${result.message}. The wallet was debited; confirm in the merchant portal before touching it.`,
     );
@@ -802,6 +823,7 @@ const refundTopup = async (
   }
 
   await recordRefund(intent.id, { ...entry, status: "FAILED", message });
+  await auditOutcome("FAILED", message);
   throw new ApiError(StatusCodes.BAD_GATEWAY, message);
 };
 

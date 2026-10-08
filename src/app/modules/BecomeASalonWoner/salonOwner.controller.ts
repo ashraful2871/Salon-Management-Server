@@ -3,6 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { SalonOwnerService } from "./salonOwner.service";
+import { audit } from "../../utils/audit";
 
 const applySalonOwner = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
@@ -62,6 +63,13 @@ const approveApplication = catchAsync(async (req: Request, res: Response) => {
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
   const result = await SalonOwnerService.approveApplication(adminUserId, id);
+  await audit(req.auditCtx, {
+    action: "application.approve",
+    entityType: "owner_application",
+    entityId: id,
+    after: { applicationStatus: "APPROVED" },
+    reason: req.body?.reason,
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -82,6 +90,13 @@ const rejectApplication = catchAsync(async (req: Request, res: Response) => {
     id,
     req.body
   );
+  await audit(req.auditCtx, {
+    action: "application.reject",
+    entityType: "owner_application",
+    entityId: id,
+    after: { applicationStatus: "REJECTED", rejectionReason: req.body.rejectionReason },
+    reason: req.body.reason ?? req.body.rejectionReason,
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

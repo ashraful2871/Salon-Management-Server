@@ -19,6 +19,7 @@ const createPaymentValidation = z.object({
 const updatePaymentStatusValidation = z.object({
   body: z.object({
     status: z.enum(["PENDING", "COMPLETED", "FAILED", "REFUNDED"]),
+    reason: z.string().trim().max(500).optional(),
   }),
 });
 

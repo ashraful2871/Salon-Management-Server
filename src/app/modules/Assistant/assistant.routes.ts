@@ -2,6 +2,7 @@ import express, { NextFunction, Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import { UserRole } from "@prisma/client";
 import auth from "../../middlewares/auth";
+import { adminAuth } from "../Admin/admin.middleware";
 import optionalAuth from "../../middlewares/optionalAuth";
 import {
   assistantLimiter,
@@ -130,6 +131,6 @@ router.post(
 
 /** Launch numbers: per-day counts, the funnel, the top problems. No
  *  transcripts, ADMIN only. */
-router.get("/stats", auth(UserRole.ADMIN), AssistantController.stats);
+router.get("/stats", adminAuth("analytics.view"), AssistantController.stats);
 
 export const AssistantRoutes = router;

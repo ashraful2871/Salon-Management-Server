@@ -193,3 +193,19 @@ enum BookingChannel {
   ASSISTANT
   WALK_IN
 }
+
+enum AdminRole {
+  SUPER_ADMIN
+  OPERATIONS
+  FINANCE
+  SUPPORT
+  MODERATOR
+  ANALYST
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}

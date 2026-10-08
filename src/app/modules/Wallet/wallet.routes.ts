@@ -1,8 +1,9 @@
 import express from "express";
 import { UserRole } from "@prisma/client";
 import auth from "../../middlewares/auth";
+import { adminAuth, requireStepUp } from "../Admin/admin.middleware";
 import validateRequest from "../../middlewares/validateRequest";
-import { paymentLimiter } from "../../middlewares/rateLimiter";
+import { adminSensitiveLimiter, paymentLimiter } from "../../middlewares/rateLimiter";
 import { WalletController } from "./wallet.controller";
 import { WalletValidation } from "./wallet.validation";
 
@@ -48,11 +49,13 @@ router.get(
  */
 router.post(
   "/admin/adjust",
-  auth(UserRole.ADMIN),
+  adminAuth("finance.wallet_adjust"),
   validateRequest(WalletValidation.adminAdjustValidation),
+  adminSensitiveLimiter,
+  requireStepUp(),
   WalletController.adminAdjust,
 );
 
-router.get("/admin/drift", auth(UserRole.ADMIN), WalletController.getDriftReport);
+router.get("/admin/drift", adminAuth("finance.view"), WalletController.getDriftReport);
 
 export const WalletRoutes = router;

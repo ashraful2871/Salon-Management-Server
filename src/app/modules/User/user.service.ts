@@ -2,6 +2,7 @@ import { StatusCodes } from "http-status-codes";
 import { Prisma } from "@prisma/client";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { audit, AuditOpts } from "../../utils/audit";
 
 const getAllUsers = async (query: any) => {
   const { page = 1, limit = 10, searchTerm, role, status } = query;
@@ -223,7 +224,11 @@ const updateUser = async (id: string, payload: any) => {
   return result;
 };
 
-const updateUserStatus = async (id: string, status: string) => {
+const updateUserStatus = async (
+  id: string,
+  status: string,
+  opts: AuditOpts = {},
+) => {
   // Check if user exists
   const user = await prisma.user.findUnique({
     where: {
@@ -257,10 +262,28 @@ const updateUserStatus = async (id: string, status: string) => {
     },
   });
 
+  await audit(opts.ctx, {
+    action: "user.status_change",
+    entityType: "user",
+    entityId: id,
+    before: { status: user.status },
+    after: { status: result.status },
+    reason: opts.reason,
+  });
+
   return result;
 };
 
-const updateUserRole = async (id: string, role: string) => {
+const updateUserRole = async (
+  id: string,
+  role: string,
+  actingUserId?: string,
+  opts: AuditOpts = {},
+) => {
+  if (id === actingUserId) {
+    throw new ApiError(StatusCodes.CONFLICT, "You cannot change your own role");
+  }
+
   // Check if user exists
   const user = await prisma.user.findUnique({
     where: {
@@ -277,6 +300,13 @@ const updateUserRole = async (id: string, role: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
+  if (user.role === "ADMIN") {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      "Admin accounts are managed from the admin team page",
+    );
+  }
+
   const result = await prisma.$transaction(
     async (tx: Prisma.TransactionClient) => {
       const updatedUser = await tx.user.update({
@@ -289,20 +319,25 @@ const updateUserRole = async (id: string, role: string) => {
         await tx.salonOwner.create({
           data: { userId: id },
         });
-      } else if (role === "ADMIN" && !user.admin) {
-        await tx.admin.create({
-          data: { userId: id },
-        });
       }
 
       return updatedUser;
     },
   );
 
+  await audit(opts.ctx, {
+    action: "user.role_change",
+    entityType: "user",
+    entityId: id,
+    before: { role: user.role },
+    after: { role: result.role },
+    reason: opts.reason,
+  });
+
   return result;
 };
 
-const deleteUser = async (id: string) => {
+const deleteUser = async (id: string, opts: AuditOpts = {}) => {
   // Check if user exists
   const user = await prisma.user.findUnique({
     where: {
@@ -322,6 +357,15 @@ const deleteUser = async (id: string) => {
       isDeleted: true,
       status: "DELETED",
     },
+  });
+
+  await audit(opts.ctx, {
+    action: "user.delete",
+    entityType: "user",
+    entityId: id,
+    before: { status: user.status, role: user.role, isDeleted: false },
+    after: { status: "DELETED", isDeleted: true },
+    reason: opts.reason,
   });
 
   return null;

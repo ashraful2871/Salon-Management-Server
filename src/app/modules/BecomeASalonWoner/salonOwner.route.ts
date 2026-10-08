@@ -1,5 +1,6 @@
 import express from "express";
 import auth from "../../middlewares/auth";
+import { adminAuth, adminOnly } from "../Admin/admin.middleware";
 import validateRequest from "../../middlewares/validateRequest";
 import { SalonOwnerController } from "./salonOwner.controller";
 import { SalonOwnerValidation } from "./salonOwner.validation";
@@ -25,26 +26,30 @@ router.get(
 // Admin: list + single //
 router.get(
   "/applications",
-  auth(UserRole.ADMIN),
+  adminAuth("salons.review"),
+  adminOnly,
   SalonOwnerController.getAllApplications,
 );
 router.get(
   "/applications/:id",
-  auth(UserRole.ADMIN),
+  adminAuth("salons.review"),
+  adminOnly,
   SalonOwnerController.getApplicationById,
 );
 
 // Admin: approve/reject
 router.patch(
   "/applications/:id/approve",
-  auth(UserRole.ADMIN),
+  adminAuth("salons.review"),
+  adminOnly,
   validateRequest(SalonOwnerValidation.approveSalonOwnerValidation),
   SalonOwnerController.approveApplication,
 );
 
 router.patch(
   "/applications/:id/reject",
-  auth(UserRole.ADMIN),
+  adminAuth("salons.review"),
+  adminOnly,
   validateRequest(SalonOwnerValidation.rejectSalonOwnerValidation),
   SalonOwnerController.rejectApplication,
 );

@@ -4,14 +4,13 @@ import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { AgentService } from "./agent.service";
 
-const createAgent = catchAsync(async (req: Request, res: Response) => {
-  const result = await AgentService.createAgent(req.body);
-
+// Agents arrive by invitation (POST /admin/agents/invitations); the old
+// create-with-a-password endpoint answers 410 so stale clients fail loudly.
+const createAgent = catchAsync(async (_req: Request, res: Response) => {
   sendResponse(res, {
-    statusCode: StatusCodes.CREATED,
-    success: true,
-    message: "Agent created successfully",
-    data: result,
+    statusCode: StatusCodes.GONE,
+    success: false,
+    message: "Agents are invited from the admin panel",
   });
 });
 

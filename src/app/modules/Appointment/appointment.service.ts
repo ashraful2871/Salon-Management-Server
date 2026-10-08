@@ -1599,8 +1599,20 @@ const resolveAppeal = async (
   payload: { approve: boolean; note?: string },
 ) => AppointmentDeposit.resolveAppeal(adminUserId, appointmentId, payload);
 
+/**
+ * An admin cancelling on the platform's behalf (e.g. suspending the
+ * customer): the whole deposit goes back, no penalty and no goodwill credit.
+ */
+const cancelByAdmin = (appointmentId: string, reason: string) =>
+  cancelInTx(appointmentId, {
+    by: "CUSTOMER",
+    freeCancellation: true,
+    reason,
+  });
+
 export const AppointmentService = {
   bookAppointment,
+  cancelByAdmin,
   // Exported for the assistant, which quotes a price in the chat and re-quotes
   // it at Confirm. Read-only: it never books.
   quoteBooking,

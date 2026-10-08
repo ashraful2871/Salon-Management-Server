@@ -3,8 +3,13 @@ import { UserRole } from "@prisma/client";
 import { PaymentController } from "./payment.controller";
 import { PaymentValidation } from "./payment.validation";
 import auth from "../../middlewares/auth";
+import {
+  adminAuth,
+  adminSensitiveForStaff,
+  requireStepUp,
+} from "../Admin/admin.middleware";
 import validateRequest from "../../middlewares/validateRequest";
-import { paymentLimiter } from "../../middlewares/rateLimiter";
+import { adminSensitiveLimiter, paymentLimiter } from "../../middlewares/rateLimiter";
 
 const router = express.Router();
 
@@ -30,7 +35,7 @@ router.post("/bkash/callback", PaymentController.handleBkashCallback);
 
 router.post(
   "/admin/reconcile",
-  auth(UserRole.ADMIN),
+  adminAuth("finance.reconcile"),
   PaymentController.runReconciliation,
 );
 
@@ -38,15 +43,17 @@ router.post(
 // or its transactionId.
 router.post(
   "/admin/intents/:id/refund",
-  auth(UserRole.ADMIN),
+  adminAuth("finance.refunds"),
   validateRequest(PaymentValidation.refundTopupValidation, { replaceBody: true }),
+  adminSensitiveLimiter,
+  requireStepUp(),
   PaymentController.refundTopup,
 );
 
 // Wallet top-ups with what was refunded of each, for the admin refund screen.
 router.get(
   "/admin/intents",
-  auth(UserRole.ADMIN),
+  adminAuth("finance.view"),
   PaymentController.getAdminTopups,
 );
 
@@ -94,6 +101,8 @@ router.patch(
   "/:id/status",
   auth(UserRole.ADMIN, UserRole.SALON_OWNER),
   validateRequest(PaymentValidation.updatePaymentStatusValidation),
+  adminSensitiveForStaff,
+  requireStepUp(),
   PaymentController.updatePaymentStatus,
 );
 

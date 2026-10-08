@@ -19,6 +19,8 @@ import { GeoRoutes } from "../modules/Geo/geo.route";
 import { AssistantRoutes } from "../modules/Assistant/assistant.routes";
 import { ContactRoutes } from "../modules/Contact/contact.routes";
 import { HairTryOnRoutes } from "../modules/HairTryOn/hairTryOn.routes";
+import { AdminRoutes } from "../modules/Admin/admin.routes";
+import { InvitationRoutes } from "../modules/Admin/invitations/invitation.routes";
 
 const router = express.Router();
 
@@ -102,6 +104,14 @@ const moduleRoutes = [
   {
     path: "/hairstyle",
     route: HairTryOnRoutes,
+  },
+  {
+    path: "/admin",
+    route: AdminRoutes,
+  },
+  {
+    path: "/invitations",
+    route: InvitationRoutes,
   },
 ];
 

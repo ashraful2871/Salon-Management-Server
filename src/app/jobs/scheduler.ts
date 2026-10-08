@@ -9,6 +9,7 @@ import {
   purgeHairTryOn,
   sweepHairTryOnTag,
 } from "../modules/HairTryOn/hairTryOn.cleanup";
+import { AdminUsersService } from "../modules/Admin/users/users.service";
 import prisma from "../shared/prisma";
 
 /**
@@ -40,6 +41,7 @@ const AUTH_CODE_KEEP_MS = 7 * 24 * HOUR;
 // within 24 hours" true with at most half an hour of slack.
 const HAIR_CLEANUP_INTERVAL_MS = 30 * MINUTE;
 const HAIR_SWEEP_INTERVAL_MS = 24 * HOUR;
+const USERS_UNSUSPEND_INTERVAL_MS = HOUR;
 
 /** A job that throws must never take the server down with it. */
 const safely = async (name: string, run: () => Promise<unknown>) => {
@@ -136,6 +138,8 @@ export const startBackgroundJobs = () => {
   // tag for anything the database lost track of.
   every(HAIR_CLEANUP_INTERVAL_MS, "hair.cleanup", purgeHairTryOn);
   every(HAIR_SWEEP_INTERVAL_MS, "hair.sweep", sweepHairTryOnTag);
+  // Timed account suspensions that have run out.
+  every(USERS_UNSUSPEND_INTERVAL_MS, "users.unsuspend", AdminUsersService.unsuspendExpired);
 
   // Catch anything that got stuck while the process was down, but not in the
   // first seconds of boot - a restart loop should not hammer the gateway.
