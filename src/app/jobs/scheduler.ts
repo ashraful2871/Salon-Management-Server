@@ -10,6 +10,7 @@ import {
   sweepHairTryOnTag,
 } from "../modules/HairTryOn/hairTryOn.cleanup";
 import { AdminUsersService } from "../modules/Admin/users/users.service";
+import { AdminApprovalsService } from "../modules/Admin/approvals/approvals.service";
 import prisma from "../shared/prisma";
 
 /**
@@ -140,6 +141,8 @@ export const startBackgroundJobs = () => {
   every(HAIR_SWEEP_INTERVAL_MS, "hair.sweep", sweepHairTryOnTag);
   // Timed account suspensions that have run out.
   every(USERS_UNSUSPEND_INTERVAL_MS, "users.unsuspend", AdminUsersService.unsuspendExpired);
+  // Four-eyes requests nobody decided within 24 h.
+  every(HOUR, "approvals.expire", AdminApprovalsService.expireStale);
 
   // Catch anything that got stuck while the process was down, but not in the
   // first seconds of boot - a restart loop should not hammer the gateway.

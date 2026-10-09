@@ -2,7 +2,9 @@ import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
-import { toMinor } from "../../utils/money";
+import ApiError from "../../Error/error";
+import { formatBDT, toMinor } from "../../utils/money";
+import { approvalThresholds, requireApprovalIf } from "../Admin/approvals/approvals.service";
 import { WalletService } from "./wallet.service";
 import { PaymentIntentService } from "../Payment/paymentIntent.service";
 
@@ -79,10 +81,39 @@ const getMyTopups = catchAsync(async (req: Request, res: Response) => {
 });
 
 const adminAdjust = catchAsync(async (req: Request, res: Response) => {
+  const amountMinor = toMinor(req.body.amount);
+  const reason: string = req.body.reason;
+
+  if (req.body.userId === req.user!.userId) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "You can't adjust your own wallet - ask another admin");
+  }
+
+  // Four-eyes: any debit, or a credit at or over the threshold.
+  if (
+    await requireApprovalIf(
+      req,
+      res,
+      "wallet.adjust",
+      async () =>
+        amountMinor < 0 ||
+        Math.abs(amountMinor) >= (await approvalThresholds()).walletAdjustOverMinor,
+      {
+        payload: { userId: req.body.userId, amountMinor, reason },
+        summary: `${amountMinor < 0 ? "Debit" : "Credit"} ${formatBDT(Math.abs(amountMinor))} ${amountMinor < 0 ? "from" : "to"} wallet of user ${req.body.userId}`,
+        reason,
+      },
+    )
+  ) {
+    return;
+  }
+
   const result = await WalletService.adminAdjust(req.user!.userId, {
     userId: req.body.userId,
-    amountMinor: toMinor(req.body.amount),
-    reason: req.body.reason,
+    amountMinor,
+    reason,
+    idempotencyKey: req.body.idempotencyKey
+      ? `admin-adjust:${req.body.idempotencyKey}`
+      : undefined,
   }, req.auditCtx);
 
   sendResponse(res, {

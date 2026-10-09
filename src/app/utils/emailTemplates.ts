@@ -544,6 +544,42 @@ export const getAppealResolvedTemplate = (
      <p style="color:#7f8c8d;font-size:13px;">If something is still not right, reply to this email.</p>`
   );
 
+/** A payout to a salon was sent (PAID) or bounced (FAILED). */
+export const getPayoutUpdateTemplate = (
+  ownerName: string,
+  salonName: string,
+  payout: { paid: boolean; amount: string; method?: string | null; reference?: string | null; failureReason?: string | null }
+) =>
+  moneyLayout(
+    payout.paid ? "Payout sent" : "Payout failed",
+    payout.paid
+      ? `<p>Hi ${escapeHtml(ownerName)},</p>
+     <p>We sent <strong>${payout.amount}</strong> to ${escapeHtml(salonName)}${
+       payout.method ? ` by ${escapeHtml(payout.method === "BKASH" ? "bKash" : "bank transfer")}` : ""
+     }.</p>${payout.reference ? `<p>Transfer reference: <strong>${escapeHtml(payout.reference)}</strong></p>` : ""}
+     <p style="color:#7f8c8d;font-size:13px;">The bookings behind it are on your Earnings page.</p>`
+      : `<p>Hi ${escapeHtml(ownerName)},</p>
+     <p>Our transfer of <strong>${payout.amount}</strong> to ${escapeHtml(salonName)} did not go through.${
+       payout.failureReason ? ` Reason: ${escapeHtml(payout.failureReason)}.` : ""
+     }</p>
+     <p>The money is still owed to you. Please check your payout details and reply to this email.</p>`
+  );
+
+/** Another admin asked for a second pair of eyes on a money move. */
+export const getApprovalRequestTemplate = (
+  requesterName: string,
+  summary: string,
+  reason: string,
+  url: string
+) =>
+  moneyLayout(
+    "Approval needed",
+    `<p>${escapeHtml(requesterName)} asked for approval:</p>
+     <p><strong>${escapeHtml(summary)}</strong></p>
+     <p>Reason: ${escapeHtml(reason)}</p>
+     <p><a href="${url}" style="color:#2c3e50;font-weight:bold;">Review it in the back office</a>. It expires in 24 hours.</p>`
+  );
+
 // For text a customer typed, such as their name. It lands in the salon owner's
 // inbox, so it must not be able to add links or markup of its own.
 export const escapeHtml = (value: string) =>

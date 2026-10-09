@@ -20,8 +20,10 @@ const updatePayoutStatusValidation = z.object({
     method: z.enum(["BKASH", "BANK"]).optional(),
     // Required when marking PAID - the service enforces that, because a payout
     // with no transfer reference cannot be traced later.
-    reference: z.string().trim().optional(),
-    failureReason: z.string().trim().optional(),
+    reference: z.string().trim().max(120).optional(),
+    // A link to the transfer screenshot or bank advice. Optional.
+    proofUrl: z.string().trim().url().max(500).optional(),
+    failureReason: z.string().trim().max(500).optional(),
     reason: z.string().trim().max(500).optional(),
   }),
 });

@@ -4,6 +4,7 @@ import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { toMinor } from "../../utils/money";
 import { audit } from "../../utils/audit";
+import { requireApprovalIf } from "../Admin/approvals/approvals.service";
 import { SettlementEarnings } from "./settlement.earnings";
 import { CommissionAdmin, SettlementService } from "./settlement.service";
 
@@ -43,10 +44,40 @@ const updatePayoutStatus = catchAsync(async (req: Request, res: Response) => {
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
   const { reason, ...payload } = req.body;
-  const result = await SettlementService.updatePayoutStatus(id, payload, {
-    ctx: req.auditCtx,
-    reason,
-  });
+
+  // Four-eyes: marking a payout paid always needs a second admin when on.
+  if (
+    payload.status === "PAID" &&
+    (await requireApprovalIf(
+      req,
+      res,
+      "payout.mark_paid",
+      async () => {
+        // Fail the obvious mistakes now rather than after someone approves.
+        await SettlementService.assertPayable(id, payload);
+        return true;
+      },
+      {
+        payload: {
+          payoutId: id,
+          method: payload.method,
+          reference: payload.reference,
+          proofUrl: payload.proofUrl ?? null,
+          reason: reason ?? null,
+        },
+        summary: `Mark payout ${id.slice(0, 8)} paid (${payload.method}, ref ${payload.reference})`,
+        reason: reason || `Payout ${id} paid, ref ${payload.reference}`,
+      },
+    ))
+  ) {
+    return;
+  }
+
+  const result = await SettlementService.updatePayoutStatus(
+    id,
+    { ...payload, markedPaidById: req.user!.userId },
+    { ctx: req.auditCtx, reason },
+  );
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

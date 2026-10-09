@@ -11,6 +11,9 @@ import prisma from "../../shared/prisma";
 import { AuditOpts, auditTx, diff, systemAuditCtx } from "../../utils/audit";
 import { getSetting, getSettingSync } from "../../utils/settings";
 import { getSalonEarnings } from "./settlement.earnings";
+import { sendEmail } from "../../utils/emailSender";
+import { getPayoutUpdateTemplate } from "../../utils/emailTemplates";
+import { formatBDT } from "../../utils/money";
 
 /**
  * Who is owed what, and why.
@@ -266,6 +269,57 @@ const getSalonBalance = async (salonId: string) => {
   return { salonId, payableMinor: result._sum.amountMinor ?? 0 };
 };
 
+/** Every salon's unpaid SALON_PAYABLE up to `periodEnd`, netted. */
+const payableGroups = (periodEnd: Date) =>
+  prisma.ledgerEntry.groupBy({
+    by: ["salonId"],
+    where: {
+      account: LedgerAccount.SALON_PAYABLE,
+      payoutId: null,
+      salonId: { not: null },
+      createdAt: { lte: periodEnd },
+    },
+    _sum: { amountMinor: true },
+  });
+
+/**
+ * What `runPayoutBatch` would raise right now, without writing anything: the
+ * same grouping and the same "positive net only" rule, so the totals match.
+ */
+const previewPayoutBatch = async (input?: { periodEnd?: Date }) => {
+  const periodEnd = input?.periodEnd ?? new Date();
+  const grouped = (await payableGroups(periodEnd)).filter(
+    (group) => (group._sum.amountMinor ?? 0) > 0,
+  );
+  const salons = await prisma.salon.findMany({
+    where: { id: { in: grouped.map((group) => group.salonId as string) } },
+    select: { id: true, name: true, area: true, isTest: true },
+  });
+  const byId = new Map(salons.map((salon) => [salon.id, salon]));
+
+  const rows = grouped
+    .map((group) => {
+      const salon = byId.get(group.salonId as string);
+      return {
+        salonId: group.salonId as string,
+        salonName: salon?.name ?? "Unknown salon",
+        area: salon?.area ?? null,
+        isTest: salon?.isTest ?? false,
+        netMinor: group._sum.amountMinor ?? 0,
+      };
+    })
+    .sort((a, b) => b.netMinor - a.netMinor);
+
+  return {
+    periodEnd,
+    rows,
+    totals: {
+      salons: rows.length,
+      netMinor: rows.reduce((total, row) => total + row.netMinor, 0),
+    },
+  };
+};
+
 /**
  * Rolls every salon's unpaid SALON_PAYABLE rows into one Payout each. Entries
  * are claimed with a `payoutId: null` filter, so two concurrent runs cannot
@@ -283,16 +337,7 @@ const runPayoutBatch = async (
   const periodStart =
     input?.periodStart ?? new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  const grouped = await prisma.ledgerEntry.groupBy({
-    by: ["salonId"],
-    where: {
-      account: LedgerAccount.SALON_PAYABLE,
-      payoutId: null,
-      salonId: { not: null },
-      createdAt: { lte: periodEnd },
-    },
-    _sum: { amountMinor: true },
-  });
+  const grouped = await payableGroups(periodEnd);
 
   const created: Array<{ payoutId: string; salonId: string; netMinor: number }> =
     [];
@@ -413,17 +458,26 @@ const getAllPayouts = async (query: any) => {
   return { meta: { page: pageNum, limit: limitNum, total }, data };
 };
 
-const updatePayoutStatus = async (
+type PayoutStatusChange = {
+  status: PayoutStatus;
+  method?: string;
+  reference?: string;
+  proofUrl?: string;
+  failureReason?: string;
+  /** Who marked it paid: the requester, also when a second admin approved it. */
+  markedPaidById?: string | null;
+};
+
+/**
+ * The checks a status change must pass. Run again inside the update, and on
+ * its own before a "mark paid" is sent for approval.
+ */
+const assertPayable = async (
   id: string,
-  payload: {
-    status: PayoutStatus;
-    method?: string;
-    reference?: string;
-    failureReason?: string;
-  },
-  opts: AuditOpts = {},
+  payload: PayoutStatusChange,
+  db: Prisma.TransactionClient = prisma,
 ) => {
-  const payout = await prisma.payout.findUnique({ where: { id } });
+  const payout = await db.payout.findUnique({ where: { id } });
 
   if (!payout) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Payout not found");
@@ -436,39 +490,123 @@ const updatePayoutStatus = async (
     );
   }
 
-  if (payload.status === PayoutStatus.PAID && !payload.reference?.trim()) {
+  const paid = payload.status === PayoutStatus.PAID;
+
+  if (paid && !payload.reference?.trim()) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       "A transfer reference is required when marking a payout paid",
     );
   }
 
-  return prisma.$transaction(async (tx) => {
-    const updated = await tx.payout.update({
-      where: { id },
+  if (paid && !payload.method) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Choose how the payout was sent (bKash or bank) when marking it paid",
+    );
+  }
+
+  if (payload.status === PayoutStatus.FAILED && !payload.failureReason?.trim()) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Say why the payout failed",
+    );
+  }
+
+  return payout;
+};
+
+const updatePayoutStatus = async (
+  id: string,
+  payload: PayoutStatusChange,
+  opts: AuditOpts = {},
+  tx?: Prisma.TransactionClient,
+) => {
+  const payout = await assertPayable(id, payload, tx);
+  const paid = payload.status === PayoutStatus.PAID;
+
+  const run = async (db: Prisma.TransactionClient) => {
+    // Conditional on "not PAID yet": two admins (or an approval and a direct
+    // call) cannot both mark the same payout paid.
+    const claimed = await db.payout.updateMany({
+      where: { id, status: { not: PayoutStatus.PAID } },
       data: {
         status: payload.status,
         method: payload.method,
         reference: payload.reference,
+        proofUrl: paid ? (payload.proofUrl ?? null) : undefined,
         failureReason: payload.failureReason,
-        paidAt: payload.status === PayoutStatus.PAID ? new Date() : null,
+        paidAt: paid ? new Date() : null,
+        markedPaidById: paid ? (payload.markedPaidById ?? opts.ctx?.actorUserId ?? null) : null,
       },
     });
 
-    await auditTx(tx, opts.ctx ?? systemAuditCtx("job"), {
+    if (claimed.count === 0) {
+      throw new ApiError(StatusCodes.CONFLICT, "This payout is already marked as paid");
+    }
+
+    const updated = await db.payout.findUniqueOrThrow({ where: { id } });
+
+    await auditTx(db, opts.ctx ?? systemAuditCtx("job"), {
       action: "payout.update",
       entityType: "payout",
       entityId: id,
       salonId: payout.salonId,
       ...diff(
-        { status: payout.status, method: payout.method, reference: payout.reference, failureReason: payout.failureReason },
-        { status: updated.status, method: updated.method, reference: updated.reference, failureReason: updated.failureReason },
+        { status: payout.status, method: payout.method, reference: payout.reference, proofUrl: payout.proofUrl, failureReason: payout.failureReason },
+        { status: updated.status, method: updated.method, reference: updated.reference, proofUrl: updated.proofUrl, failureReason: updated.failureReason },
       ),
       reason: opts.reason,
     });
 
     return updated;
-  });
+  };
+
+  const updated = tx ? await run(tx) : await prisma.$transaction(run);
+
+  if (updated.status === PayoutStatus.PAID || updated.status === PayoutStatus.FAILED) {
+    void emailPayoutOwner(updated);
+  }
+
+  return updated;
+};
+
+/** PAID and FAILED both reach the salon owner. Never throws. */
+const emailPayoutOwner = async (payout: {
+  salonId: string;
+  status: PayoutStatus;
+  netMinor: number;
+  method: string | null;
+  reference: string | null;
+  failureReason: string | null;
+}) => {
+  try {
+    const salon = await prisma.salon.findUnique({
+      where: { id: payout.salonId },
+      select: { name: true, owner: { select: { user: { select: { name: true, email: true } } } } },
+    });
+    const owner = salon?.owner?.user;
+    if (!salon || !owner?.email) return;
+
+    const result = await sendEmail(
+      owner.email,
+      payout.status === PayoutStatus.PAID
+        ? `Payout sent: ${formatBDT(payout.netMinor)}`
+        : "Your payout did not go through",
+      getPayoutUpdateTemplate(owner.name, salon.name, {
+        paid: payout.status === PayoutStatus.PAID,
+        amount: formatBDT(payout.netMinor),
+        method: payout.method,
+        reference: payout.reference,
+        failureReason: payout.failureReason,
+      }),
+    );
+    console.log(
+      `[payout] ${payout.status} email to the owner of ${salon.name}: ${result.ok ? "sent" : `not sent (${result.error})`}`,
+    );
+  } catch (error) {
+    console.error("[payout] owner email failed", error);
+  }
 };
 
 /** A salon owner's own settlement view. */
@@ -650,8 +788,10 @@ export const SettlementService = {
   reverseForfeitedDeposit,
   getSalonBalance,
   runPayoutBatch,
+  previewPayoutBatch,
   getAllPayouts,
   updatePayoutStatus,
+  assertPayable,
   getMyPayouts,
   getMyEarnings,
   findUnbalancedAppointments,

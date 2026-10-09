@@ -10,6 +10,8 @@ import { AdminSalonsRoutes } from "./salons/salons.routes";
 import { AdminBookingsRoutes } from "./bookings/bookings.routes";
 import { AdminAppealsRoutes } from "./appeals/appeals.routes";
 import { AdminSettingsRoutes } from "./settings/settings.routes";
+import { AdminFinanceRoutes } from "./finance/finance.routes";
+import { AdminApprovalsRoutes } from "./approvals/approvals.routes";
 import { AdminAgentsController } from "./agents/agents.controller";
 import { AdminController } from "./admin.controller";
 import { AdminValidation } from "./admin.validation";
@@ -34,6 +36,8 @@ router.use("/salons", AdminSalonsRoutes);
 router.use("/bookings", AdminBookingsRoutes);
 router.use("/appeals", AdminAppealsRoutes);
 router.use("/settings", AdminSettingsRoutes);
+router.use("/finance", AdminFinanceRoutes);
+router.use("/approvals", AdminApprovalsRoutes);
 router.get("/areas", adminAuth("agents.manage"), adminOnly, AdminAgentsController.areas);
 
 // Results and inbox items are filtered by the caller's permissions inside.

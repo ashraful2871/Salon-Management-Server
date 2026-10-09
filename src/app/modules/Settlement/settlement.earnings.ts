@@ -44,16 +44,29 @@ const monthLabel = (key: string) => {
  * a chart with holes in its axis reads as lost revenue rather than a quiet
  * month, so the gaps are filled here with explicit zeroes.
  */
-const trendWindow = () => {
-  const now = new Date();
+const trendWindow = (range?: { from?: Date; to?: Date }) => {
+  const now = range?.to ?? new Date();
+  // A chosen range draws its own months, capped at two years of bars.
+  const months = range?.from
+    ? Math.min(
+        24,
+        Math.max(
+          1,
+          (now.getFullYear() - range.from.getFullYear()) * 12 +
+            now.getMonth() -
+            range.from.getMonth() +
+            1,
+        ),
+      )
+    : TREND_MONTHS;
   const start = new Date(
     now.getFullYear(),
-    now.getMonth() - (TREND_MONTHS - 1),
+    now.getMonth() - (months - 1),
     1,
   );
 
   const keys: string[] = [];
-  for (let index = 0; index < TREND_MONTHS; index += 1) {
+  for (let index = 0; index < months; index += 1) {
     keys.push(
       monthKey(new Date(start.getFullYear(), start.getMonth() + index, 1)),
     );
@@ -307,14 +320,35 @@ export const getSalonEarnings = async (
  * The same view from the platform's side of the ledger: what we earned, what we
  * still owe salons, and how much customer money we are holding.
  */
-export const getPlatformEarnings = async () => {
-  const { start, keys } = trendWindow();
+export type EarningsRange = {
+  from?: Date;
+  to?: Date;
+  /** Seed/test salons and users. Default true, so the old callers see everything. */
+  includeTest?: boolean;
+};
+
+export const getPlatformEarnings = async (range: EarningsRange = {}) => {
+  const { start, keys } = trendWindow(range);
+  const includeTest = range.includeTest ?? true;
 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const monthStart = new Date();
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
+
+  // Flows (bookings, commission, top-ups) follow the range; balances (float,
+  // held, payable, payouts) are what is true right now.
+  const inRange =
+    range.from || range.to
+      ? { ...(range.from && { gte: range.from }), ...(range.to && { lte: range.to }) }
+      : undefined;
+  const realSalon = includeTest ? {} : { salon: { isTest: false } };
+  const realUser = includeTest ? {} : { user: { isTest: false } };
+  const realLedger = includeTest ? {} : { salon: { isTest: false } };
+  const sqlFrom = range.from && range.from > start ? range.from : start;
+  const sqlTo = range.to ?? new Date("9999-12-31T00:00:00Z");
+  const sqlTest = includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false`;
 
   const [
     completed,
@@ -331,18 +365,19 @@ export const getPlatformEarnings = async () => {
     monthlyCommission,
   ] = await Promise.all([
     prisma.appointment.aggregate({
-      where: { status: "COMPLETED" },
+      where: { status: "COMPLETED", appointmentDate: inRange, ...realSalon },
       _sum: { totalMinor: true },
       _count: true,
     }),
     prisma.ledgerEntry.aggregate({
-      where: { account: LedgerAccount.PLATFORM_REVENUE },
+      where: { account: LedgerAccount.PLATFORM_REVENUE, createdAt: inRange, ...realLedger },
       _sum: { amountMinor: true },
     }),
     prisma.ledgerEntry.aggregate({
       where: {
         account: LedgerAccount.PLATFORM_REVENUE,
         createdAt: { gte: monthStart },
+        ...realLedger,
       },
       _sum: { amountMinor: true },
     }),
@@ -350,31 +385,37 @@ export const getPlatformEarnings = async () => {
       where: {
         account: LedgerAccount.PLATFORM_REVENUE,
         createdAt: { gte: todayStart },
+        ...realLedger,
       },
       _sum: { amountMinor: true },
     }),
     prisma.ledgerEntry.aggregate({
-      where: { account: LedgerAccount.SALON_PAYABLE, payoutId: null },
+      where: { account: LedgerAccount.SALON_PAYABLE, payoutId: null, ...realLedger },
       _sum: { amountMinor: true },
     }),
     prisma.payout.groupBy({
       by: ["status"],
+      where: realSalon,
       _sum: { netMinor: true },
       _count: true,
     }),
     // Customer money sitting with us. It is a liability, not revenue.
-    prisma.wallet.aggregate({ _sum: { balance: true, heldBalance: true } }),
+    prisma.wallet.aggregate({ where: realUser, _sum: { balance: true, heldBalance: true } }),
     prisma.walletTransaction.aggregate({
-      where: { type: WalletTxType.TOPUP },
+      where: {
+        type: WalletTxType.TOPUP,
+        createdAt: inRange,
+        ...(includeTest ? {} : { wallet: { user: { isTest: false } } }),
+      },
       _sum: { amount: true },
       _count: true,
     }),
     prisma.appointment.aggregate({
-      where: { depositStatus: "HELD" },
+      where: { depositStatus: "HELD", ...realSalon },
       _sum: { depositMinor: true },
     }),
     prisma.appointment.aggregate({
-      where: { depositStatus: "FORFEITED" },
+      where: { depositStatus: "FORFEITED", appointmentDate: inRange, ...realSalon },
       _sum: { depositMinor: true },
       _count: true,
     }),
@@ -385,8 +426,11 @@ export const getPlatformEarnings = async () => {
              COALESCE(SUM(a."totalMinor"), 0)::int AS "grossMinor",
              COUNT(*)::int AS bookings
       FROM appointments a
+      JOIN salons s ON s.id = a."salonId"
       WHERE a.status = 'COMPLETED'
-        AND a."appointmentDate" >= ${start}
+        AND a."appointmentDate" >= ${sqlFrom}
+        AND a."appointmentDate" <= ${sqlTo}
+        ${sqlTest}
       GROUP BY 1
     `,
     prisma.$queryRaw<Array<{ month: string; commissionMinor: number }>>`
@@ -394,8 +438,11 @@ export const getPlatformEarnings = async () => {
              COALESCE(SUM(l."amountMinor"), 0)::int AS "commissionMinor"
       FROM ledger_entries l
       JOIN appointments a ON a.id = l."appointmentId"
+      JOIN salons s ON s.id = a."salonId"
       WHERE l.account = 'PLATFORM_REVENUE'
-        AND a."appointmentDate" >= ${start}
+        AND a."appointmentDate" >= ${sqlFrom}
+        AND a."appointmentDate" <= ${sqlTo}
+        ${sqlTest}
       GROUP BY 1
     `,
   ]);

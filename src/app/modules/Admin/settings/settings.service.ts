@@ -5,7 +5,6 @@ import { AuditCtx } from "../../../utils/audit";
 import {
   describeSettings,
   envOnlyStatus,
-  getSetting,
   isSettingKey,
   SettingGroup,
   SETTINGS,
@@ -91,11 +90,6 @@ const updateSetting = async (
   body: { value: unknown; reason: string },
 ) => {
   const key = assertKey(rawKey);
-
-  if (SETTINGS[key].approval && (await getSetting("approvals.enabled"))) {
-    // TODO(Phase 8): queue an AdminApproval and answer 202 APPROVAL_REQUIRED.
-    // The approvals table does not exist yet, so the change applies directly.
-  }
 
   return setSetting(key, body.value, ctx, body.reason);
 };

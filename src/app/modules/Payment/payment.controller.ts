@@ -3,7 +3,8 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import config from "../../../config";
-import { toMinor } from "../../utils/money";
+import { formatBDT, toMinor } from "../../utils/money";
+import { approvalThresholds, requireApprovalIf } from "../Admin/approvals/approvals.service";
 import { PaymentService } from "./payment.service";
 import { PaymentIntentService } from "./paymentIntent.service";
 import { audit } from "../../utils/audit";
@@ -225,10 +226,31 @@ const runReconciliation = catchAsync(async (req: Request, res: Response) => {
 });
 
 const refundTopup = catchAsync(async (req: Request, res: Response) => {
+  const amountMinor: number | undefined =
+    req.body.amount === undefined ? undefined : toMinor(req.body.amount);
+  const intent = await PaymentIntentService.refundRequestInfo(req.user!.userId, req.params.id);
+  const requested = amountMinor ?? intent.amountMinor;
+
+  if (
+    await requireApprovalIf(
+      req,
+      res,
+      "topup.refund",
+      async () => requested >= (await approvalThresholds()).refundOverMinor,
+      {
+        payload: { intentId: intent.id, amountMinor: amountMinor ?? null, reason: req.body.reason },
+        summary: `Refund ${amountMinor === undefined ? "what is left of" : formatBDT(amountMinor) + " of"} top-up ${intent.transactionId} (${formatBDT(intent.amountMinor)})`,
+        reason: req.body.reason,
+      },
+    )
+  ) {
+    return;
+  }
+
   const result = await PaymentIntentService.refundTopup(
     req.user!.userId,
     req.params.id,
-    req.body.amount === undefined ? undefined : toMinor(req.body.amount),
+    amountMinor,
     req.body.reason,
     req.auditCtx,
   );

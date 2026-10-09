@@ -218,3 +218,14 @@ enum InvitationStatus {
   REVOKED
   EXPIRED
 }
+
+/// Four-eyes approvals: PENDING until a second admin decides or 24 h pass.
+/// APPROVED is the claimed state while the action runs; it ends EXECUTED or FAILED.
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  EXECUTED
+  FAILED
+}

@@ -41,3 +41,27 @@ model AdminNote {
   @@index([entityType, entityId, createdAt])
   @@map("admin_notes")
 }
+
+/// A money move held for a second admin. `action` names an entry in the
+/// approvals ACTIONS registry; `payload` is exactly what the direct route
+/// would have passed to its service function.
+model AdminApproval {
+  id            String         @id @default(uuid())
+  action        String // wallet.adjust | topup.refund | payout.mark_paid | setting.update
+  payload       Json
+  summary       String
+  requestedById String
+  reason        String
+  status        ApprovalStatus @default(PENDING)
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  executedAt    DateTime?
+  result        Json?
+  error         String?
+  expiresAt     DateTime // 24 h
+  createdAt     DateTime       @default(now())
+
+  @@index([status, createdAt])
+  @@map("admin_approvals")
+}

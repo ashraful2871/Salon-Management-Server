@@ -546,7 +546,12 @@ const listPaymentMethods = () =>
  * An intent whose IPN never arrived must not sit PENDING forever. Ask the
  * gateway what happened and settle it either way.
  */
+/** When this process last ran reconciliation (job or "Run now"). Resets on deploy. */
+let lastReconcileRunAt: Date | null = null;
+export const getLastReconcileAt = () => lastReconcileRunAt;
+
 const reconcilePendingIntents = async () => {
+  lastReconcileRunAt = new Date();
   const staleBefore = new Date(Date.now() - STALE_AFTER_MS);
 
   const pending = await prisma.paymentIntent.findMany({
@@ -641,6 +646,23 @@ const recordRefund = async (
  * puts it back; a timeout leaves it out and asks for a manual check, because
  * undoing a refund that did go through would pay the customer twice.
  */
+/**
+ * What the four-eyes check needs before a refund is queued: the top-up's
+ * amount and owner. Refuses the caller's own top-up up front, so it is not
+ * sent for approval only to fail later.
+ */
+const refundRequestInfo = async (adminId: string, intentIdOrTxn: string) => {
+  const intent = await prisma.paymentIntent.findFirst({
+    where: { OR: [{ id: intentIdOrTxn }, { transactionId: intentIdOrTxn }] },
+    select: { id: true, transactionId: true, userId: true, amountMinor: true },
+  });
+  if (!intent) throw new ApiError(StatusCodes.NOT_FOUND, "Payment not found");
+  if (intent.userId === adminId) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "You can't refund your own top-up - ask another admin");
+  }
+  return intent;
+};
+
 const refundTopup = async (
   adminId: string,
   intentId: string,
@@ -656,6 +678,13 @@ const refundTopup = async (
 
   if (!intent) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Payment not found");
+  }
+
+  if (intent.userId === adminId) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You can't refund your own top-up - ask another admin",
+    );
   }
 
   const provider = getProvider(intent.provider);
@@ -1052,6 +1081,7 @@ export const PaymentIntentService = {
   markIntentFailed,
   reconcilePendingIntents,
   refundTopup,
+  refundRequestInfo,
   listTopupsForAdmin,
   getMyIntents,
   getIntentStatus,

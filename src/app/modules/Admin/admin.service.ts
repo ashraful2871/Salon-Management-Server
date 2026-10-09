@@ -4,9 +4,12 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { audit, AuditCtx } from "../../utils/audit";
 import { mfaStatus } from "../../utils/mfa";
+import { getSetting } from "../../utils/settings";
 import type { AdminContext } from "./admin.middleware";
 import { can, normalizeArea, Permission } from "./admin.permissions";
 import { NOTE_ENTITY_TYPES } from "./admin.validation";
+import { SettlementService } from "../Settlement/settlement.service";
+import { WalletService } from "../Wallet/wallet.service";
 
 // Frontend admin routes are built in Phase 3; these hrefs are where they go.
 const HREF = {
@@ -33,6 +36,15 @@ const getMe = async (admin: AdminContext) => {
     permissions: admin.permissions,
     area: admin.area ?? null,
     mfa: await mfaStatus(admin.userId),
+    // Drives the Approvals nav link: shown when four-eyes is on (or requests
+    // are still waiting after it was switched off).
+    approvals: {
+      enabled: admin.accountRole === "ADMIN" && (await getSetting("approvals.enabled")),
+      pending:
+        admin.accountRole === "ADMIN"
+          ? await prisma.adminApproval.count({ where: { status: "PENDING", expiresAt: { gt: new Date() } } })
+          : 0,
+    },
   };
 };
 
@@ -365,7 +377,7 @@ const inbox = async (admin: AdminContext): Promise<InboxItem[]> => {
           count: agg._count._all,
           oldestAt: agg._min.createdAt,
           tone: "warning" as const,
-          href: "/dashboard/admin/finance/intents?status=PENDING",
+          href: "/dashboard/admin/finance/topups?status=PENDING",
         })),
       prisma.payout
         .aggregate({
@@ -396,7 +408,46 @@ const inbox = async (admin: AdminContext): Promise<InboxItem[]> => {
     );
   }
 
-  // Unbalanced ledger, wallet drift, failed jobs and storage arrive in Phase 12.
+  if (has("finance.view")) {
+    items.push(
+      SettlementService.findUnbalancedAppointments().then((rows) => ({
+        key: "ledger.unbalanced",
+        count: rows.length,
+        tone: "danger" as const,
+        href: "/dashboard/admin/finance/ledger#unbalanced",
+      })),
+      WalletService.findDrift().then((rows) => ({
+        key: "wallets.drift",
+        count: rows.length,
+        tone: "danger" as const,
+        href: "/dashboard/admin/finance/ledger#drift",
+      })),
+    );
+  }
+
+  // Four-eyes requests someone else raised that this admin could decide.
+  if (
+    admin.accountRole === "ADMIN" &&
+    (["finance.payouts", "finance.refunds", "finance.wallet_adjust", "settings.manage"] as const).some(has)
+  ) {
+    items.push(
+      prisma.adminApproval
+        .aggregate({
+          where: { status: "PENDING", expiresAt: { gt: new Date() }, requestedById: { not: admin.userId } },
+          _count: { _all: true },
+          _min: { createdAt: true },
+        })
+        .then((agg) => ({
+          key: "approvals.pending",
+          count: agg._count._all,
+          oldestAt: agg._min.createdAt,
+          tone: "warning" as const,
+          href: "/dashboard/admin/finance/approvals",
+        })),
+    );
+  }
+
+  // Failed jobs and storage arrive in Phase 12.
 
   return (await Promise.all(items)).filter((i): i is InboxItem => !!i && i.count > 0);
 };
