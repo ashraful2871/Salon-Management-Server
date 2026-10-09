@@ -3,9 +3,6 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { scheduleReindex } from "../AI-Suggestion/ai.indexer";
-import { audit, AuditOpts } from "../../utils/audit";
-import type { AdminContext } from "../Admin/admin.middleware";
-import { can, normalizeArea } from "../Admin/admin.permissions";
 import { countNearbySalons, findNearbySalonIds } from "./salon.geo";
 import { SalonListQuery } from "./salon.validation";
 
@@ -398,7 +395,10 @@ const getMySalons = async (userId: string, query: any) => {
   };
 };
 
-const getSalonById = async (id: string) => {
+const getSalonById = async (
+  id: string,
+  user?: { userId?: string; role?: string } | Record<string, any>,
+) => {
   const salon = await prisma.salon.findUnique({
     where: {
       id,
@@ -452,14 +452,20 @@ const getSalonById = async (id: string) => {
     },
   });
 
-  if (!salon) {
+  // A salon that is pending, rejected, suspended or inactive is not public:
+  // only its owner and ADMIN/AGENT see it, everyone else gets the same 404.
+  const isStaff = user?.role === "ADMIN" || user?.role === "AGENT";
+  if (
+    !salon ||
+    (salon.status !== "ACTIVE" && !isStaff && salon.owner.user.id !== user?.userId)
+  ) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
   return salon;
 };
 
-const updateSalon = async (userId: string, salonId: string, payload: any) => {
+const updateSalon =async (userId: string, salonId: string, payload: any) => {
   const salonOwner = await prisma.salonOwner.findUnique({
     where: { userId },
   });
@@ -503,6 +509,11 @@ const updateSalon = async (userId: string, salonId: string, payload: any) => {
     data.longitude = payload.longitude;
     data.locationAccuracy = "EXACT";
     data.locationUpdatedAt = new Date();
+  }
+
+  // Fixing a rejected salon resubmits it: it goes back into the review queue.
+  if (salon.status === "REJECTED") {
+    data.status = "PENDING_APPROVAL";
   }
 
   const result = await prisma.salon.update({
@@ -565,17 +576,8 @@ const updateSalonLocation = async (
   return result;
 };
 
-/**
- * Approve/reject needs salons.review; any other status needs salons.manage.
- * An AGENT may only approve or reject, and only inside their own area - a
- * salon elsewhere answers 404, as if it did not exist.
- */
-const updateSalonStatus = async (
-  salonId: string,
-  status: string,
-  admin: AdminContext,
-  opts: AuditOpts = {},
-) => {
+/** Owners only; admins delete through DELETE /admin/salons/:id. */
+const deleteSalon = async (userId: string, salonId: string) => {
   const salon = await prisma.salon.findUnique({
     where: {
       id: salonId,
@@ -587,72 +589,15 @@ const updateSalonStatus = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
-  if (admin.accountRole === "AGENT") {
-    if (!admin.area || normalizeArea(admin.area) !== normalizeArea(salon.area)) {
-      throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
-    }
-  }
-
-  const isReview = status === "ACTIVE" || status === "REJECTED";
-  if (!can(admin, isReview ? "salons.review" : "salons.manage")) {
-    throw new ApiError(StatusCodes.FORBIDDEN, "Forbidden");
-  }
-
-  const result = await prisma.salon.update({
-    where: { id: salonId },
-    data: { status: status as any },
+  const salonOwner = await prisma.salonOwner.findUnique({
+    where: { userId },
   });
 
-  // Approval is when a salon becomes searchable.
-  scheduleReindex(salonId, "salon.status");
-
-  await audit(opts.ctx, {
-    action:
-      status === "ACTIVE" && salon.status === "PENDING_APPROVAL"
-        ? "salon.approve"
-        : status === "REJECTED"
-          ? "salon.reject"
-          : "salon.status_change",
-    entityType: "salon",
-    entityId: salonId,
-    salonId,
-    before: { status: salon.status },
-    after: { status: result.status },
-    reason: opts.reason,
-  });
-
-  return result;
-};
-
-const deleteSalon = async (
-  userId: string,
-  userRole: string,
-  salonId: string,
-  opts: AuditOpts = {},
-) => {
-  const salon = await prisma.salon.findUnique({
-    where: {
-      id: salonId,
-      isDeleted: false,
-    },
-  });
-
-  if (!salon) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
-  }
-
-  // Check ownership if not admin
-  if (userRole !== "ADMIN") {
-    const salonOwner = await prisma.salonOwner.findUnique({
-      where: { userId },
-    });
-
-    if (!salonOwner || salon.ownerId !== salonOwner.id) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "You can only delete your own salons",
-      );
-    }
+  if (!salonOwner || salon.ownerId !== salonOwner.id) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You can only delete your own salons",
+    );
   }
 
   // Soft delete
@@ -660,18 +605,6 @@ const deleteSalon = async (
     where: { id: salonId },
     data: { isDeleted: true },
   });
-
-  if (userRole === "ADMIN") {
-    await audit(opts.ctx, {
-      action: "salon.delete",
-      entityType: "salon",
-      entityId: salonId,
-      salonId,
-      before: { status: salon.status, isDeleted: false },
-      after: { isDeleted: true },
-      reason: opts.reason,
-    });
-  }
 
   return null;
 };
@@ -683,6 +616,5 @@ export const SalonService = {
   getSalonById,
   updateSalon,
   updateSalonLocation,
-  updateSalonStatus,
   deleteSalon,
 };

@@ -14,6 +14,7 @@ import {
   ownedSalonIds,
 } from "../../utils/salonAccess";
 import { paymentSummary, withPaymentSummary } from "./appointment.billing";
+import { getSetting } from "../../utils/settings";
 import { AppointmentDeposit } from "./appointment.deposit";
 
 /**
@@ -34,12 +35,12 @@ const DAY_MS = 24 * HOUR_MS;
 /** How early before the start time a customer may check in. */
 const CHECK_IN_OPENS_MIN = 60;
 
-/**
+/*
  * How long after its scheduled end a checked-in booking may sit open before
- * the job closes it. Generous on purpose: the salon closing it themselves is
- * always better, because only they know what the counter took.
+ * the job closes it is the booking.staleCheckoutHours platform setting (env
+ * STALE_CHECKOUT_HOURS, 12). Generous on purpose: the salon closing it
+ * themselves is always better, because only they know what the counter took.
  */
-const STALE_CHECKOUT_HOURS = Number(process.env.STALE_CHECKOUT_HOURS ?? 12);
 
 const TX_OPTIONS = { timeout: 15000, maxWait: 10000 };
 
@@ -263,7 +264,7 @@ const start = async (user: Actor, appointmentId: string) => {
 
   const { count } = await prisma.appointment.updateMany({
     where: { id: appointmentId, status: AppointmentStatus.CHECKED_IN },
-    data: { status: AppointmentStatus.IN_PROGRESS },
+    data: { status: AppointmentStatus.IN_PROGRESS, startedAt: new Date() },
   });
 
   if (count === 0) {
@@ -493,7 +494,8 @@ const cashSummary = async (
  * job never produces a NO_SHOW.
  */
 const autoCloseStaleCheckIns = async () => {
-  const cutoff = Date.now() - STALE_CHECKOUT_HOURS * HOUR_MS;
+  const cutoff =
+    Date.now() - (await getSetting("booking.staleCheckoutHours")) * HOUR_MS;
 
   // Cheap pre-filter on the date; the end time is a "HH:mm" string, so the
   // per-row check below is what actually decides.

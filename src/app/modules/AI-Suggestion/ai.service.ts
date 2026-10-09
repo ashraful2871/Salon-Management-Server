@@ -2,6 +2,7 @@ import { StatusCodes } from "http-status-codes";
 import config from "../../../config";
 import ApiError from "../../Error/error";
 import { formatBDT } from "../../utils/money";
+import { getSetting } from "../../utils/settings";
 import { TtlLruCache } from "../Geo/geo.cache";
 import { GeoService } from "../Geo/geo.service";
 import { CATEGORY_LABELS } from "./ai.constants";
@@ -237,7 +238,10 @@ const searchSalon = async (input: SearchInput) => {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Tell us what you are looking for");
   }
 
-  const limit = Math.min(Math.max(input.limit ?? config.ai.searchLimit, 1), 12);
+  const limit = Math.min(
+    Math.max(input.limit ?? (await getSetting("ai.searchLimit")), 1),
+    12,
+  );
   const userOrigin: Origin | null =
     input.lat !== undefined && input.lng !== undefined
       ? {

@@ -2,6 +2,7 @@ import type { FunctionDeclaration } from "@google/genai";
 import { z } from "zod";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
+import { getSettingSync } from "../../utils/settings";
 import { SALON_TIME_ZONE } from "../AI-Suggestion/ai.constants";
 import {
   type ChatHistoryItem,
@@ -20,10 +21,6 @@ import {
 } from "./assistant.actions";
 import { dateLabel, dhakaToday } from "./assistant.availability";
 import { notice } from "./assistant.blocks";
-import {
-  ASSISTANT_DAILY_TOKEN_BUDGET,
-  ASSISTANT_LLM_ENABLED,
-} from "./assistant.constants";
 import { readWhen } from "./assistant.dates";
 import { type Interpretation, type Wish, interpret } from "./assistant.nlu";
 import { PROMPT_VERSION, systemPrompt } from "./assistant.prompt";
@@ -68,11 +65,12 @@ let spent = { day: "", tokens: 0, warned: false };
 const budgetLeft = (): boolean => {
   const today = dhakaToday();
   if (spent.day !== today) spent = { day: today, tokens: 0, warned: false };
-  if (spent.tokens < ASSISTANT_DAILY_TOKEN_BUDGET) return true;
+  const budget = getSettingSync("assistant.dailyTokenBudget");
+  if (spent.tokens < budget) return true;
   if (!spent.warned) {
     spent.warned = true;
     console.warn(
-      `[assistant.ai] daily token budget of ${ASSISTANT_DAILY_TOKEN_BUDGET} spent (${spent.tokens}); guided mode until midnight Dhaka`,
+      `[assistant.ai] daily token budget of ${budget} spent (${spent.tokens}); guided mode until midnight Dhaka`,
     );
   }
   return false;
@@ -83,7 +81,7 @@ const spend = (tokensIn = 0, tokensOut = 0) => {
 };
 
 export const llmAvailable = () =>
-  ASSISTANT_LLM_ENABLED && isGeminiConfigured() && budgetLeft();
+  getSettingSync("assistant.llmEnabled") && isGeminiConfigured() && budgetLeft();
 
 /* ----------------------------------------------------------------- tools */
 

@@ -4,6 +4,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
+import { getSetting } from "../../utils/settings";
 import { PaymentIntentService } from "../Payment/paymentIntent.service";
 import type { ProviderName } from "../Payment/providers/types";
 import {
@@ -20,7 +21,6 @@ import { notice, quickReplies } from "./assistant.blocks";
 import { heldUntilFor, holdSlot } from "./assistant.booking";
 import { AssistantConfirm, AssistantConfirmError } from "./assistant.confirm";
 import {
-  ASSISTANT_TOPUP_ENABLED,
   COPY,
   TOPUP_HOLD_MINUTES,
   TOPUP_REUSE_MINUTES,
@@ -160,7 +160,7 @@ type StartTopupInput = {
 const startTopup = (input: StartTopupInput) =>
   serialised(input.conversationId, async () => {
     // A card drawn before the switch was flipped can still be tapped.
-    if (!ASSISTANT_TOPUP_ENABLED) {
+    if (!(await getSetting("assistant.topupEnabled"))) {
       throw new ApiError(StatusCodes.SERVICE_UNAVAILABLE, COPY.topupPaused);
     }
 

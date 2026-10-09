@@ -21,6 +21,7 @@ import { ContactRoutes } from "../modules/Contact/contact.routes";
 import { HairTryOnRoutes } from "../modules/HairTryOn/hairTryOn.routes";
 import { AdminRoutes } from "../modules/Admin/admin.routes";
 import { InvitationRoutes } from "../modules/Admin/invitations/invitation.routes";
+import { SettingsRoutes } from "../modules/Settings/settings.routes";
 
 const router = express.Router();
 
@@ -112,6 +113,10 @@ const moduleRoutes = [
   {
     path: "/invitations",
     route: InvitationRoutes,
+  },
+  {
+    path: "/settings",
+    route: SettingsRoutes,
   },
 ];
 

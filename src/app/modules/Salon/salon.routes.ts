@@ -1,11 +1,9 @@
 import express from "express";
 import { SalonController } from "./salon.controller";
 import auth from "../../middlewares/auth";
-import {
-  adminAuth,
-  adminSensitiveForStaff,
-  requireStepUp,
-} from "../Admin/admin.middleware";
+import { adminAuth } from "../Admin/admin.middleware";
+import { AdminSalonsController } from "../Admin/salons/salons.controller";
+import { AdminSalonsValidation } from "../Admin/salons/salons.validation";
 import validateRequest from "../../middlewares/validateRequest";
 import { SalonValidation } from "./salon.validation";
 
@@ -28,7 +26,8 @@ router.get("/my-salons", auth("SALON_OWNER"), SalonController.getMySalons);
 // Must stay above "/:id", or "map" is read as a salon id.
 router.get("/map", mapLimiter, SalonController.getSalonMarkers);
 
-router.get("/:id", SalonController.getSalonById);
+// A salon that is not ACTIVE answers only its owner and ADMIN/AGENT.
+router.get("/:id", optionalAuth(), SalonController.getSalonById);
 
 router.patch(
   "/:id",
@@ -44,20 +43,16 @@ router.patch(
   SalonController.updateSalonLocation,
 );
 
+// The same handler as PATCH /admin/salons/:id/status: salons.review or
+// salons.manage depending on the status, checked in the service.
 router.patch(
   "/:id/status",
-  // salons.review or salons.manage depending on the status; checked in the service.
-  adminAuth(),
-  validateRequest(SalonValidation.updateSalonStatusValidation),
-  SalonController.updateSalonStatus,
+  adminAuth("salons.view"),
+  validateRequest(AdminSalonsValidation.updateStatus, { replaceBody: true }),
+  AdminSalonsController.updateStatus,
 );
 
-router.delete(
-  "/:id",
-  auth("SALON_OWNER", "ADMIN"),
-  adminSensitiveForStaff,
-  requireStepUp(),
-  SalonController.deleteSalon,
-);
+// Owners only; admins delete through DELETE /admin/salons/:id.
+router.delete("/:id", auth("SALON_OWNER"), SalonController.deleteSalon);
 
 export const SalonRoutes = router;

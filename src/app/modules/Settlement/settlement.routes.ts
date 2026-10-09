@@ -1,4 +1,5 @@
-import express from "express";
+import express, { Request, Response } from "express";
+import { StatusCodes } from "http-status-codes";
 import { UserRole } from "@prisma/client";
 import auth from "../../middlewares/auth";
 import { adminAuth, requireStepUp } from "../Admin/admin.middleware";
@@ -65,28 +66,14 @@ router.get(
   SettlementController.getLedgerAudit,
 );
 
-router.get(
-  "/commission-rules",
-  adminAuth("settings.view"),
-  SettlementController.getCommissionRules,
-);
-
-router.post(
-  "/commission-rules",
-  adminAuth("settings.manage"),
-  validateRequest(SettlementValidation.createCommissionRuleValidation),
-  adminSensitiveLimiter,
-  requireStepUp(),
-  SettlementController.createCommissionRule,
-);
-
-router.patch(
-  "/commission-rules/:id",
-  adminAuth("settings.manage"),
-  validateRequest(SettlementValidation.updateCommissionRuleValidation),
-  adminSensitiveLimiter,
-  requireStepUp(),
-  SettlementController.updateCommissionRule,
-);
+// Commission is the booking.commissionPercent platform setting now. The table
+// and its service code stay until the cleanup; every route answers 410.
+const commissionRulesGone = (_req: Request, res: Response) => {
+  res.status(StatusCodes.GONE).json({
+    success: false,
+    message: "Commission is a platform setting now",
+  });
+};
+router.all(["/commission-rules", "/commission-rules/:id"], commissionRulesGone);
 
 export const SettlementRoutes = router;

@@ -1,6 +1,7 @@
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
+import { getSettingSync } from "../../utils/settings";
 import { hasSlotStarted, slotStartsAt } from "../../utils/slotTime";
 import { isOpenNow } from "../AI-Suggestion/ai.search";
 import { resolveDepositMinor } from "../Appointment/appointment.deposit";
@@ -52,7 +53,6 @@ import { heldUntilFor, holdSlot, releaseSlot } from "./assistant.booking";
 import {
   APPOINTMENTS_PATH,
   ASSISTANT_PATH,
-  ASSISTANT_TOPUP_ENABLED,
   COPY,
   HOLD_MINUTES,
   LOCATION_PRECISION,
@@ -1118,7 +1118,7 @@ export const walletBlock = (
  *  the wallet turn, whose payment prompt is a plain top-up. */
 const topupChip = (shortfallMinor: number): QuickReply => ({
   // With top-ups paused the same tap only shows the wallet, so it says so.
-  label: ASSISTANT_TOPUP_ENABLED
+  label: getSettingSync("assistant.topupEnabled")
     ? `Top up ${formatBDT(topupFor(shortfallMinor))}`
     : "My wallet",
   action: { type: "wallet" },
@@ -1137,7 +1137,7 @@ export const paymentPrompt = (
 ): Block => {
   // The gateway is down: say where the wallet is instead of offering buttons
   // that would open a payment page that cannot finish.
-  if (!ASSISTANT_TOPUP_ENABLED) return notice("info", COPY.topupPaused);
+  if (!getSettingSync("assistant.topupEnabled")) return notice("info", COPY.topupPaused);
 
   const suggestedTopupMinor =
     shortfallMinor > 0

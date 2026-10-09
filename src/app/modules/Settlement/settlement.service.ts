@@ -9,6 +9,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { AuditOpts, auditTx, diff, systemAuditCtx } from "../../utils/audit";
+import { getSetting, getSettingSync } from "../../utils/settings";
 import { getSalonEarnings } from "./settlement.earnings";
 
 /**
@@ -34,19 +35,22 @@ import { getSalonEarnings } from "./settlement.earnings";
  * Always a share of the bill, never a flat fee. A flat BDT 10 is a third of a
  * BDT 30 trim and a rounding error on a BDT 5,000 bridal package, so it lands
  * hardest on exactly the cheap bookings the platform wants flowing. Tune with
- * PLATFORM_COMMISSION_PERCENT - percent, not basis points, and fractions are
- * allowed (7.5 is valid).
+ * the booking.commissionPercent setting (admin console; env
+ * PLATFORM_COMMISSION_PERCENT before any edit) - percent, not basis points,
+ * and fractions are allowed (7.5 is valid).
  */
-const percentToBps = (value: string | undefined, fallbackBps: number) => {
-  if (value === undefined || value.trim() === "") return fallbackBps;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return fallbackBps;
-  return Math.round(parsed * 100);
-};
+const percentToBps = (percent: number) => Math.round(percent * 100);
 
-/** Read on use, not at import: dotenv runs after this module is first loaded. */
+/**
+ * The rate in force now, in basis points. The platform setting
+ * booking.commissionPercent (env PLATFORM_COMMISSION_PERCENT, else 10%).
+ * A booking snapshots it as commissionBps when it is made.
+ */
+export const currentCommissionBps = async () =>
+  percentToBps(await getSetting("booking.commissionPercent"));
+
 const commissionPercentBps = () =>
-  percentToBps(process.env.PLATFORM_COMMISSION_PERCENT, 1000); // 10%
+  percentToBps(getSettingSync("booking.commissionPercent"));
 
 const bps = (amountMinor: number, basisPoints: number) =>
   Math.round((amountMinor * basisPoints) / 10000);
@@ -56,10 +60,13 @@ const bps = (amountMinor: number, basisPoints: number) =>
  * deliberately not consulted: the rate is flat for every salon and every
  * customer, so there is nothing left to look up per booking.
  */
-export const resolveCommissionMinor = (amountMinor: number): number => {
+export const resolveCommissionMinor = (
+  amountMinor: number,
+  basisPoints?: number,
+): number => {
   if (amountMinor <= 0) return 0;
 
-  const fee = bps(amountMinor, commissionPercentBps());
+  const fee = bps(amountMinor, basisPoints ?? commissionPercentBps());
   return Math.max(0, Math.min(fee, amountMinor));
 };
 
@@ -636,6 +643,7 @@ const getMyEarnings = async (userId: string, query: any = {}) => {
 
 export const SettlementService = {
   resolveCommissionMinor,
+  currentCommissionBps,
   recordCompletedBooking,
   recordForfeitedDeposit,
   recordLateCancellationPenalty,

@@ -5,6 +5,7 @@ import {
   WalletTxType,
 } from "@prisma/client";
 import prisma from "../../shared/prisma";
+import { getSettingSync } from "../../utils/settings";
 
 /**
  * The read side of the ledger: what a salon has earned, and what the platform
@@ -96,22 +97,13 @@ const buildMonthly = (
 };
 
 /**
- * The one commission rate in force, as a percentage. Read from the same env var
+ * The one commission rate in force, as a percentage. Read from the same setting
  * the charging path reads, so a dashboard can state the rate without a second
  * copy of the number drifting out of step with what is billed.
  */
-export const getCommissionRates = () => {
-  const read = (value: string | undefined, fallback: number) => {
-    if (value === undefined || value.trim() === "") return fallback;
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return fallback;
-    return parsed;
-  };
-
-  return {
-    standardCommissionPercent: read(process.env.PLATFORM_COMMISSION_PERCENT, 10),
-  };
-};
+export const getCommissionRates = () => ({
+  standardCommissionPercent: getSettingSync("booking.commissionPercent"),
+});
 
 const emptySalonEarnings = () => ({
   grossBookingsMinor: 0,

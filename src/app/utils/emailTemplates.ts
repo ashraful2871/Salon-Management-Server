@@ -523,6 +523,27 @@ export const getDepositForfeitedTemplate = (
      <p>Think this is wrong? You can appeal within <strong>48 hours</strong> from your bookings page and an admin will review it.</p>`
   );
 
+/** A no-show appeal (or an admin's reversal) was decided. `note` is escaped here. */
+export const getAppealResolvedTemplate = (
+  customerName: string,
+  salonName: string,
+  outcome: { approve: boolean; amount: string; refunded: boolean; note?: string }
+) =>
+  moneyLayout(
+    outcome.approve ? "Appeal upheld" : "Appeal not upheld",
+    outcome.approve
+      ? `<p>Hi ${escapeHtml(customerName)},</p>
+     <p>We reviewed the no-show on your booking at ${escapeHtml(salonName)} and reversed it.${
+       outcome.refunded ? ` <strong>${outcome.amount}</strong> has been returned to your wallet.` : ""
+     }</p>
+     <p style="color:#7f8c8d;font-size:13px;">Sorry for the trouble.</p>`
+      : `<p>Hi ${escapeHtml(customerName)},</p>
+     <p>We reviewed your appeal about the no-show at ${escapeHtml(salonName)}, and the no-show stands, so the deposit stays forfeited.</p>${
+       outcome.note ? `<p><strong>Our note:</strong> ${escapeHtml(outcome.note)}</p>` : ""
+     }
+     <p style="color:#7f8c8d;font-size:13px;">If something is still not right, reply to this email.</p>`
+  );
+
 // For text a customer typed, such as their name. It lands in the salon owner's
 // inbox, so it must not be able to add links or markup of its own.
 export const escapeHtml = (value: string) =>
@@ -738,4 +759,114 @@ export const getAdminTeamChangeTemplate = (notice: {
      <p><strong>Changed by:</strong> ${escapeHtml(notice.actorName)}</p>
      ${notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : ""}
      <p style="color:#7f8c8d;font-size:12px;">If you did not expect this change, contact another super admin at once.</p>`
+  );
+
+const buttonLink = (href: string, label: string) =>
+  `<p><a href="${escapeHtml(href)}" style="display:inline-block;padding:10px 20px;background:#1f2937;color:#fff;border-radius:999px;text-decoration:none;">${escapeHtml(label)}</a></p>`;
+
+/** To a salon owner when an admin approves, rejects, suspends or reactivates a salon. */
+export const getSalonStatusTemplate = (notice: {
+  kind: "approved" | "rejected" | "suspended" | "reactivated";
+  ownerName: string;
+  salonName: string;
+  reason?: string | null;
+  fixHint?: string | null;
+  link: string;
+  contactUrl: string;
+}) => {
+  const name = escapeHtml(notice.ownerName);
+  const salon = `<strong>${escapeHtml(notice.salonName)}</strong>`;
+  const reason = notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : "";
+  switch (notice.kind) {
+    case "approved":
+      return moneyLayout(
+        "Your salon is live on SalonKhuji",
+        `<p>Hi ${name},</p>
+         <p>Good news: ${salon} is approved and customers can now find and book it.</p>
+         ${buttonLink(notice.link, "See your salon")}`
+      );
+    case "rejected":
+      return moneyLayout(
+        "Your salon was not approved",
+        `<p>Hi ${name},</p>
+         <p>We could not approve ${salon} yet.</p>
+         ${reason}
+         ${notice.fixHint ? `<p><strong>What to fix:</strong> ${escapeHtml(notice.fixHint)}</p>` : ""}
+         <p>Update the details and save; the salon goes back into our review queue.</p>
+         ${buttonLink(notice.link, "Fix and resubmit")}
+         ${contactLine(notice.contactUrl)}`
+      );
+    case "suspended":
+      return moneyLayout(
+        "Your salon is suspended",
+        `<p>Hi ${name},</p>
+         <p>We have suspended ${salon}. While it is suspended customers cannot find or book it.</p>
+         ${reason}
+         ${contactLine(notice.contactUrl)}`
+      );
+    default:
+      return moneyLayout(
+        "Your salon is live again",
+        `<p>Hi ${name},</p>
+         <p>${salon} is active again and customers can find and book it.</p>
+         ${buttonLink(notice.link, "See your salon")}`
+      );
+  }
+};
+
+/** To an applicant when their salon-owner application is decided. */
+export const getOwnerApplicationDecisionTemplate = (notice: {
+  approved: boolean;
+  name: string;
+  businessName: string;
+  reason?: string | null;
+  link: string;
+  contactUrl: string;
+}) =>
+  notice.approved
+    ? moneyLayout(
+        "You are now a salon owner on SalonKhuji",
+        `<p>Hi ${escapeHtml(notice.name)},</p>
+         <p>Your application for <strong>${escapeHtml(notice.businessName)}</strong> is approved. Sign out and back in, then add your salon from the dashboard; we review each salon before it goes live.</p>
+         ${buttonLink(notice.link, "Add your salon")}`
+      )
+    : moneyLayout(
+        "Your salon owner application was not approved",
+        `<p>Hi ${escapeHtml(notice.name)},</p>
+         <p>We could not approve your application for <strong>${escapeHtml(notice.businessName)}</strong>.</p>
+         ${notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : ""}
+         <p>You can correct the details and apply again.</p>
+         ${buttonLink(notice.link, "Apply again")}
+         ${contactLine(notice.contactUrl)}`
+      );
+
+/** An admin cancelled a booking on the customer's behalf. Sent to the customer and the salon. */
+export const getBookingCancelledByAdminTemplate = (notice: {
+  audience: "customer" | "salon";
+  name: string;
+  salonName: string;
+  serviceName: string;
+  when: string;
+  token: string | null;
+  reason: string;
+  refund: string | null;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    "Booking cancelled",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>SalonKhuji cancelled ${notice.audience === "customer" ? "your" : "a"} booking${
+       notice.token ? ` <strong>${escapeHtml(notice.token)}</strong>` : ""
+     } for ${escapeHtml(notice.serviceName)} at ${escapeHtml(notice.salonName)} on ${escapeHtml(notice.when)}${
+       notice.audience === "customer" ? "" : " on the customer's behalf"
+     }.</p>
+     <p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>
+     ${
+       notice.audience === "customer"
+         ? notice.refund
+           ? `<p>Your full deposit of <strong>${notice.refund}</strong> is back in your wallet.</p>`
+           : ""
+         : "<p>The slot is open again. Nothing is deducted from your earnings.</p>"
+     }
+     ${contactLine(notice.contactUrl)}`
   );

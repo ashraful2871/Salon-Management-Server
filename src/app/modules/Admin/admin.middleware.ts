@@ -186,7 +186,7 @@ export const adminSensitiveForStaff = (req: Request, res: Response, next: NextFu
 
 /**
  * Tier-3 routes: the caller must have confirmed a fresh authenticator code.
- * Passes while the step-up window (10 min) is open; otherwise a valid
+ * Passes while the step-up window (security.stepUpMinutes) is open; otherwise a valid
  * X-Step-Up-Code header opens it; otherwise 403 STEP_UP_REQUIRED, which the
  * frontend answers with the step-up dialog and one retry. Non-staff callers on
  * shared routes pass untouched. Mount after auth()/adminAuth().

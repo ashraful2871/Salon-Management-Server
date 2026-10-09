@@ -515,7 +515,7 @@ const updateStatus = async (
   const until = input.status === "SUSPENDED" ? (input.until ?? null) : null;
   const restricting = input.status !== "ACTIVE";
 
-  // Salons go INACTIVE for now; a SUSPENDED salon status arrives in Phase 5.
+  // The owner's live salons are suspended with them (hidden everywhere).
   const salonIds =
     restricting && input.suspendSalons && target.salonOwner
       ? (
@@ -540,7 +540,10 @@ const updateStatus = async (
       },
     });
     if (salonIds.length) {
-      await tx.salon.updateMany({ where: { id: { in: salonIds } }, data: { status: "INACTIVE" } });
+      await tx.salon.updateMany({
+        where: { id: { in: salonIds } },
+        data: { status: "SUSPENDED", statusReason: reason, statusChangedAt: now, statusChangedById: admin.userId },
+      });
     }
   });
 

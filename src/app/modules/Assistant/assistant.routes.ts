@@ -12,20 +12,28 @@ import {
 } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { AssistantController } from "./assistant.controller";
-import { ASSISTANT_ENABLED } from "./assistant.constants";
+import { getSetting } from "../../utils/settings";
+import { ASSISTANT_TOKEN_SECRET } from "./assistant.constants";
 import { AssistantValidation } from "./assistant.validation";
 
 const router = express.Router();
 
-/** The kill switch. Off, the whole surface is simply not there. */
-const assistantEnabled = (req: Request, res: Response, next: NextFunction) => {
-  if (!ASSISTANT_ENABLED) {
-    return res.status(StatusCodes.NOT_FOUND).json({
-      success: false,
-      message: "Not found",
-    });
+/**
+ * The kill switch (the assistant.enabled setting, read per request). Off - or
+ * with no secret to sign confirmations - the whole surface is simply not there.
+ */
+const assistantEnabled = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!(await getSetting("assistant.enabled")) || !ASSISTANT_TOKEN_SECRET) {
+      return res.status(StatusCodes.NOT_FOUND).json({
+        success: false,
+        message: "Not found",
+      });
+    }
+    next();
+  } catch (error) {
+    next(error);
   }
-  next();
 };
 
 router.use(assistantEnabled);

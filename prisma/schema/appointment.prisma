@@ -29,6 +29,9 @@ model Appointment {
   totalMinor    Int           @default(0)
   depositMinor  Int           @default(0)
   depositStatus DepositStatus @default(NONE)
+  /// The platform commission rate (basis points) in force when this booking
+  /// was made. Null on bookings from before the snapshot: they use today's rate.
+  commissionBps Int?
 
   /// Whether we brought this customer to the salon. Drives commission: a
   /// salon's own repeat customer is never commissioned.
@@ -53,6 +56,11 @@ model Appointment {
   completedAt   DateTime?
   checkedInById String?
   completedById String?
+  /// CHECKED_IN -> IN_PROGRESS. Null when the booking went straight to checkout.
+  startedAt     DateTime?
+  /// Null cancelledBy on a CANCELLED row means it predates the field.
+  cancelledAt   DateTime?
+  cancelledBy   CancelledBy?
 
   /// Stamped when the reminder email goes out. The job picks bookings by a
   /// time window *and* a null stamp, so it may run twice but a customer is
@@ -80,5 +88,7 @@ model Appointment {
   @@index([salonId, serviceId, appointmentDate])
   // Backs the reminder job's "confirmed bookings in the next day" scan.
   @@index([status, appointmentDate])
+  // Backs the admin bookings explorer: "booked on" range and sort.
+  @@index([createdAt])
   @@map("appointments")
 }

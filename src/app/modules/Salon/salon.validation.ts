@@ -86,12 +86,6 @@ const updateSalonLocationValidation = z.object({
   }),
 });
 
-const updateSalonStatusValidation = z.object({
-  body: z.object({
-    status: z.enum(["ACTIVE", "INACTIVE", "PENDING_APPROVAL", "REJECTED"]),
-    reason: z.string().trim().max(500).optional(),
-  }),
-});
 
 // Query schemas below are parsed in the controller, not through
 // validateRequest: it doesn't write coerced values back to req.query.
@@ -105,7 +99,7 @@ const salonListQuery = z
     district: z.string().trim().max(60).optional(),
     area: z.string().trim().max(60).optional(),
     status: z
-      .enum(["ACTIVE", "INACTIVE", "PENDING_APPROVAL", "REJECTED"])
+      .enum(["ACTIVE", "INACTIVE", "PENDING_APPROVAL", "REJECTED", "SUSPENDED"])
       .optional(),
     lat: z.coerce
       .number()
@@ -177,7 +171,6 @@ const salonMapQuery = z
 export const SalonValidation = {
   createSalonValidation,
   updateSalonValidation,
-  updateSalonStatusValidation,
   updateSalonLocationValidation,
   salonListQuery,
   salonMapQuery,

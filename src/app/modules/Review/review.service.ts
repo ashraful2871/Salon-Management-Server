@@ -123,7 +123,9 @@ const getAllReviews = async (query: any) => {
   const { page = 1, limit = 10, salonId, staffId } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  const whereConditions: any = {};
+  // Public: reviews of a salon that is not live (suspended, pending, deleted)
+  // stay hidden with it.
+  const whereConditions: any = { salon: { status: "ACTIVE", isDeleted: false } };
 
   if (salonId) {
     whereConditions.salonId = salonId;

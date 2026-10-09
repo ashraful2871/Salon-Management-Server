@@ -11,6 +11,7 @@ import QRCode from "qrcode";
 import config from "../../config";
 import ApiError from "../Error/error";
 import prisma from "../shared/prisma";
+import { getSetting } from "./settings";
 
 /**
  * TOTP second factor for ADMIN and AGENT accounts: 6 digits, 30 s steps, one
@@ -23,8 +24,7 @@ const PERIOD_S = 30;
 const MAX_FAILURES = 5;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const LOCK_MS = 15 * 60 * 1000;
-/** Becomes the `security.stepUpMinutes` setting in Phase 7. */
-export const STEP_UP_MINUTES = 10;
+// The step-up window is the security.stepUpMinutes platform setting (10 min).
 const RECOVERY_CODE_COUNT = 10;
 const RECOVERY_CODE_LENGTH = 10;
 // No 0/O, 1/I/L: the codes are read off paper.
@@ -295,7 +295,8 @@ export const enabledMfaStep = async (
 };
 
 export const openStepUp = async (userId: string): Promise<Date> => {
-  const until = new Date(Date.now() + STEP_UP_MINUTES * 60 * 1000);
+  const minutes = await getSetting("security.stepUpMinutes");
+  const until = new Date(Date.now() + minutes * 60 * 1000);
   await prisma.userMfa.update({ where: { userId }, data: { stepUpUntil: until } });
   return until;
 };

@@ -3,7 +3,6 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { SalonService } from "./salon.service";
-import { assertAdminPermission, loadAdminContext } from "../Admin/admin.middleware";
 import { findSalonMarkers } from "./salon.geo";
 import { NEARBY_MAX_RADIUS_KM, SalonValidation } from "./salon.validation";
 
@@ -75,7 +74,7 @@ const getMySalons = catchAsync(async (req: Request, res: Response) => {
 const getSalonById = catchAsync(async (req: Request, res: Response) => {
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
-  const result = await SalonService.getSalonById(id);
+  const result = await SalonService.getSalonById(id, req.user);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -118,35 +117,12 @@ const updateSalonLocation = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
-const updateSalonStatus = catchAsync(async (req: Request, res: Response) => {
-  const idParam = req.params.id;
-  const id = Array.isArray(idParam) ? idParam[0] : idParam;
-  const result = await SalonService.updateSalonStatus(
-    id,
-    req.body.status,
-    await loadAdminContext(req),
-    { ctx: req.auditCtx, reason: req.body.reason },
-  );
-
-  sendResponse(res, {
-    statusCode: StatusCodes.OK,
-    success: true,
-    message: "Salon status updated successfully",
-    data: result,
-  });
-});
-
 const deleteSalon = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
-  const userRole = req.user?.role;
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  await assertAdminPermission(req, "salons.delete");
-  await SalonService.deleteSalon(userId, userRole, id, {
-    ctx: req.auditCtx,
-    reason: typeof req.body?.reason === "string" ? req.body.reason : undefined,
-  });
+  await SalonService.deleteSalon(userId, id);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -164,6 +140,5 @@ export const SalonController = {
   getSalonById,
   updateSalon,
   updateSalonLocation,
-  updateSalonStatus,
   deleteSalon,
 };

@@ -11,11 +11,13 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
+import { getSetting, getSettingSync } from "../../utils/settings";
 import { atWallClock } from "../../utils/slotTime";
 import { sendEmail } from "../../utils/emailSender";
 import {
   getDepositForfeitedTemplate,
   getDepositReleasedTemplate,
+  getAppealResolvedTemplate,
 } from "../../utils/emailTemplates";
 import { WalletService } from "../Wallet/wallet.service";
 import { SettlementService } from "../Settlement/settlement.service";
@@ -28,18 +30,15 @@ import { SettlementService } from "../Settlement/settlement.service";
  * twice without the customer paying twice.
  */
 
-/** Platform bounds. A salon can set its own policy, but not outside these. */
-const PLATFORM_MIN_DEPOSIT_MINOR = 2000; // BDT 20
-const PLATFORM_MAX_DEPOSIT_MINOR = 50000; // BDT 500
-
-/** Salon-funded apology when the salon is the one who cancels. */
-const GOODWILL_CREDIT_MINOR = 2000; // BDT 20
+/*
+ * Platform bounds (booking.depositMinMinor / depositMaxMinor, default BDT 20 -
+ * BDT 500) and the salon-funded goodwill credit (booking.goodwillCreditMinor,
+ * default BDT 20) are platform settings now - see utils/settings.ts.
+ */
 
 /** How long a customer has to dispute a no-show. Publish this number. */
 export const APPEAL_WINDOW_MS = 48 * 60 * 60 * 1000;
 
-/** How late a customer can be before the auto no-show job gives up on them. */
-const NO_SHOW_GRACE_MIN = Number(process.env.NO_SHOW_GRACE_MINUTES ?? 20);
 
 /**
  * What a customer loses for cancelling inside the salon's window. Outside the
@@ -48,12 +47,10 @@ const NO_SHOW_GRACE_MIN = Number(process.env.NO_SHOW_GRACE_MINUTES ?? 20);
  * what a no-show costs, and someone who tells us an hour ahead is not the same
  * as someone who never turns up.
  *
- * Read on use, not at import: dotenv runs after this module is first loaded.
+ * A platform setting (booking.lateCancellationPercent), read on use.
  */
 const latePenaltyPercent = () => {
-  const parsed = Number(process.env.LATE_CANCELLATION_PENALTY_PERCENT ?? 20);
-  if (!Number.isFinite(parsed)) return 20;
-  return Math.min(Math.max(parsed, 0), 100);
+  return getSettingSync("booking.lateCancellationPercent");
 };
 
 const latePenaltyMinor = (depositMinor: number) =>
@@ -81,8 +78,8 @@ export const resolveDepositMinor = (
   if (raw <= 0) return 0;
 
   const clamped = Math.min(
-    Math.max(raw, PLATFORM_MIN_DEPOSIT_MINOR),
-    PLATFORM_MAX_DEPOSIT_MINOR,
+    Math.max(raw, getSettingSync("booking.depositMinMinor")),
+    getSettingSync("booking.depositMaxMinor"),
   );
 
   // A deposit larger than the bill is never what anyone meant.
@@ -252,8 +249,11 @@ export const settleCompletedTx = async (
     });
   }
 
+  // The rate in force when the booking was made; older bookings have none.
   const commissionMinor = SettlementService.resolveCommissionMinor(
     appointment.totalMinor,
+    appointment.commissionBps ??
+      (await SettlementService.currentCommissionBps()),
   );
 
   await SettlementService.recordCompletedBooking(
@@ -302,11 +302,12 @@ export const settleReleasedTx = async (
   }
 
   if (options.goodwill) {
+    const goodwillMinor = await getSetting("booking.goodwillCreditMinor");
     await WalletService.mutate(
       {
         userId: appointment.customerId,
         type: WalletTxType.GOODWILL_CREDIT,
-        amount: GOODWILL_CREDIT_MINOR,
+        amount: goodwillMinor,
         description: "Goodwill credit - the salon cancelled your booking",
         referenceType: "APPOINTMENT",
         referenceId: appointment.id,
@@ -318,7 +319,7 @@ export const settleReleasedTx = async (
     await SettlementService.recordGoodwillCredit(
       tx,
       appointment,
-      GOODWILL_CREDIT_MINOR,
+      goodwillMinor,
     );
   }
 
@@ -584,12 +585,17 @@ export const appealNoShow = async (
  * compensating ledger set. The original forfeit rows stay exactly where they
  * are - the ledger is append-only, so the history shows both.
  */
+/**
+ * Upholds or rejects a no-show appeal, then emails the customer. With
+ * `withoutAppeal` an admin reverses a no-show nobody appealed (the same
+ * approve path): the booking must still be a no-show with its deposit forfeited.
+ */
 export const resolveAppeal = async (
   adminUserId: string,
   appointmentId: string,
-  payload: { approve: boolean; note?: string },
+  payload: { approve: boolean; note?: string; withoutAppeal?: boolean },
 ) => {
-  return prisma.$transaction(
+  const resolved = await prisma.$transaction(
     async (tx) => {
       const appointment = await loadForSettlement(tx, appointmentId);
 
@@ -597,7 +603,19 @@ export const resolveAppeal = async (
         throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
       }
 
-      if (appointment.appealStatus !== AppealStatus.PENDING) {
+      if (payload.withoutAppeal) {
+        if (
+          appointment.status !== "NO_SHOW" ||
+          appointment.appealStatus === AppealStatus.APPROVED ||
+          (appointment.depositMinor > 0 &&
+            appointment.depositStatus !== DepositStatus.FORFEITED)
+        ) {
+          throw new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "Only a no-show whose deposit is still forfeited can be reversed",
+          );
+        }
+      } else if (appointment.appealStatus !== AppealStatus.PENDING) {
         throw new ApiError(
           StatusCodes.BAD_REQUEST,
           "This booking has no appeal awaiting review",
@@ -605,13 +623,16 @@ export const resolveAppeal = async (
       }
 
       if (!payload.approve) {
-        return tx.appointment.update({
+        const updated = await tx.appointment.update({
           where: { id: appointmentId },
           data: { appealStatus: AppealStatus.REJECTED },
         });
+        return { updated, salonName: appointment.salon.name };
       }
 
-      await WalletService.mutate(
+      // A no-show without a deposit has nothing to return; the decision
+      // still clears the appeal.
+      if (appointment.depositMinor > 0) await WalletService.mutate(
         {
           userId: appointment.customerId,
           type: WalletTxType.ADJUSTMENT,
@@ -633,16 +654,36 @@ export const resolveAppeal = async (
         appointment.salon.noShowSalonSharePct,
       );
 
-      return tx.appointment.update({
+      const updated = await tx.appointment.update({
         where: { id: appointmentId },
         data: {
           appealStatus: AppealStatus.APPROVED,
-          depositStatus: DepositStatus.RELEASED,
+          depositStatus:
+            appointment.depositMinor > 0
+              ? DepositStatus.RELEASED
+              : appointment.depositStatus,
         },
       });
+      return { updated, salonName: appointment.salon.name };
     },
     { timeout: 15000, maxWait: 10000 },
   );
+
+  // Only once the money movement has committed.
+  const { updated, salonName } = resolved;
+  notify(
+    updated.customerId,
+    payload.approve ? "Your no-show appeal was upheld" : "Your no-show appeal was reviewed",
+    (name) =>
+      getAppealResolvedTemplate(name, salonName, {
+        approve: payload.approve,
+        amount: formatBDT(updated.depositMinor),
+        refunded: payload.approve && updated.depositMinor > 0,
+        note: payload.note,
+      }),
+  );
+
+  return updated;
 };
 
 // ---------------------------------------------------------------------------
@@ -691,7 +732,7 @@ export const assertCanMarkNoShow = (
  * scheduled *end*, since the job may have started someone who was in the chair.
  */
 export const autoMarkNoShows = async () => {
-  const graceMs = NO_SHOW_GRACE_MIN * 60 * 1000;
+  const graceMs = (await getSetting("booking.noShowGraceMinutes")) * 60 * 1000;
   const cutoff = Date.now() - graceMs;
 
   // Cheap pre-filter on the date; the exact start time is a string, so the
@@ -785,5 +826,4 @@ export const AppointmentDeposit = {
   assertCanMarkNoShow,
   autoMarkNoShows,
   APPEAL_WINDOW_MS,
-  GOODWILL_CREDIT_MINOR,
 };

@@ -6,6 +6,10 @@ import { AdminMfaRoutes } from "./me/me.routes";
 import { AdminUsersRoutes } from "./users/users.routes";
 import { AdminTeamRoutes } from "./team/team.routes";
 import { AdminAgentsRoutes } from "./agents/agents.routes";
+import { AdminSalonsRoutes } from "./salons/salons.routes";
+import { AdminBookingsRoutes } from "./bookings/bookings.routes";
+import { AdminAppealsRoutes } from "./appeals/appeals.routes";
+import { AdminSettingsRoutes } from "./settings/settings.routes";
 import { AdminAgentsController } from "./agents/agents.controller";
 import { AdminController } from "./admin.controller";
 import { AdminValidation } from "./admin.validation";
@@ -24,6 +28,12 @@ router.use("/mfa", AdminMfaRoutes);
 router.use("/users", AdminUsersRoutes);
 router.use("/agents", AdminAgentsRoutes);
 router.use("/team", AdminTeamRoutes);
+
+// Salons: the approval queue, Salon 360 and its actions.
+router.use("/salons", AdminSalonsRoutes);
+router.use("/bookings", AdminBookingsRoutes);
+router.use("/appeals", AdminAppealsRoutes);
+router.use("/settings", AdminSettingsRoutes);
 router.get("/areas", adminAuth("agents.manage"), adminOnly, AdminAgentsController.areas);
 
 // Results and inbox items are filtered by the caller's permissions inside.

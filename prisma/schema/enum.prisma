@@ -71,6 +71,7 @@ enum SalonStatus {
   INACTIVE
   PENDING_APPROVAL
   REJECTED
+  SUSPENDED
 }
 
 enum LocationAccuracy {
@@ -147,6 +148,14 @@ enum DepositStatus {
   // A late cancellation: part of the deposit went to the salon as a penalty,
   // the rest went back to the customer. Not appealable - they chose to cancel.
   PARTIALLY_FORFEITED
+}
+
+/// Who cancelled a booking. Null on rows cancelled before this was recorded.
+enum CancelledBy {
+  CUSTOMER
+  SALON
+  ADMIN
+  SYSTEM
 }
 
 enum AppealStatus {

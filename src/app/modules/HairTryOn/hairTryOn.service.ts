@@ -5,6 +5,7 @@ import ApiError from "../../Error/error";
 import { HairTryOnUpload, Prisma } from "@prisma/client";
 import { TransformationOptions } from "cloudinary";
 import prisma from "../../shared/prisma";
+import { getSetting } from "../../utils/settings";
 import { findColor, findStyle, publicCatalog } from "./hairTryOn.catalog";
 import { HairCloudinary } from "./hairTryOn.cloudinary";
 import { getProvider } from "./hairTryOn.provider";
@@ -70,8 +71,9 @@ const WATERMARK: TransformationOptions[] = [
 const beforeUrl = (publicId: string) =>
   HairCloudinary.signedUrl(publicId, DISPLAY);
 
-const assertEnabled = () => {
-  if (!config.hairTryOn.enabled) {
+// The hairTryOn.enabled platform setting (env HAIR_TRYON_ENABLED).
+const assertEnabled = async () => {
+  if (!(await getSetting("hairTryOn.enabled"))) {
     throw new ApiError(
       StatusCodes.SERVICE_UNAVAILABLE,
       "Try-on is resting right now",
@@ -79,13 +81,13 @@ const assertEnabled = () => {
   }
 };
 
-const getStyles = () => ({
-  enabled: config.hairTryOn.enabled,
+const getStyles = async () => ({
+  enabled: await getSetting("hairTryOn.enabled"),
   ...publicCatalog(),
 });
 
 const createUpload = async (turnstileToken: string, ip: string) => {
-  assertEnabled();
+  await assertEnabled();
 
   if (!(await verifyTurnstile(turnstileToken, ip))) {
     throw new ApiError(
@@ -214,7 +216,7 @@ const checkJobRequest = async (
   { uploadId, styleId, colorId }: JobRequest,
   token: string | undefined,
 ) => {
-  assertEnabled();
+  await assertEnabled();
   if (!findStyle(styleId) || !findColor(colorId)) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Unknown style or color.");
   }
@@ -266,7 +268,7 @@ const createJob = async (request: JobRequest, token: string | undefined) => {
   const today = await prisma.hairTryOnJob.count({
     where: { createdAt: { gte: startOfTodayUtc() } },
   });
-  if (today >= config.hairTryOn.dailyCap) {
+  if (today >= (await getSetting("hairTryOn.dailyCap"))) {
     throw new ApiError(
       StatusCodes.TOO_MANY_REQUESTS,
       "Try-on is resting for today, come back tomorrow.",

@@ -67,11 +67,11 @@ const twoFactorVerifyValidation = z.object({
   body: z
     .object({
       ticket,
-      code: z.string().trim().regex(/^d{6}$/, "Enter the 6-digit code").optional(),
+      code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code").optional(),
       recoveryCode: z
         .string()
         .trim()
-        .regex(/^[A-Za-z0-9-s]{10,14}$/, "Enter a recovery code")
+        .regex(/^[A-Za-z0-9\s-]{10,14}$/, "Enter a recovery code")
         .optional(),
     })
     .refine((b) => !!b.code !== !!b.recoveryCode, {

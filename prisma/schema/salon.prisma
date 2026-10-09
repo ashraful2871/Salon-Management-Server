@@ -23,7 +23,15 @@ model Salon {
   totalReviews   Int                         @default(0)
   ownerId        String
   isDeleted      Boolean                     @default(false)
-  embedding      Unsupported("vector(768)")?
+  /// Seed or test data; left out of admin lists unless asked for.
+  isTest         Boolean                     @default(false)
+  /// The admin review trail behind `status`. `approvedAt` is the first time
+  /// the salon went ACTIVE (backfilled from `updatedAt` for older salons).
+  statusReason      String?
+  statusChangedAt   DateTime?
+  statusChangedById String?
+  approvedAt        DateTime?
+  embedding     Unsupported("vector(768)")?
   /// Which model produced `embedding`, and from which document
   /// (`embeddingHash` is "<document version>:<sha256 of the text>"). The AI
   /// indexer re-embeds when either stops matching, so a model switch or a
@@ -58,5 +66,6 @@ model Salon {
 
   @@index([latitude, longitude])
   @@index([status, isDeleted], map: "salons_status_is_deleted_idx") // already exists in DB; declaring it stops Prisma from dropping it
+  @@index([createdAt])
   @@map("salons")
 }

@@ -1,0 +1,11 @@
+// Platform settings edited from the admin console. A missing row means "use
+// the env value, else the code default" - see src/app/utils/settings.ts.
+model PlatformSetting {
+  key         String   @id
+  value       Json
+  version     Int      @default(1)
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("platform_settings")
+}

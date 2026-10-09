@@ -8,6 +8,7 @@ import {
   AppointmentSource,
   AppointmentStatus,
   BookingChannel,
+  CancelledBy,
   DepositStatus,
   Prisma,
   SalonStatus,
@@ -20,6 +21,7 @@ import {
   getNewBookingOwnerTemplate,
 } from "../../utils/emailTemplates";
 import { formatBDT } from "../../utils/money";
+import { getSetting } from "../../utils/settings";
 import { assertCanActOnAppointment } from "../../utils/salonAccess";
 import { hasSlotStarted } from "../../utils/slotTime";
 import { WalletService } from "../Wallet/wallet.service";
@@ -62,6 +64,8 @@ const TRANSITIONS: Record<AppointmentStatus, AppointmentStatus[]> = {
 type CancelOptions = {
   reason?: string;
   fromStatuses?: AppointmentStatus[];
+  /** Recorded on the booking. Separate from `by`, which picks the money path. */
+  cancelledBy: CancelledBy;
 } & (
   | { by: "SALON" }
   // Whether the customer is inside the free window decides between a full
@@ -88,6 +92,8 @@ const cancelInTx = async (appointmentId: string, options: CancelOptions) => {
         data: {
           status: AppointmentStatus.CANCELLED,
           cancellationReason: options.reason,
+          cancelledAt: new Date(),
+          cancelledBy: options.cancelledBy,
         },
       });
 
@@ -162,13 +168,6 @@ const ACTIVE_BOOKING_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.CHECKED_IN,
 ];
 
-/** How many live bookings one customer may hold at one salon on one day. */
-const MAX_ACTIVE_BOOKINGS_PER_DAY = (() => {
-  const parsed = Math.floor(
-    Number(process.env.MAX_ACTIVE_BOOKINGS_PER_DAY ?? 3),
-  );
-  return Number.isFinite(parsed) && parsed >= 1 ? parsed : 3;
-})();
 
 /**
  * Whether two same-day bookings share any time. "HH:mm" is zero-padded, so
@@ -221,7 +220,8 @@ const assertWithinBookingLimits = async (
     (booking) => booking.salonId === salonId,
   ).length;
 
-  if (atThisSalon >= MAX_ACTIVE_BOOKINGS_PER_DAY) {
+  // How many live bookings one customer may hold at one salon on one day.
+  if (atThisSalon >= (await getSetting("booking.maxActiveBookingsPerDay"))) {
     throw new ApiError(
       StatusCodes.CONFLICT,
       `You already have ${atThisSalon} bookings at this salon that day, the most allowed. Cancel one to book another time.`,
@@ -343,6 +343,12 @@ const claimSlotAndCreate = async (
     );
   }
 
+  // The commission rate in force now, kept on the booking so a later change
+  // to the setting never reprices it.
+  const commissionBps = Math.round(
+    (await getSetting("booking.commissionPercent")) * 100,
+  );
+
   // Queue identity. The serial is the slot's position in its day, so it
   // is fixed by the slot the claim above just won - no lock needed.
   // Sequential, not Promise.all: these share one transaction connection.
@@ -373,6 +379,7 @@ const claimSlotAndCreate = async (
       depositMinor: input.depositMinor,
       depositStatus:
         input.depositMinor > 0 ? DepositStatus.HELD : DepositStatus.NONE,
+      commissionBps,
     },
     include: newBookingInclude,
   });
@@ -1374,6 +1381,7 @@ const updateAppointmentStatus = async (
       AppointmentDeposit.assertCancellable(appointment);
       return cancelInTx(appointmentId, {
         by: "CUSTOMER",
+        cancelledBy: CancelledBy.CUSTOMER,
         freeCancellation: AppointmentDeposit.isWithinFreeCancellation(
           appointment,
           appointment.salon,
@@ -1387,6 +1395,8 @@ const updateAppointmentStatus = async (
     // salon-funded credit for the trouble.
     return cancelInTx(appointmentId, {
       by: "SALON",
+      cancelledBy:
+        userRole === UserRole.ADMIN ? CancelledBy.ADMIN : CancelledBy.SALON,
       reason: payload.cancellationReason,
       fromStatuses: [from],
     });
@@ -1414,6 +1424,7 @@ const updateAppointmentStatus = async (
             checkedInAt: new Date(),
             checkedInById: userId,
           }),
+          ...(to === AppointmentStatus.IN_PROGRESS && { startedAt: new Date() }),
         },
       });
 
@@ -1498,6 +1509,7 @@ const cancelAppointment = async (
   if (bySalon) {
     const result = await cancelInTx(appointmentId, {
       by: "SALON",
+      cancelledBy: CancelledBy.SALON,
       reason,
       fromStatuses: [
         AppointmentStatus.PENDING,
@@ -1533,6 +1545,7 @@ const cancelAppointment = async (
   // rest back - a late cancellation is not as expensive as never showing up.
   const result = await cancelInTx(appointmentId, {
     by: "CUSTOMER",
+    cancelledBy: CancelledBy.CUSTOMER,
     freeCancellation: quote.freeCancellation,
     reason,
   });
@@ -1596,7 +1609,7 @@ const appealNoShow = async (
 const resolveAppeal = async (
   adminUserId: string,
   appointmentId: string,
-  payload: { approve: boolean; note?: string },
+  payload: { approve: boolean; note?: string; withoutAppeal?: boolean },
 ) => AppointmentDeposit.resolveAppeal(adminUserId, appointmentId, payload);
 
 /**
@@ -1606,11 +1619,24 @@ const resolveAppeal = async (
 const cancelByAdmin = (appointmentId: string, reason: string) =>
   cancelInTx(appointmentId, {
     by: "CUSTOMER",
+    cancelledBy: CancelledBy.ADMIN,
     freeCancellation: true,
     reason,
   });
 
+/**
+ * An admin cancelling on the salon's behalf (suspending it): exactly the
+ * salon-cancellation path - the whole deposit back plus the goodwill credit.
+ */
+const cancelForSalonByAdmin = (appointmentId: string, reason: string) =>
+  cancelInTx(appointmentId, {
+    by: "SALON",
+    cancelledBy: CancelledBy.ADMIN,
+    reason,
+  });
+
 export const AppointmentService = {
+  cancelForSalonByAdmin,
   bookAppointment,
   cancelByAdmin,
   // Exported for the assistant, which quotes a price in the chat and re-quotes

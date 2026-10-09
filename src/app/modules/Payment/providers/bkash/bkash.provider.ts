@@ -1,6 +1,7 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../../../Error/error";
 import config from "../../../../../config";
+import { getSettingSync } from "../../../../utils/settings";
 import { parseGatewayAmount, toGatewayAmount } from "../amount";
 import { GatewayLookup, GatewayState, PaymentProvider } from "../types";
 import { BkashErr, BkashResult, bkashRequest, redactBkash } from "./bkash.client";
@@ -90,8 +91,10 @@ export const bkashProvider: PaymentProvider & {
   name: "BKASH",
   displayName: "bKash",
 
+  // The payments.bkashEnabled platform setting (env BKASH_ENABLED), plus the
+  // credentials, which stay env-only.
   isEnabled: () =>
-    config.bkash.enabled &&
+    getSettingSync("payments.bkashEnabled") &&
     Boolean(
       config.bkash.username &&
         config.bkash.password &&
