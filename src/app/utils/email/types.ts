@@ -13,6 +13,8 @@ export type EmailMessage = {
   to: string;
   subject: string;
   html: string;
+  /** Where the recipient's reply goes, when that isn't EMAIL_FROM. */
+  replyTo?: string;
 };
 
 export type EmailResult =

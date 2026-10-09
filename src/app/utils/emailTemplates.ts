@@ -906,3 +906,35 @@ export const getBookingCancelledByAdminTemplate = (notice: {
      }
      ${contactLine(notice.contactUrl)}`
   );
+
+/**
+ * A moderator hid the customer's review. Says why by reason code only - never
+ * who reported it.
+ */
+export const getReviewHiddenTemplate = (notice: {
+  name: string;
+  salonName: string;
+  reason: string;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    "Your review has been hidden",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>We have hidden your review of ${escapeHtml(notice.salonName)} because it did not meet our review guidelines. It no longer appears on the salon's page or counts toward its rating.</p>
+     <p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>
+     ${contactLine(notice.contactUrl)}`
+  );
+
+/** An admin's reply on a support ticket. The subject carries `[#<number>]`. */
+export const getSupportReplyTemplate = (reply: {
+  name: string;
+  number: number;
+  subject: string;
+  body: string;
+}) =>
+  moneyLayout(
+    `Re: ${reply.subject}`,
+    `<p>Hi ${escapeHtml(reply.name)},</p>
+     <div style="white-space:normal;">${escapeHtml(reply.body).replace(/\r?\n/g, "<br>")}</div>
+     <p style="color:#7f8c8d;font-size:12px;margin-top:24px;">Ticket #${reply.number}. Reply to this email to answer us.</p>`
+  );

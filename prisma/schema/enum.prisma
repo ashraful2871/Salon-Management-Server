@@ -229,3 +229,26 @@ enum ApprovalStatus {
   EXECUTED
   FAILED
 }
+
+/// Review moderation: HIDDEN reviews drop out of every public read and out of
+/// the salon/staff rating. Text is never edited.
+enum ReviewStatus {
+  PUBLISHED
+  HIDDEN
+}
+
+/// Support tickets: OPEN until an admin replies (PENDING = waiting on the
+/// requester), RESOLVED by an admin, CLOSED by the support.autoclose job.
+enum TicketStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}

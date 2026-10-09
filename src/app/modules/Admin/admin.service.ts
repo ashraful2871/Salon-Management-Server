@@ -10,6 +10,8 @@ import { can, normalizeArea, Permission } from "./admin.permissions";
 import { NOTE_ENTITY_TYPES } from "./admin.validation";
 import { SettlementService } from "../Settlement/settlement.service";
 import { WalletService } from "../Wallet/wallet.service";
+import { REPORTED_REVIEWS } from "./reviews/reviews.service";
+import { SUPPORT_SLA_MS } from "./support/support.service";
 
 // Frontend admin routes are built in Phase 3; these hrefs are where they go.
 const HREF = {
@@ -443,6 +445,40 @@ const inbox = async (admin: AdminContext): Promise<InboxItem[]> => {
           oldestAt: agg._min.createdAt,
           tone: "warning" as const,
           href: "/dashboard/admin/finance/approvals",
+        })),
+    );
+  }
+
+  // OPEN tickets nobody has answered within the SLA.
+  if (has("support.view")) {
+    items.push(
+      prisma.supportTicket
+        .aggregate({
+          where: { status: "OPEN", firstResponseAt: null, createdAt: { lt: new Date(now - SUPPORT_SLA_MS) } },
+          _count: { _all: true },
+          _min: { createdAt: true },
+        })
+        .then((agg) => ({
+          key: "support.unanswered",
+          count: agg._count._all,
+          oldestAt: agg._min.createdAt,
+          tone: "warning" as const,
+          href: "/dashboard/admin/support?status=OPEN",
+        })),
+    );
+  }
+
+  // Reported reviews nobody has hidden or kept yet.
+  if (has("reviews.moderate") && admin.accountRole === "ADMIN") {
+    items.push(
+      prisma.review
+        .aggregate({ where: REPORTED_REVIEWS, _count: { _all: true }, _min: { createdAt: true } })
+        .then((agg) => ({
+          key: "reviews.reported",
+          count: agg._count._all,
+          oldestAt: agg._min.createdAt,
+          tone: "warning" as const,
+          href: "/dashboard/admin/reviews?tab=reported",
         })),
     );
   }

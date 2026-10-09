@@ -3,6 +3,31 @@ import { Prisma } from "@prisma/client";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 
+/** Only PUBLISHED reviews are shown, and only they count toward a rating. */
+const PUBLISHED = { status: "PUBLISHED" } as const;
+
+const ratingOf = async (tx: Prisma.TransactionClient, where: Prisma.ReviewWhereInput) => {
+  const agg = await tx.review.aggregate({
+    where: { ...where, ...PUBLISHED },
+    _avg: { rating: true },
+    _count: { _all: true },
+  });
+  return { rating: agg._avg.rating ?? 0, totalReviews: agg._count._all };
+};
+
+/** Salon `rating` / `totalReviews` from its PUBLISHED reviews. Create, hide and restore call it. */
+export const recomputeSalonRating = async (tx: Prisma.TransactionClient, salonId: string) => {
+  const data = await ratingOf(tx, { salonId });
+  await tx.salon.update({ where: { id: salonId }, data });
+  return data;
+};
+
+export const recomputeStaffRating = async (tx: Prisma.TransactionClient, staffId: string) => {
+  const data = await ratingOf(tx, { staffId });
+  await tx.staff.update({ where: { id: staffId }, data });
+  return data;
+};
+
 const createReview = async (userId: string, payload: any) => {
   // Verify appointment exists and is completed
   const appointment = await prisma.appointment.findUnique({
@@ -78,39 +103,8 @@ const createReview = async (userId: string, payload: any) => {
         },
       });
 
-      // Update salon rating
-      const salonReviews = await tx.review.findMany({
-        where: { salonId: appointment.salonId },
-        select: { rating: true },
-      });
-      const salonAvgRating =
-        salonReviews.reduce((sum: number, r: any) => sum + r.rating, 0) /
-        salonReviews.length;
-      await tx.salon.update({
-        where: { id: appointment.salonId },
-        data: {
-          rating: salonAvgRating,
-          totalReviews: salonReviews.length,
-        },
-      });
-
-      // Update staff rating if applicable
-      if (appointment.staffId) {
-        const staffReviews = await tx.review.findMany({
-          where: { staffId: appointment.staffId },
-          select: { rating: true },
-        });
-        const staffAvgRating =
-          staffReviews.reduce((sum: number, r: any) => sum + r.rating, 0) /
-          staffReviews.length;
-        await tx.staff.update({
-          where: { id: appointment.staffId },
-          data: {
-            rating: staffAvgRating,
-            totalReviews: staffReviews.length,
-          },
-        });
-      }
+      await recomputeSalonRating(tx, appointment.salonId);
+      if (appointment.staffId) await recomputeStaffRating(tx, appointment.staffId);
 
       return review;
     },
@@ -125,7 +119,7 @@ const getAllReviews = async (query: any) => {
 
   // Public: reviews of a salon that is not live (suspended, pending, deleted)
   // stay hidden with it.
-  const whereConditions: any = { salon: { status: "ACTIVE", isDeleted: false } };
+  const whereConditions: any = { ...PUBLISHED, salon: { status: "ACTIVE", isDeleted: false } };
 
   if (salonId) {
     whereConditions.salonId = salonId;
@@ -181,8 +175,8 @@ const getAllReviews = async (query: any) => {
 };
 
 const getReviewById = async (id: string) => {
-  const review = await prisma.review.findUnique({
-    where: { id },
+  const review = await prisma.review.findFirst({
+    where: { id, ...PUBLISHED },
     include: {
       customer: {
         select: {
@@ -230,7 +224,7 @@ const getReviewsBySalonId = async (salonId: string, query: any) => {
   const { page = 1, limit = 10 } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  const whereConditions: any = { salonId };
+  const whereConditions: any = { salonId, ...PUBLISHED };
 
   const [reviews, total] = await Promise.all([
     prisma.review.findMany({
@@ -281,7 +275,7 @@ const getReviewsByStaffId = async (staffId: string, query: any) => {
   const { page = 1, limit = 10 } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  const whereConditions: any = { staffId };
+  const whereConditions: any = { staffId, ...PUBLISHED };
 
   const [reviews, total] = await Promise.all([
     prisma.review.findMany({
@@ -328,8 +322,50 @@ const getReviewsByStaffId = async (staffId: string, query: any) => {
   };
 };
 
+export const REPORT_REASONS = ["ABUSIVE", "PERSONAL_INFO", "SPAM", "FAKE", "OTHER"] as const;
+
+/**
+ * A customer, or the owner of the reviewed salon, flags a review for the
+ * moderators. One report per user per review; the review stays up until an
+ * admin hides it.
+ */
+const reportReview = async (
+  user: { userId: string; role: string },
+  reviewId: string,
+  body: { reason: (typeof REPORT_REASONS)[number]; note?: string },
+) => {
+  const review = await prisma.review.findFirst({
+    where: { id: reviewId, ...PUBLISHED },
+    select: { id: true, customerId: true, salon: { select: { owner: { select: { userId: true } } } } },
+  });
+  if (!review) throw new ApiError(StatusCodes.NOT_FOUND, "Review not found");
+
+  if (user.role === "SALON_OWNER" && review.salon.owner.userId !== user.userId) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "You can only report reviews of your own salon");
+  }
+  if (review.customerId === user.userId) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "You can't report your own review");
+  }
+
+  try {
+    await prisma.$transaction([
+      prisma.reviewReport.create({
+        data: { reviewId, reporterId: user.userId, reason: body.reason, note: body.note || null },
+      }),
+      // A new report puts a review a moderator kept back in the Reported queue.
+      prisma.review.update({ where: { id: reviewId }, data: { reportCount: { increment: 1 }, moderatedAt: null } }),
+    ]);
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      throw new ApiError(StatusCodes.CONFLICT, "You have already reported this review");
+    }
+    throw err;
+  }
+};
+
 export const ReviewService = {
   createReview,
+  reportReview,
   getAllReviews,
   getReviewById,
   getReviewsBySalonId,

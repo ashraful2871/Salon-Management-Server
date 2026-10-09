@@ -150,7 +150,7 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
       select: {
         services: true,
         staff: true,
-        reviews: true,
+        reviews: { where: { status: "PUBLISHED" } },
       },
     },
   } satisfies Prisma.SalonInclude;
@@ -352,6 +352,7 @@ const getMySalons = async (userId: string, query: any) => {
         },
 
         reviews: {
+          where: { status: "PUBLISHED" },
           orderBy: { createdAt: "desc" },
           take: 10,
           include: {
@@ -369,7 +370,7 @@ const getMySalons = async (userId: string, query: any) => {
           select: {
             services: true,
             staff: true,
-            reviews: true,
+            reviews: { where: { status: "PUBLISHED" } },
             appointments: true,
           },
         },
@@ -437,6 +438,7 @@ const getSalonById = async (
         orderBy: { createdAt: "desc" },
       },
       reviews: {
+        where: { status: "PUBLISHED" },
         include: {
           customer: {
             select: {

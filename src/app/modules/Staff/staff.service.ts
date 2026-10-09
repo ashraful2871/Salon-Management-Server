@@ -204,6 +204,7 @@ const getStaffById = async (id: string) => {
         },
       },
       reviews: {
+        where: { status: "PUBLISHED" },
         include: {
           customer: {
             select: {

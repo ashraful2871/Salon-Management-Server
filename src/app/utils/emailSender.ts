@@ -112,6 +112,7 @@ export const sendEmail = async (
   to: string,
   subject: string,
   html: string,
+  opts: { replyTo?: string } = {},
 ): Promise<EmailResult> => {
   if (UNDELIVERABLE_DOMAIN.test(to.trim())) {
     console.log(`[email] skipped "${subject}" to ${to}: reserved test domain`);
@@ -124,7 +125,7 @@ export const sendEmail = async (
     return { ok: false, provider: "none", error: "No email provider configured" };
   }
 
-  const result = await provider.send({ to, subject, html });
+  const result = await provider.send({ to, subject, html, replyTo: opts.replyTo });
 
   if (result.ok) {
     console.log(

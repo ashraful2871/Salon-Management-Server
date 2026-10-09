@@ -86,6 +86,19 @@ export const contactLimiter = rateLimit({
  * a typo costs a request, but each code still locks after 5 wrong attempts and
  * issueOtp throttles sends on its own.
  */
+/** Review reports: 20 an hour per account. auth() must run first. */
+export const reviewReportLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  keyGenerator: userOrClientKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many reports. Try again in an hour.",
+  },
+});
+
 export const otpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,

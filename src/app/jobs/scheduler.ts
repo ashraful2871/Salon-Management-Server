@@ -11,6 +11,7 @@ import {
 } from "../modules/HairTryOn/hairTryOn.cleanup";
 import { AdminUsersService } from "../modules/Admin/users/users.service";
 import { AdminApprovalsService } from "../modules/Admin/approvals/approvals.service";
+import { AdminSupportService } from "../modules/Admin/support/support.service";
 import prisma from "../shared/prisma";
 
 /**
@@ -143,6 +144,8 @@ export const startBackgroundJobs = () => {
   every(USERS_UNSUSPEND_INTERVAL_MS, "users.unsuspend", AdminUsersService.unsuspendExpired);
   // Four-eyes requests nobody decided within 24 h.
   every(HOUR, "approvals.expire", AdminApprovalsService.expireStale);
+  // Tickets RESOLVED more than 7 days ago → CLOSED.
+  every(24 * HOUR, "support.autoclose", AdminSupportService.autoClose);
 
   // Catch anything that got stuck while the process was down, but not in the
   // first seconds of boot - a restart loop should not hammer the gateway.
