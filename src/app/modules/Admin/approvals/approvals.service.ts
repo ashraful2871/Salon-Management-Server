@@ -313,6 +313,7 @@ const expireStale = async () => {
     data: { status: ApprovalStatus.EXPIRED },
   });
   if (count) console.log(`[jobs] approvals.expire: expired ${count} request(s)`);
+  return { expired: count };
 };
 
 export const AdminApprovalsService = { list, approve, reject, expireStale };

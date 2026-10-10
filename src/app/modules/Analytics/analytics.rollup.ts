@@ -133,6 +133,7 @@ export const runAnalyticsRollup = async () => {
       snapshots ? `, ${snapshots} snapshot(s)` : ""
     }`,
   );
+  return { rows: result.rows, snapshots };
 };
 
 /** The Dhaka dates of `column` over the rows matching `where`. */
@@ -178,4 +179,5 @@ export const runAnalyticsRetention = async () => {
     report.push(`${r.table} ${deleted}`);
   }
   console.log(`[jobs] analytics.retention: ${report.length ? report.join(", ") : "nothing to trim"}`);
+  return { trimmed: report };
 };

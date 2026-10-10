@@ -68,7 +68,7 @@ const valueOf = (json: unknown) =>
 const getHistory = async (key: string) => {
   assertKey(key);
   const rows = await prisma.auditLog.findMany({
-    where: { action: "setting.update", entityType: "setting", entityId: key },
+    where: { action: { in: ["setting.update", "content.update"] }, entityType: "setting", entityId: key },
     orderBy: { createdAt: "desc" },
     take: 20,
   });

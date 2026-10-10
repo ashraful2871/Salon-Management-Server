@@ -65,6 +65,7 @@ export const purgeHairTryOn = async (beforeRowPurge?: (olderThan: Date) => Promi
   console.log(
     `[jobs] hair.cleanup: deleted ${originals.length} photo(s), ${results.length} result(s), purged ${purged.count} row(s)`,
   );
+  return { photos: originals.length, results: results.length, rows: purged.count };
 };
 
 type TaggedResource = { public_id: string; created_at: string };
@@ -102,4 +103,5 @@ export const sweepHairTryOnTag = async () => {
   console.log(
     `[jobs] hair.sweep: scanned ${scanned} asset(s), deleted ${stale.length} older than 48 h`,
   );
+  return { scanned, deleted: stale.length };
 };

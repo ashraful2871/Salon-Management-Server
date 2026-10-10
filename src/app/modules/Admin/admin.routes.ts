@@ -15,6 +15,8 @@ import { AdminApprovalsRoutes } from "./approvals/approvals.routes";
 import { AdminReviewsRoutes } from "./reviews/reviews.routes";
 import { AdminSupportRoutes } from "./support/support.routes";
 import { AdminAnalyticsRoutes } from "./analytics/analytics.routes";
+import { AdminSystemRoutes } from "./system/system.routes";
+import { AdminContentRoutes } from "./content/content.routes";
 import { AdminAgentsController } from "./agents/agents.controller";
 import { AdminController } from "./admin.controller";
 import { AdminValidation } from "./admin.validation";
@@ -27,6 +29,8 @@ const router = express.Router();
 router.use(adminGate({ mfaExempt: ["/me", "/mfa/"] }), adminLimiter);
 
 router.get("/me", AdminController.getMe);
+// Own preferences (alert emails); needs 2FA like everything past /me.
+router.patch("/me", adminAuth(), validateRequest(AdminValidation.updateMe, { replaceBody: true }), AdminController.updateMe);
 router.use("/mfa", AdminMfaRoutes);
 
 // Users, agents and the admin team (invitations live under the last two).
@@ -44,6 +48,8 @@ router.use("/approvals", AdminApprovalsRoutes);
 router.use("/reviews", AdminReviewsRoutes);
 router.use("/support", AdminSupportRoutes);
 router.use("/analytics", AdminAnalyticsRoutes);
+router.use("/system", AdminSystemRoutes);
+router.use("/content", AdminContentRoutes);
 router.get("/areas", adminAuth("agents.manage"), adminOnly, AdminAgentsController.areas);
 
 // Results and inbox items are filtered by the caller's permissions inside.

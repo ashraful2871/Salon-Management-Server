@@ -24,7 +24,7 @@ export type SettingGroup =
   | "system"
   | "content";
 
-export type SettingKind = "int" | "number" | "boolean" | "announcement";
+export type SettingKind = "int" | "number" | "boolean" | "announcement" | "list";
 
 type Entry<T> = {
   schema: z.ZodType<T>;
@@ -98,6 +98,90 @@ const announcementSchema = z
   .nullable();
 
 export type Announcement = z.infer<typeof announcementSchema>;
+
+/* ---------------------------------------------------------------- content */
+
+// The ServiceCategory enum (prisma/schema/enum.prisma).
+const SERVICE_CATEGORIES = [
+  "HAIRCUT", "STYLING", "COLORING", "TREATMENT", "SPA", "FACIAL",
+  "MANICURE", "PEDICURE", "MAKEUP", "WAXING", "MASSAGE", "OTHER",
+] as const;
+
+/** Lucide icon names a category tile may use; the frontend maps each to a component. */
+export const CONTENT_ICONS = [
+  "Scissors", "Wind", "Palette", "Sparkles", "Smile", "Brush", "Hand",
+  "Footprints", "Feather", "HeartHandshake", "Flower2", "Store", "Star",
+  "Gem", "Crown", "Droplet", "Leaf", "Heart", "Flame", "Sun",
+] as const;
+
+export const MAX_FEATURED_SALONS = 8;
+
+const featuredSalonIdsSchema = z
+  .array(z.uuid("Each featured salon must be a salon id"))
+  .max(MAX_FEATURED_SALONS, `At most ${MAX_FEATURED_SALONS} featured salons`)
+  .refine((ids) => new Set(ids).size === ids.length, "A salon is listed twice");
+
+const homeChipSchema = z
+  .object({
+    label: z.string().trim().min(1).max(24),
+    query: z.string().trim().min(1).max(100).optional(),
+    category: z.enum(SERVICE_CATEGORIES).optional(),
+  })
+  .refine((c) => Boolean(c.query) !== Boolean(c.category), {
+    message: "Each chip needs a search text or a category (not both)",
+  });
+
+const homeChipsSchema = z.array(homeChipSchema).max(12, "At most 12 chips");
+
+const categoryTileSchema = z.object({
+  category: z.enum(SERVICE_CATEGORIES),
+  labelEn: z.string().trim().min(1).max(40),
+  labelBn: z.string().trim().min(1).max(40),
+  icon: z.enum(CONTENT_ICONS),
+  order: z.number().int().min(0).max(99),
+  visible: z.boolean(),
+});
+
+const categoryTilesSchema = z
+  .array(categoryTileSchema)
+  .max(SERVICE_CATEGORIES.length)
+  .refine((t) => new Set(t.map((x) => x.category)).size === t.length, "A category is listed twice");
+
+export type HomeChip = z.infer<typeof homeChipSchema>;
+export type CategoryTile = z.infer<typeof categoryTileSchema>;
+
+// Today's hardcoded home content (frontend HeroSearch + ServiceCategories),
+// so an empty table renders exactly what shipped before.
+const DEFAULT_CHIPS: HomeChip[] = [
+  { label: "Haircut", category: "HAIRCUT" },
+  { label: "Facial", category: "FACIAL" },
+  { label: "Makeup", category: "MAKEUP" },
+  { label: "Manicure", category: "MANICURE" },
+  { label: "Massage", category: "MASSAGE" },
+];
+
+const DEFAULT_TILES: CategoryTile[] = (
+  [
+    ["HAIRCUT", "Haircut", "চুল কাটা", "Scissors"],
+    ["STYLING", "Styling", "স্টাইলিং", "Wind"],
+    ["COLORING", "Hair colour", "চুলের রং", "Palette"],
+    ["TREATMENT", "Hair treatment", "চুলের যত্ন", "Sparkles"],
+    ["FACIAL", "Facial", "ফেসিয়াল", "Smile"],
+    ["MAKEUP", "Makeup", "মেকআপ", "Brush"],
+    ["MANICURE", "Manicure", "ম্যানিকিউর", "Hand"],
+    ["PEDICURE", "Pedicure", "পেডিকিউর", "Footprints"],
+    ["WAXING", "Waxing", "ওয়াক্সিং", "Feather"],
+    ["MASSAGE", "Massage", "ম্যাসাজ", "HeartHandshake"],
+    ["SPA", "Spa", "স্পা", "Flower2"],
+  ] as const
+).map(([category, labelEn, labelBn, icon], order) => ({
+  category,
+  labelEn,
+  labelBn,
+  icon,
+  order,
+  visible: true,
+}));
 
 export const SETTINGS = {
   "booking.commissionPercent": def<number>({
@@ -345,6 +429,36 @@ export const SETTINGS = {
     public: true,
     tier: 2,
   }),
+  // Not public itself: GET /settings/public serves the resolved `featuredSalons`.
+  "content.featuredSalonIds": def<string[]>({
+    schema: featuredSalonIdsSchema,
+    kind: "list",
+    default: [],
+    group: "content",
+    label: "Featured salons",
+    help: "Shown first in the home page's top-rated row, in this order. Only ACTIVE salons appear.",
+    tier: 2,
+  }),
+  "content.homeChips": def<HomeChip[]>({
+    schema: homeChipsSchema,
+    kind: "list",
+    default: DEFAULT_CHIPS,
+    group: "content",
+    label: "Popular search chips",
+    help: "The chips under the home search box.",
+    public: true,
+    tier: 2,
+  }),
+  "content.categoryTiles": def<CategoryTile[]>({
+    schema: categoryTilesSchema,
+    kind: "list",
+    default: DEFAULT_TILES,
+    group: "content",
+    label: "Category tiles",
+    help: "The home page's \"Browse by service\" tiles.",
+    public: true,
+    tier: 2,
+  }),
 };
 
 export type SettingKey = keyof typeof SETTINGS;
@@ -490,6 +604,23 @@ export const describeSettings = async () => {
   });
 };
 
+/** Featured salons must be ACTIVE (and not deleted) when they are picked. */
+const assertFeaturable = async (ids: string[]) => {
+  if (!ids.length) return;
+  const found = await prisma.salon.findMany({
+    where: { id: { in: ids }, status: "ACTIVE", isDeleted: false },
+    select: { id: true },
+  });
+  const ok = new Set(found.map((s) => s.id));
+  const bad = ids.filter((id) => !ok.has(id));
+  if (bad.length) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Only ACTIVE salons can be featured (${bad.length} ${bad.length === 1 ? "is" : "are"} not)`,
+    );
+  }
+};
+
 /** Validates, upserts with version + 1, refreshes the cache and audits. */
 export const setSetting = async <K extends SettingKey>(
   key: K,
@@ -505,6 +636,7 @@ export const setSetting = async <K extends SettingKey>(
       parsed.error.issues[0]?.message ?? "That value is not allowed",
     );
   }
+  if (key === "content.featuredSalonIds") await assertFeaturable(parsed.data as string[]);
 
   // The audit's "before" comes from the database, not this process's cache,
   // which can lag a change made by another instance by up to 30 s.
@@ -523,7 +655,7 @@ export const setSetting = async <K extends SettingKey>(
   rows.set(key, row);
 
   await audit(ctx, {
-    action: "setting.update",
+    action: entry.group === "content" ? "content.update" : "setting.update",
     entityType: "setting",
     entityId: key,
     before: { value: before.value, source: before.source },

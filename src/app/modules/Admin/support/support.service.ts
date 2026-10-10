@@ -255,6 +255,7 @@ const autoClose = async () => {
     data: { status: "CLOSED" },
   });
   if (count) console.log(`[jobs] support.autoclose: closed ${count} ticket(s)`);
+  return { closed: count };
 };
 
 export const AdminSupportService = { list, getTicket, assignees, reply, update, autoClose };

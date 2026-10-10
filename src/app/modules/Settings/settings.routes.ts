@@ -2,7 +2,7 @@ import express, { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
-import { publicSettings } from "../../utils/settings";
+import { SettingsService } from "./settings.service";
 
 /** GET /settings/public - only the settings marked public, no auth. */
 const router = express.Router();
@@ -14,7 +14,7 @@ router.get(
       statusCode: StatusCodes.OK,
       success: true,
       message: "Public settings",
-      data: await publicSettings(),
+      data: await SettingsService.getPublic(),
     });
   }),
 );

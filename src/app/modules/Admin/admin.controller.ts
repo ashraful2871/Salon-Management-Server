@@ -10,6 +10,11 @@ const getMe = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Admin profile", data });
 });
 
+const updateMe = catchAsync(async (req: Request, res: Response) => {
+  const data = await AdminService.updateMe(req.admin!, req.auditCtx, req.body);
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Preferences saved", data });
+});
+
 const search = catchAsync(async (req: Request, res: Response) => {
   const data = await AdminService.search(await loadAdminContext(req), String(req.query.q ?? ""));
   sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Search results", data });
@@ -41,6 +46,7 @@ const deleteNote = catchAsync(async (req: Request, res: Response) => {
 
 export const AdminController = {
   getMe,
+  updateMe,
   search,
   inbox,
   listNotes,

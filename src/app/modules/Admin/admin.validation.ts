@@ -31,7 +31,12 @@ const search = z.object({
   }),
 });
 
+const updateMe = z.object({
+  body: z.object({ alertEmails: z.boolean() }).strict(),
+});
+
 export const AdminValidation = {
+  updateMe,
   listNotes,
   createNote,
   search,

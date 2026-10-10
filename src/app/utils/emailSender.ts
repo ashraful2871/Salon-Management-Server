@@ -94,6 +94,33 @@ const activeProvider = () => {
 /** Exposed for the test script and for startup diagnostics. */
 export const getEmailProviderName = () => activeProvider()?.name ?? "none";
 
+// Failed sends in this process over the last day, for the admin System page.
+// Per process and lost on restart: a rough signal, not a delivery log.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const failures: Array<{ at: number; error: string }> = [];
+let sentSinceBoot = 0;
+
+const noteEmailFailure = (error: string) => {
+  const cutoff = Date.now() - DAY_MS;
+  while (failures.length && failures[0].at < cutoff) failures.shift();
+  failures.push({ at: Date.now(), error: error.slice(0, 200) });
+  if (failures.length > 500) failures.shift();
+};
+
+/** Read-only view for `GET /admin/system/integrations`. */
+export const emailHealth = () => {
+  const cutoff = Date.now() - DAY_MS;
+  const recent = failures.filter((f) => f.at >= cutoff);
+  const last = recent[recent.length - 1];
+  return {
+    provider: getEmailProviderName(),
+    failures24h: recent.length,
+    sentSinceBoot,
+    lastFailureAt: last ? new Date(last.at) : null,
+    lastError: last?.error ?? null,
+  };
+};
+
 /**
  * Domains reserved by RFC 2606 / 6761 that can never receive mail. The seeded
  * test customers and staff (`npm run seed:dhaka`) live on example.com, so a
@@ -122,18 +149,21 @@ export const sendEmail = async (
   const provider = activeProvider();
 
   if (!provider) {
+    noteEmailFailure("No email provider configured");
     return { ok: false, provider: "none", error: "No email provider configured" };
   }
 
   const result = await provider.send({ to, subject, html, replyTo: opts.replyTo });
 
   if (result.ok) {
+    sentSinceBoot += 1;
     console.log(
       `[email] sent "${subject}" to ${to} via ${result.provider}${result.id ? ` (${result.id})` : ""}`,
     );
   } else {
     // Loud on purpose. The old version swallowed this, which is why a silent
     // production outage looked like "the email just never arrives".
+    noteEmailFailure(result.error ?? "Unknown error");
     console.error(
       `[email] FAILED to send "${subject}" to ${to} via ${result.provider}: ${result.error}`,
     );

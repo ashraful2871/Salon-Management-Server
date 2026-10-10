@@ -938,3 +938,51 @@ export const getSupportReplyTemplate = (reply: {
      <div style="white-space:normal;">${escapeHtml(reply.body).replace(/\r?\n/g, "<br>")}</div>
      <p style="color:#7f8c8d;font-size:12px;margin-top:24px;">Ticket #${reply.number}. Reply to this email to answer us.</p>`
   );
+
+/** `system.watch`: the alerts that just started or stopped, in one email. */
+export const getSystemAlertTemplate = (notice: {
+  firing: Array<{ label: string; detail: string }>;
+  resolved: Array<{ label: string; detail: string }>;
+  url: string;
+}) => {
+  const list = (items: Array<{ label: string; detail: string }>) =>
+    `<ul style="padding-left:18px;">${items
+      .map((i) => `<li><strong>${escapeHtml(i.label)}</strong> - ${escapeHtml(i.detail)}</li>`)
+      .join("")}</ul>`;
+  return moneyLayout(
+    notice.firing.length ? "System alert" : "System alert resolved",
+    `${notice.firing.length ? `<p>These checks started failing:</p>${list(notice.firing)}` : ""}${
+      notice.resolved.length ? `<p>These are healthy again:</p>${list(notice.resolved)}` : ""
+    }
+     <p><a href="${notice.url}" style="color:#2c3e50;font-weight:bold;">Open System health</a></p>
+     <p style="color:#7f8c8d;font-size:13px;">You get these because "Email me alerts" is on for your admin account. One email per alert every 6 hours at most.</p>`,
+  );
+};
+
+/** `admin.digest`: yesterday at a glance, once a day after 08:00 Dhaka. */
+export const getAdminDigestTemplate = (digest: {
+  day: string;
+  kpis: Array<{ label: string; value: string }>;
+  inbox: Array<{ label: string; count: number }>;
+  alerts: Array<{ label: string; since: string }>;
+  url: string;
+}) => {
+  const rows = (items: Array<[string, string]>) =>
+    `<table style="width:100%;border-collapse:collapse;font-size:14px;">${items
+      .map(
+        ([k, v]) =>
+          `<tr><td style="padding:6px 0;border-bottom:1px solid #eee;">${escapeHtml(k)}</td><td style="padding:6px 0;border-bottom:1px solid #eee;text-align:right;"><strong>${escapeHtml(v)}</strong></td></tr>`,
+      )
+      .join("")}</table>`;
+  return moneyLayout(
+    `Daily digest - ${escapeHtml(digest.day)}`,
+    `<h3 style="margin:0 0 6px;">Yesterday</h3>${rows(digest.kpis.map((k) => [k.label, k.value]))}
+     <h3 style="margin:22px 0 6px;">Needs attention</h3>${
+       digest.inbox.length ? rows(digest.inbox.map((i) => [i.label, String(i.count)])) : "<p>Nothing waiting.</p>"
+     }
+     <h3 style="margin:22px 0 6px;">Alerts firing</h3>${
+       digest.alerts.length ? rows(digest.alerts.map((a) => [a.label, `since ${a.since}`])) : "<p>None. All checks are healthy.</p>"
+     }
+     <p style="margin-top:22px;"><a href="${digest.url}" style="color:#2c3e50;font-weight:bold;">Open the back office</a></p>`,
+  );
+};

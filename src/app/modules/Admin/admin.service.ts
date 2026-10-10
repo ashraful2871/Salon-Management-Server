@@ -25,10 +25,15 @@ const HREF = {
 // ---------------------------------------------------------------- me
 
 const getMe = async (admin: AdminContext) => {
-  const user = await prisma.user.findUnique({
-    where: { id: admin.userId },
-    select: { name: true, email: true },
-  });
+  const [user, profile] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: admin.userId },
+      select: { name: true, email: true },
+    }),
+    admin.accountRole === "ADMIN"
+      ? prisma.admin.findUnique({ where: { userId: admin.userId }, select: { alertEmails: true } })
+      : null,
+  ]);
   return {
     userId: admin.userId,
     name: user?.name ?? null,
@@ -38,6 +43,8 @@ const getMe = async (admin: AdminContext) => {
     permissions: admin.permissions,
     area: admin.area ?? null,
     mfa: await mfaStatus(admin.userId),
+    // System alert emails and the daily digest (ADMIN only).
+    alertEmails: profile?.alertEmails ?? false,
     // Drives the Approvals nav link: shown when four-eyes is on (or requests
     // are still waiting after it was switched off).
     approvals: {
@@ -48,6 +55,26 @@ const getMe = async (admin: AdminContext) => {
           : 0,
     },
   };
+};
+
+/** PATCH /admin/me: the caller's own preferences. */
+const updateMe = async (admin: AdminContext, ctx: AuditCtx | undefined, body: { alertEmails: boolean }) => {
+  if (admin.accountRole !== "ADMIN") {
+    throw new ApiError(StatusCodes.FORBIDDEN, "Only admins receive system alerts");
+  }
+  const before = await prisma.admin.findUnique({ where: { userId: admin.userId }, select: { alertEmails: true } });
+  if (!before) throw new ApiError(StatusCodes.NOT_FOUND, "Admin profile not found");
+  await prisma.admin.update({ where: { userId: admin.userId }, data: { alertEmails: body.alertEmails } });
+  if (before.alertEmails !== body.alertEmails) {
+    await audit(ctx, {
+      action: "admin.alert_emails",
+      entityType: "user",
+      entityId: admin.userId,
+      before,
+      after: { alertEmails: body.alertEmails },
+    });
+  }
+  return { alertEmails: body.alertEmails };
 };
 
 // ---------------------------------------------------------------- search
@@ -71,6 +98,8 @@ type SearchHit = {
   title: string;
   subtitle: string | null;
   href: string;
+  /** Salon hits only: the salon's status. */
+  status?: string;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -107,6 +136,7 @@ const search = async (admin: AdminContext, rawQ: string): Promise<SearchHit[]> =
     title: s.name,
     subtitle: `${s.area} · ${s.status}`,
     href: HREF.salon(s.id),
+    status: s.status,
   });
 
   const bookingSelect = {
@@ -261,7 +291,7 @@ const HOUR = 60 * 60 * 1000;
 const inbox = async (admin: AdminContext): Promise<InboxItem[]> => {
   const has = (p: Permission) => can(admin, p);
   const now = Date.now();
-  const items: Promise<InboxItem | null>[] = [];
+  const items: Promise<InboxItem | InboxItem[] | null>[] = [];
 
   if (has("salons.review")) {
     items.push(
@@ -483,9 +513,50 @@ const inbox = async (admin: AdminContext): Promise<InboxItem[]> => {
     );
   }
 
-  // Failed jobs and storage arrive in Phase 12.
+  // From the last system.watch run (alert_states), not recomputed here.
+  if (has("system.view")) {
+    items.push(
+      prisma.alertState
+        .findMany({
+          where: {
+            status: "FIRING",
+            OR: [{ key: { startsWith: "job." } }, { key: { in: ["storage.cap", "ai.coverage"] } }],
+          },
+          select: { key: true, since: true },
+        })
+        .then((rows) => {
+          const jobs = rows.filter((r) => r.key.startsWith("job."));
+          const one = (key: string) => rows.find((r) => r.key === key);
+          return [
+            {
+              key: "jobs.failed",
+              count: jobs.length,
+              oldestAt: jobs.reduce<Date | null>((min, r) => (!min || r.since < min ? r.since : min), null),
+              tone: "danger" as const,
+              href: "/dashboard/admin/system#jobs",
+            },
+            {
+              key: "storage.cap",
+              count: one("storage.cap") ? 1 : 0,
+              oldestAt: one("storage.cap")?.since ?? null,
+              tone: "warning" as const,
+              href: "/dashboard/admin/system#storage",
+            },
+            {
+              key: "ai.coverage",
+              count: one("ai.coverage") ? 1 : 0,
+              oldestAt: one("ai.coverage")?.since ?? null,
+              tone: "warning" as const,
+              href: "/dashboard/admin/system#ai",
+            },
+          ];
+        }),
+    );
+  }
 
-  return (await Promise.all(items)).filter((i): i is InboxItem => !!i && i.count > 0);
+  return (await Promise.all(items))
+    .flat()
+    .filter((i): i is InboxItem => !!i && i.count > 0);
 };
 
 // ---------------------------------------------------------------- notes
@@ -570,6 +641,7 @@ export const AdminService = {
   getMe,
   search,
   inbox,
+  updateMe,
   listNotes,
   createNote,
   deleteNote,
