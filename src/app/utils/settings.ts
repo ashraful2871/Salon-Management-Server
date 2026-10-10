@@ -371,6 +371,14 @@ export const SETTINGS = {
     help: "How long one authenticator code unlocks sensitive admin actions.",
     tier: 3,
   }),
+  "security.notifyOnImpersonation": def<boolean>({
+    ...bool(),
+    default: true,
+    group: "security",
+    label: "Email users on \"View as\"",
+    help: "Tell a customer or owner by email when support starts viewing their account.",
+    tier: 3,
+  }),
   "approvals.enabled": def<boolean>({
     ...bool(),
     default: false,

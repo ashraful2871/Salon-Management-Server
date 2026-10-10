@@ -71,6 +71,10 @@ const withReason = z.object({ body: z.object({ reason }) });
 
 const optionalReason = z.object({ body: z.object({ reason: reason.optional() }).default({}) });
 
+const anonymize = z.object({
+  body: z.object({ reason, confirmEmail: z.string().trim().min(3).max(254) }),
+});
+
 const updateRole = z.object({
   body: z.object({ role: z.enum(["CUSTOMER", "STAFF", "SALON_OWNER"]), reason }),
 });
@@ -81,4 +85,5 @@ export const AdminUsersValidation = {
   withReason,
   optionalReason,
   updateRole,
+  anonymize,
 };

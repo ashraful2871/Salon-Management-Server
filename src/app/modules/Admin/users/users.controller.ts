@@ -4,6 +4,7 @@ import catchAsync from "../../../shared/catchAsync";
 import sendResponse from "../../../shared/sendResponse";
 import { loadAdminContext } from "../admin.middleware";
 import { AdminUsersService } from "./users.service";
+import { AdminUsersPrivacy } from "./users.privacy";
 
 type Query = Record<string, string | undefined>;
 
@@ -72,6 +73,15 @@ const updateRole = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const exportData = catchAsync(AdminUsersPrivacy.exportUserData);
+
+const anonymize = catchAsync(async (req: Request, res: Response) => {
+  const admin = await loadAdminContext(req);
+  ok(res, "Account anonymized", {
+    data: await AdminUsersPrivacy.anonymize(admin, req.auditCtx, req.params.id, req.body),
+  });
+});
+
 export const AdminUsersController = {
   list,
   get,
@@ -84,4 +94,6 @@ export const AdminUsersController = {
   revokeSessions,
   verifyEmail,
   updateRole,
+  exportData,
+  anonymize,
 };

@@ -782,6 +782,15 @@ export const getAccountReactivatedTemplate = (notice: { name: string; signInUrl:
      <p>Your SalonKhuji account is active again. You can <a href="${escapeHtml(notice.signInUrl)}">sign in</a> and book as usual.</p>`
   );
 
+/** To a customer or owner when support starts a read-only "View as" of their account. */
+export const getImpersonationNoticeTemplate = (notice: { name: string; minutes: number; contactUrl: string }) =>
+  moneyLayout(
+    "SalonKhuji support viewed your account",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>A member of the SalonKhuji support team opened a read-only view of your account to help with a request. The view lasts at most ${notice.minutes} minutes and cannot change, book, cancel or pay for anything.</p>
+     <p>If you did not ask us for help, <a href="${escapeHtml(notice.contactUrl)}">contact us</a>.</p>`
+  );
+
 /** Sent to the affected admin and every SUPER_ADMIN on a team change. */
 export const getAdminTeamChangeTemplate = (notice: {
   heading: string;

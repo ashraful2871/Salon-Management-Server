@@ -17,6 +17,8 @@ import { AdminSupportRoutes } from "./support/support.routes";
 import { AdminAnalyticsRoutes } from "./analytics/analytics.routes";
 import { AdminSystemRoutes } from "./system/system.routes";
 import { AdminContentRoutes } from "./content/content.routes";
+import { AdminImpersonationRoutes } from "./impersonation/impersonation.routes";
+import { rejectImpersonation } from "../../utils/impersonation";
 import { AdminAgentsController } from "./agents/agents.controller";
 import { AdminController } from "./admin.controller";
 import { AdminValidation } from "./admin.validation";
@@ -26,6 +28,8 @@ const router = express.Router();
 // Every /admin route: an ADMIN or AGENT with a profile and 2FA enabled, then
 // the per-account limiter. Routes below add the permissions they need. Only
 // /me and /mfa/* answer before 2FA is set up (403 TWO_FACTOR_SETUP_REQUIRED).
+// A "View as" token never reaches an admin route, not even a read.
+router.use(rejectImpersonation);
 router.use(adminGate({ mfaExempt: ["/me", "/mfa/"] }), adminLimiter);
 
 router.get("/me", AdminController.getMe);
@@ -37,6 +41,7 @@ router.use("/mfa", AdminMfaRoutes);
 router.use("/users", AdminUsersRoutes);
 router.use("/agents", AdminAgentsRoutes);
 router.use("/team", AdminTeamRoutes);
+router.use("/impersonate", AdminImpersonationRoutes);
 
 // Salons: the approval queue, Salon 360 and its actions.
 router.use("/salons", AdminSalonsRoutes);

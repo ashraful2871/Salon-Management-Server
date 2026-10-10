@@ -49,4 +49,22 @@ router.patch(
   AdminUsersController.updateRole,
 );
 
+// Privacy requests (users.delete, tier 3). The export is a JSON download
+// relayed by the frontend export route; it opens the step-up window first.
+router.get(
+  "/:id/export",
+  adminAuth("users.delete"),
+  adminSensitiveLimiter,
+  requireStepUp(),
+  AdminUsersController.exportData,
+);
+router.post(
+  "/:id/anonymize",
+  adminAuth("users.delete"),
+  validateRequest(AdminUsersValidation.anonymize, { replaceBody: true }),
+  adminSensitiveLimiter,
+  requireStepUp(),
+  AdminUsersController.anonymize,
+);
+
 export const AdminUsersRoutes = router;

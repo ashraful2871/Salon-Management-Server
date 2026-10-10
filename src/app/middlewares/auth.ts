@@ -4,6 +4,7 @@ import ApiError from "../Error/error";
 import { jwtHelpers } from "../helper/jwtHelper";
 import config from "../../config";
 import prisma from "../shared/prisma";
+import { guardImpersonation } from "../utils/impersonation";
 
 const ACTIVE_STAMP_MS = 15 * 60 * 1000;
 
@@ -75,10 +76,14 @@ const auth = (...requiredRoles: string[]) => {
         throw new ApiError(StatusCodes.FORBIDDEN, "Forbidden!");
       }
 
+      // A "View as" token: reads only, until it ends, one audit row each.
+      await guardImpersonation(req, verifiedUser, user.id);
+
       // Update the request user with the fresh role and email from DB - both can
       // change after the token was issued
       req.user = { ...verifiedUser, email: user.email, role: user.role };
-      touchLastActive(user.id, user.lastActiveAt);
+      // Support looking around is not the user being active.
+      if (!verifiedUser.imp) touchLastActive(user.id, user.lastActiveAt);
       next();
     } catch (error) {
       next(error);
