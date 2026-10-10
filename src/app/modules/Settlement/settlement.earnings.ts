@@ -495,8 +495,131 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
   };
 };
 
+/**
+ * Money per Asia/Dhaka day, for analytics (`modules/Analytics`). The one place
+ * those figures are defined, so the dashboard and the finance console agree:
+ *
+ *   gmvMinor          `totalMinor` of COMPLETED bookings, on the day they were
+ *                     completed (`completedAt`, or the appointment date on rows
+ *                     completed before that was stamped)
+ *   commissionMinor   PLATFORM_REVENUE ledger entries by `createdAt`
+ *   topupVolumeMinor  TOPUP wallet transactions by `createdAt`
+ *
+ * `from`/`to` are UTC instants (`to` exclusive). Without `includeTest`, test
+ * salons and test customers are left out. `area`/`channel` narrow the booking
+ * figures; top-ups have neither, so they come back empty when either is set.
+ */
+export type MoneyFilter = {
+  from: Date;
+  to: Date;
+  includeTest: boolean;
+  area?: string;
+  channel?: string;
+};
+
+export type DailyMoney = {
+  day: string;
+  gmvMinor: number;
+  completed: number;
+  commissionMinor: number;
+  topupVolumeMinor: number;
+};
+
+const utcTs = (at: Date) => Prisma.sql`(${at.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
+const dhakaDay = (col: string) =>
+  Prisma.raw(`to_char((${col} AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Dhaka', 'YYYY-MM-DD')`);
+const COMPLETED_AT = `COALESCE(a."completedAt", a."appointmentDate")`;
+
+const narrow = (f: MoneyFilter) =>
+  Prisma.sql`${f.area ? Prisma.sql`AND lower(trim(s.area)) = ${f.area.trim().toLowerCase()}` : Prisma.empty}
+    ${f.channel ? Prisma.sql`AND a."bookedVia"::text = ${f.channel}` : Prisma.empty}`;
+
+const completedIn = (f: MoneyFilter) => Prisma.sql`
+  a.status = 'COMPLETED'
+  AND ${Prisma.raw(COMPLETED_AT)} >= ${utcTs(f.from)}
+  AND ${Prisma.raw(COMPLETED_AT)} < ${utcTs(f.to)}
+  ${f.includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false AND u."isTest" = false`}
+  ${narrow(f)}`;
+
+export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
+  const [gmv, commission, topups] = await Promise.all([
+    prisma.$queryRaw<Array<{ day: string; gmv: number; n: number }>>`
+      SELECT ${dhakaDay(COMPLETED_AT)} AS day,
+             COALESCE(SUM(a."totalMinor"), 0)::float AS gmv, COUNT(*)::int AS n
+      FROM appointments a
+      JOIN salons s ON s.id = a."salonId"
+      JOIN users u ON u.id = a."customerId"
+      WHERE ${completedIn(f)}
+      GROUP BY 1`,
+    prisma.$queryRaw<Array<{ day: string; v: number }>>`
+      SELECT ${dhakaDay(`l."createdAt"`)} AS day, COALESCE(SUM(l."amountMinor"), 0)::float AS v
+      FROM ledger_entries l
+      LEFT JOIN salons s ON s.id = l."salonId"
+      LEFT JOIN appointments a ON a.id = l."appointmentId"
+      LEFT JOIN users u ON u.id = a."customerId"
+      WHERE l.account = 'PLATFORM_REVENUE'
+        AND l."createdAt" >= ${utcTs(f.from)} AND l."createdAt" < ${utcTs(f.to)}
+        ${f.includeTest ? Prisma.empty : Prisma.sql`AND COALESCE(s."isTest", false) = false AND COALESCE(u."isTest", false) = false`}
+        ${narrow(f)}
+      GROUP BY 1`,
+    f.area || f.channel
+      ? Promise.resolve([] as Array<{ day: string; v: number }>)
+      : prisma.$queryRaw<Array<{ day: string; v: number }>>`
+      SELECT ${dhakaDay(`t."createdAt"`)} AS day, COALESCE(SUM(t.amount), 0)::float AS v
+      FROM wallet_transactions t
+      JOIN wallets w ON w.id = t."walletId"
+      JOIN users u ON u.id = w."userId"
+      WHERE t.type = 'TOPUP'
+        AND t."createdAt" >= ${utcTs(f.from)} AND t."createdAt" < ${utcTs(f.to)}
+        ${f.includeTest ? Prisma.empty : Prisma.sql`AND u."isTest" = false`}
+      GROUP BY 1`,
+  ]);
+
+  const byDay = new Map<string, DailyMoney>();
+  const row = (day: string) => {
+    let r = byDay.get(day);
+    if (!r) {
+      r = { day, gmvMinor: 0, completed: 0, commissionMinor: 0, topupVolumeMinor: 0 };
+      byDay.set(day, r);
+    }
+    return r;
+  };
+  for (const g of gmv) Object.assign(row(g.day), { gmvMinor: g.gmv, completed: g.n });
+  for (const c of commission) row(c.day).commissionMinor = c.v;
+  for (const t of topups) row(t.day).topupVolumeMinor = t.v;
+  return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+};
+
+/** Completed GMV over a range, grouped by salon area (the geo report). */
+export const getMoneyByArea = (f: MoneyFilter) =>
+  prisma.$queryRaw<Array<{ area: string; district: string; gmvMinor: number; completed: number }>>`
+    SELECT s.area, s.district, COALESCE(SUM(a."totalMinor"), 0)::float AS "gmvMinor",
+           COUNT(*)::int AS completed
+    FROM appointments a
+    JOIN salons s ON s.id = a."salonId"
+    JOIN users u ON u.id = a."customerId"
+    WHERE ${completedIn(f)}
+    GROUP BY 1, 2
+    ORDER BY 3 DESC`;
+
+/** The salons with the most completed GMV over a range. */
+export const getMoneyBySalon = (f: MoneyFilter, limit = 20) =>
+  prisma.$queryRaw<Array<{ salonId: string; name: string; area: string; gmvMinor: number; completed: number }>>`
+    SELECT s.id AS "salonId", s.name, s.area,
+           COALESCE(SUM(a."totalMinor"), 0)::float AS "gmvMinor", COUNT(*)::int AS completed
+    FROM appointments a
+    JOIN salons s ON s.id = a."salonId"
+    JOIN users u ON u.id = a."customerId"
+    WHERE ${completedIn(f)}
+    GROUP BY 1, 2, 3
+    ORDER BY 4 DESC
+    LIMIT ${limit}`;
+
 export const SettlementEarnings = {
   getCommissionRates,
   getSalonEarnings,
   getPlatformEarnings,
+  getDailyMoney,
+  getMoneyByArea,
+  getMoneyBySalon,
 };

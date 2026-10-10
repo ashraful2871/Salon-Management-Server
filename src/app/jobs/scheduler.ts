@@ -12,6 +12,11 @@ import {
 import { AdminUsersService } from "../modules/Admin/users/users.service";
 import { AdminApprovalsService } from "../modules/Admin/approvals/approvals.service";
 import { AdminSupportService } from "../modules/Admin/support/support.service";
+import {
+  rollupBeforeTryOnPurge,
+  runAnalyticsRetention,
+  runAnalyticsRollup,
+} from "../modules/Analytics/analytics.rollup";
 import prisma from "../shared/prisma";
 
 /**
@@ -138,7 +143,7 @@ export const startBackgroundJobs = () => {
 
   // Expired try-on photos and results, then a daily sweep of the Cloudinary
   // tag for anything the database lost track of.
-  every(HAIR_CLEANUP_INTERVAL_MS, "hair.cleanup", purgeHairTryOn);
+  every(HAIR_CLEANUP_INTERVAL_MS, "hair.cleanup", () => purgeHairTryOn(rollupBeforeTryOnPurge));
   every(HAIR_SWEEP_INTERVAL_MS, "hair.sweep", sweepHairTryOnTag);
   // Timed account suspensions that have run out.
   every(USERS_UNSUSPEND_INTERVAL_MS, "users.unsuspend", AdminUsersService.unsuspendExpired);
@@ -146,6 +151,10 @@ export const startBackgroundJobs = () => {
   every(HOUR, "approvals.expire", AdminApprovalsService.expireStale);
   // Tickets RESOLVED more than 7 days ago → CLOSED.
   every(24 * HOUR, "support.autoclose", AdminSupportService.autoClose);
+  // Daily metrics for D-1…D-3 (+ yesterday's closing balances once a day),
+  // then the raw daily tables trimmed after their metrics are rolled up.
+  every(HOUR, "analytics.rollup", runAnalyticsRollup);
+  every(24 * HOUR, "analytics.retention", runAnalyticsRetention);
 
   // Catch anything that got stuck while the process was down, but not in the
   // first seconds of boot - a restart loop should not hammer the gateway.

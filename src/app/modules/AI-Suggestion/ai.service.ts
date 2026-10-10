@@ -2,6 +2,7 @@ import { StatusCodes } from "http-status-codes";
 import config from "../../../config";
 import ApiError from "../../Error/error";
 import { formatBDT } from "../../utils/money";
+import { recordAiSearch } from "../Analytics/analytics.capture";
 import { getSetting } from "../../utils/settings";
 import { TtlLruCache } from "../Geo/geo.cache";
 import { GeoService } from "../Geo/geo.service";
@@ -230,7 +231,8 @@ const writeReply = async (
 // Search
 // ---------------------------------------------------------------------------
 
-const searchSalon = async (input: SearchInput) => {
+/** `record`: count this search in analytics (the HTTP route; not scripts). */
+const searchSalon = async (input: SearchInput, opts: { record?: boolean } = {}) => {
   const started = Date.now();
   const prompt = input.prompt.trim();
 
@@ -317,6 +319,22 @@ const searchSalon = async (input: SearchInput) => {
       },
     })}`,
   );
+
+  if (opts.record) {
+    recordAiSearch({
+      prompt,
+      tier: ranked.counts.best
+        ? "best"
+        : ranked.counts.partial
+          ? "partial"
+          : ranked.salons.length
+            ? "alternative"
+            : "none",
+      latencyMs: Date.now() - started,
+      usedLlm: intent.understoodBy === "rules+ai" || (reply.model !== null && reply.model !== "cache"),
+      zeroResults: ranked.salons.length === 0,
+    });
+  }
 
   return {
     query: prompt,

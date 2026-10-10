@@ -15,7 +15,7 @@ const search = catchAsync(async (req: Request, res: Response) => {
   // validateRequest checked the body; parse again for the trimmed, coerced values.
   const body = AiValidation.searchBody.parse(req.body);
 
-  const result = await aiService.searchSalon(body);
+  const result = await aiService.searchSalon(body, { record: true });
   const count = result.salons.length;
 
   sendResponse(res, {

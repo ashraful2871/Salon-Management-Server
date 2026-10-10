@@ -5,6 +5,7 @@ import sendResponse from "../../shared/sendResponse";
 import { SalonService } from "./salon.service";
 import { findSalonMarkers } from "./salon.geo";
 import { NEARBY_MAX_RADIUS_KM, SalonValidation } from "./salon.validation";
+import { recordSearchTerm } from "../Analytics/analytics.capture";
 
 const createSalon = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
@@ -26,6 +27,12 @@ const getAllSalons = catchAsync(async (req: Request, res: Response) => {
     { ...query, radiusKm: Math.min(query.radiusKm, NEARBY_MAX_RADIUS_KM) },
     req.user,
   );
+
+  // Discovery analytics: first page only (paging is not a new search), and
+  // not the back office browsing the list. Fire and forget.
+  if (query.searchTerm && query.page === 1 && !["ADMIN", "AGENT"].includes(req.user?.role ?? "")) {
+    recordSearchTerm(query.searchTerm, "LIST", result.meta.total === 0);
+  }
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

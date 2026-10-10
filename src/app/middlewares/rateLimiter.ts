@@ -82,6 +82,19 @@ export const contactLimiter = rateLimit({
 });
 
 /**
+ * `POST /events`: 120 beacons a minute per visitor (each carries up to 20
+ * events). Keyed on clientIp, so per visitor only with INTERNAL_API_KEY set.
+ */
+export const eventsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many events." },
+});
+
+/**
  * The code screen: verify-otp and resend-otp. Looser than authLimiter because
  * a typo costs a request, but each code still locks after 5 wrong attempts and
  * issueOtp throttles sends on its own.
