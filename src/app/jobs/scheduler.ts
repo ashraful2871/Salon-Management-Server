@@ -339,12 +339,13 @@ export const startBackgroundJobs = () => {
   const aiSync = findJob("ai.syncIndex")!;
   warmup(45 * 1000, () => runJob(aiSync.name, aiSync.run, "warmup"));
 
-  // A daily timer restarts with every deploy, and deploys can come more often
-  // than daily — without a run after boot the job might never happen (and
-  // system.watch would call it stale). Only the ones not run within their
-  // interval, one after another.
+  // An hourly or daily timer restarts with every deploy, and restarts can come
+  // more often than the interval — without a run after boot the job might never
+  // happen (and system.watch would call it stale). Only the ones not run within
+  // their interval, one after another.
   warmup(5 * MINUTE, async () => {
-    for (const job of JOBS.filter((j) => j.everyMs >= WALLET_AUDIT_INTERVAL_MS)) {
+    const due = JOBS.filter((j) => j.everyMs >= HOUR && j !== reconcile && j !== aiSync);
+    for (const job of due) {
       await runIfDue(job);
     }
   });

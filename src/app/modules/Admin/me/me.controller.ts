@@ -24,7 +24,7 @@ const activate = catchAsync(async (req: Request, res: Response) => {
 
 const stepUp = catchAsync(async (req: Request, res: Response) => {
   const { userId } = await loadAdminContext(req);
-  const data = await AdminMeService.stepUp(userId, req.body.code);
+  const data = await AdminMeService.stepUp(userId, req.body.code, req.auditCtx);
   sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Confirmed", data });
 });
 

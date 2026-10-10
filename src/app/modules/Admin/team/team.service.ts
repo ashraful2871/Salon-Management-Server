@@ -58,7 +58,7 @@ const assertNotSelf = (actor: AdminContext, userId: string, what: string) => {
 };
 
 /** Refuses when `userId` is a SUPER_ADMIN and no other active one is left. */
-const assertAnotherSuperAdmin = async (
+export const assertAnotherSuperAdmin = async (
   tx: Prisma.TransactionClient,
   userId: string,
   currentRole: AdminRole,

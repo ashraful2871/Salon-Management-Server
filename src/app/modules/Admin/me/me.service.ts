@@ -87,9 +87,16 @@ const activate = async (userId: string, code: string, ctx?: AuditCtx) => {
   return { recoveryCodes: codes, stepUpUntil };
 };
 
-const stepUp = async (userId: string, code: string) => {
+const stepUp = async (userId: string, code: string, ctx?: AuditCtx) => {
   await verifyCode(userId, code);
-  return { stepUpUntil: await openStepUp(userId) };
+  const stepUpUntil = await openStepUp(userId);
+  await audit(ctx, {
+    action: "mfa.step_up",
+    entityType: "user",
+    entityId: userId,
+    after: { stepUpUntil },
+  });
+  return { stepUpUntil };
 };
 
 /** Tier 3 (behind requireStepUp): every older recovery code stops working. */

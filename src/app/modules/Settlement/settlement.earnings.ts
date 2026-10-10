@@ -551,6 +551,8 @@ export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
       JOIN users u ON u.id = a."customerId"
       WHERE ${completedIn(f)}
       GROUP BY 1`,
+    // Without test data, rows whose salon was deleted (salonId set null) are
+    // left out, as getPlatformEarnings does, so analytics and finance agree.
     prisma.$queryRaw<Array<{ day: string; v: number }>>`
       SELECT ${dhakaDay(`l."createdAt"`)} AS day, COALESCE(SUM(l."amountMinor"), 0)::float AS v
       FROM ledger_entries l
@@ -559,7 +561,7 @@ export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
       LEFT JOIN users u ON u.id = a."customerId"
       WHERE l.account = 'PLATFORM_REVENUE'
         AND l."createdAt" >= ${utcTs(f.from)} AND l."createdAt" < ${utcTs(f.to)}
-        ${f.includeTest ? Prisma.empty : Prisma.sql`AND COALESCE(s."isTest", false) = false AND COALESCE(u."isTest", false) = false`}
+        ${f.includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false AND COALESCE(u."isTest", false) = false`}
         ${narrow(f)}
       GROUP BY 1`,
     f.area || f.channel
