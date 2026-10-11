@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
-import { ASSISTANT_ENABLED, ASSISTANT_TOKEN_SECRET } from "./assistant.constants";
+import { ASSISTANT_TOKEN_SECRET } from "./assistant.constants";
 
 /**
  * The confirmation token proves one thing: *the server quoted these figures to
@@ -37,7 +37,10 @@ export type ConfirmPayload = {
 // A chat that cannot confirm is worse than no chat: it walks a customer all the
 // way to a Confirm button that 500s. Fail on deploy instead — but only when the
 // assistant is actually switched on, so a deploy with it off needs no secret.
-if (ASSISTANT_ENABLED && !ASSISTANT_TOKEN_SECRET) {
+// The env fallback of the assistant.enabled setting: a deploy check, so it reads
+// the environment the process starts with. The router also refuses to serve
+// the assistant without a secret, in case the setting turns it on later.
+if (process.env.ASSISTANT_ENABLED !== "false" && !ASSISTANT_TOKEN_SECRET) {
   throw new Error(
     "ASSISTANT_TOKEN_SECRET is not set. The booking assistant cannot sign confirmation tokens without it — set it, or set ASSISTANT_ENABLED=false.",
   );

@@ -82,10 +82,36 @@ export const contactLimiter = rateLimit({
 });
 
 /**
+ * `POST /events`: 120 beacons a minute per visitor (each carries up to 20
+ * events). Keyed on clientIp, so per visitor only with INTERNAL_API_KEY set.
+ */
+export const eventsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many events." },
+});
+
+/**
  * The code screen: verify-otp and resend-otp. Looser than authLimiter because
  * a typo costs a request, but each code still locks after 5 wrong attempts and
  * issueOtp throttles sends on its own.
  */
+/** Review reports: 20 an hour per account. auth() must run first. */
+export const reviewReportLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  keyGenerator: userOrClientKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many reports. Try again in an hour.",
+  },
+});
+
 export const otpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -291,5 +317,34 @@ export const hairGenerateDayLimiter = rateLimit({
   message: {
     success: false,
     message: "You've reached today's try-on limit. Come back tomorrow.",
+  },
+});
+
+/**
+ * Everything under /admin, per account (mount after adminAuth()). 300 a
+ * minute is far above what a person clicking through the console needs.
+ */
+export const adminLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  keyGenerator: userOrClientKey, // adminAuth() must run first
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many requests. Slow down for a minute.",
+  },
+});
+
+/** Tier-3 admin actions (money moves, deletes, role changes): 30 an hour. */
+export const adminSensitiveLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  keyGenerator: userOrClientKey, // adminAuth() must run first
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many sensitive actions. Try again in an hour.",
   },
 });

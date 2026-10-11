@@ -8,7 +8,8 @@ import {
   AssistantConfirm,
   AssistantConfirmError,
 } from "./assistant.confirm";
-import { ASSISTANT_LLM_ENABLED, COPY } from "./assistant.constants";
+import { getSetting } from "../../utils/settings";
+import { COPY } from "./assistant.constants";
 import { failureOutcome, logUnrecorded } from "./assistant.log";
 import { isPaymentQuestion } from "./assistant.nlu";
 import { AssistantPayment } from "./assistant.payment";
@@ -276,16 +277,16 @@ const stats = catchAsync(async (_req: Request, res: Response) => {
 /**
  * What the frontend needs to decide whether to draw the launcher and which
  * privacy line to show. Reaching this handler at all means the assistant is on:
- * with `ASSISTANT_ENABLED=false` the router answers 404 before it gets here.
+ * with the assistant.enabled setting off the router answers 404 before it gets here.
  */
-const status = (_req: Request, res: Response) => {
+const status = catchAsync(async (_req: Request, res: Response) => {
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
     message: "Assistant is on",
-    data: { enabled: true, llm: ASSISTANT_LLM_ENABLED },
+    data: { enabled: true, llm: await getSetting("assistant.llmEnabled") },
   });
-};
+});
 
 export const AssistantController = {
   create,

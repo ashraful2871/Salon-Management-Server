@@ -14,12 +14,16 @@ const updateUserValidation = z.object({
 const updateUserStatusValidation = z.object({
   body: z.object({
     status: z.enum(["ACTIVE", "INACTIVE", "SUSPENDED", "BLOCKED"]),
+    reason: z.string().trim().max(500).optional(),
   }),
 });
 
 const updateUserRoleValidation = z.object({
   body: z.object({
-    role: z.enum(["CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN"]),
+    // ADMIN is deliberately absent: admins are created from the admin team
+    // page (or `npm run admin:create`), never promoted through this endpoint.
+    role: z.enum(["CUSTOMER", "STAFF", "SALON_OWNER"]),
+    reason: z.string().trim().max(500).optional(),
   }),
 });
 

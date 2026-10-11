@@ -64,6 +64,7 @@ const resolveAppealValidation = z.object({
   body: z.object({
     approve: z.boolean(),
     note: z.string().max(1000).optional(),
+    reason: z.string().trim().max(500).optional(),
   }),
 });
 

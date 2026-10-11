@@ -10,7 +10,7 @@ import { authKey } from '../../utils/authKeys';
 import { normalizeEmail } from '../../utils/normalizeEmail';
 import { sendEmail } from '../../utils/emailSender';
 import { getGoogleLinkedNoticeTemplate } from '../../utils/emailTemplates';
-import { AuthResult, issueSession, startEmailVerification } from './auth.session';
+import { AuthResult, issueSession, startEmailVerification, twoFactorGate } from './auth.session';
 
 /**
  * Google sign-in, Authorization Code + PKCE, run entirely on this server. The
@@ -289,6 +289,10 @@ const resolveGoogleAccount = async (
   if (!user.emailVerified) {
     return { result: await startEmailVerification(user, ip), linked };
   }
+
+  // ADMIN/AGENT with 2FA on: the frontend sends them to /login/2fa?ticket=…
+  const challenge = await twoFactorGate(user);
+  if (challenge) return { result: challenge, linked };
 
   return {
     result: {

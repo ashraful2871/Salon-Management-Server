@@ -54,13 +54,14 @@ export const smtpProvider: EmailProvider = {
   isConfigured: () =>
     Boolean(config.email.smtp.host && config.email.smtp.user),
 
-  async send({ to, subject, html }: EmailMessage): Promise<EmailResult> {
+  async send({ to, subject, html, replyTo }: EmailMessage): Promise<EmailResult> {
     try {
       const info = await getTransporter().sendMail({
         from: config.email.from,
         to,
         subject,
         html,
+        ...(replyTo ? { replyTo } : {}),
       });
 
       return { ok: true, provider: "smtp", id: info.messageId };

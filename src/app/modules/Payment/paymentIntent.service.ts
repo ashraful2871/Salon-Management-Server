@@ -10,6 +10,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
+import { audit, AuditCtx, auditTx } from "../../utils/audit";
 import { sendEmail } from "../../utils/emailSender";
 import { getWalletTopupInvoiceTemplate } from "../../utils/emailTemplates";
 import { WalletService } from "../Wallet/wallet.service";
@@ -31,8 +32,12 @@ const MAX_TOPUP_MINOR = 5000000; // BDT 50,000
 
 /** Intents older than this with no IPN get chased by the reconciliation job. */
 const STALE_AFTER_MS = 30 * 60 * 1000;
-/** Past this, a stuck intent is not a hiccup any more - it needs a human. */
-const ALERT_AFTER_MS = 24 * 60 * 60 * 1000;
+/**
+ * Past this, a payment the gateway still calls pending was abandoned (the
+ * customer closed the checkout page) and is closed as EXPIRED. Safe because a
+ * late IPN or success return still credits an EXPIRED intent.
+ */
+const GIVE_UP_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const newTransactionId = (prefix: string) =>
   `${prefix}-${Date.now()}-${randomBytes(4).toString("hex")}`;
@@ -358,8 +363,17 @@ const settleFromGateway = async (intent: PaymentIntent) => {
     return IntentStatus.FAILED;
   }
 
-  // Still genuinely in flight at the gateway - leave it alone.
-  if (result.state === "PENDING") return intent.status;
+  if (result.state === "PENDING") {
+    // Still genuinely in flight at the gateway - leave it alone.
+    if (Date.now() - intent.createdAt.getTime() < GIVE_UP_AFTER_MS) return intent.status;
+
+    await markIntentFailed(
+      intent.transactionId,
+      "Never completed at the gateway within 24 hours",
+      IntentStatus.EXPIRED,
+    );
+    return IntentStatus.EXPIRED;
+  }
 
   const status: TerminalStatus =
     result.state === "CANCELLED"
@@ -545,7 +559,42 @@ const listPaymentMethods = () =>
  * An intent whose IPN never arrived must not sit PENDING forever. Ask the
  * gateway what happened and settle it either way.
  */
+/** When this process last ran reconciliation (job or "Run now"). Resets on deploy. */
+let lastReconcileRunAt: Date | null = null;
+export const getLastReconcileAt = () => lastReconcileRunAt;
+
+/**
+ * "Check status" on one stuck top-up: asks its gateway now instead of waiting
+ * for the hourly sweep. `:id` is the intent's id or its transactionId.
+ */
+const recheckIntent = async (intentIdOrTxn: string) => {
+  const intent = await prisma.paymentIntent.findFirst({
+    where: { OR: [{ id: intentIdOrTxn }, { transactionId: intentIdOrTxn }] },
+  });
+  if (!intent) throw new ApiError(StatusCodes.NOT_FOUND, "Payment not found");
+
+  const before = intent.status;
+  if (isOpen(before)) {
+    try {
+      await settleFromGateway(intent);
+    } catch (error) {
+      console.error(`[payment.recheck] could not reach the gateway for intent=${intent.id}`, error);
+      throw new ApiError(
+        StatusCodes.BAD_GATEWAY,
+        "Couldn't reach the payment gateway. Try again in a few minutes.",
+      );
+    }
+  }
+
+  const after = await prisma.paymentIntent.findUniqueOrThrow({
+    where: { id: intent.id },
+    select: { id: true, transactionId: true, status: true, failureReason: true },
+  });
+  return { ...after, previousStatus: before };
+};
+
 const reconcilePendingIntents = async () => {
+  lastReconcileRunAt = new Date();
   const staleBefore = new Date(Date.now() - STALE_AFTER_MS);
 
   const pending = await prisma.paymentIntent.findMany({
@@ -566,13 +615,7 @@ const reconcilePendingIntents = async () => {
 
       if (status === IntentStatus.SUCCESS) {
         credited += 1;
-      } else if (status === IntentStatus.INITIATED || status === IntentStatus.PENDING) {
-        if (Date.now() - intent.createdAt.getTime() > ALERT_AFTER_MS) {
-          console.error(
-            `[payment.reconcile] intent=${intent.id} has been pending for over 24h - needs manual review`,
-          );
-        }
-      } else {
+      } else if (!isOpen(status)) {
         failed += 1;
       }
     } catch (error) {
@@ -640,11 +683,29 @@ const recordRefund = async (
  * puts it back; a timeout leaves it out and asks for a manual check, because
  * undoing a refund that did go through would pay the customer twice.
  */
+/**
+ * What the four-eyes check needs before a refund is queued: the top-up's
+ * amount and owner. Refuses the caller's own top-up up front, so it is not
+ * sent for approval only to fail later.
+ */
+const refundRequestInfo = async (adminId: string, intentIdOrTxn: string) => {
+  const intent = await prisma.paymentIntent.findFirst({
+    where: { OR: [{ id: intentIdOrTxn }, { transactionId: intentIdOrTxn }] },
+    select: { id: true, transactionId: true, userId: true, amountMinor: true },
+  });
+  if (!intent) throw new ApiError(StatusCodes.NOT_FOUND, "Payment not found");
+  if (intent.userId === adminId) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "You can't refund your own top-up - ask another admin");
+  }
+  return intent;
+};
+
 const refundTopup = async (
   adminId: string,
   intentId: string,
   amountMinor: number | undefined,
   reason: string,
+  auditCtx?: AuditCtx,
 ) => {
   // The admin is more likely to have the transaction id (it is on the wallet
   // row) than our internal id.
@@ -654,6 +715,13 @@ const refundTopup = async (
 
   if (!intent) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Payment not found");
+  }
+
+  if (intent.userId === adminId) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You can't refund your own top-up - ask another admin",
+    );
   }
 
   const provider = getProvider(intent.provider);
@@ -739,6 +807,16 @@ const refundTopup = async (
         tx,
       );
 
+      // In the same transaction: no wallet debit without its audit row.
+      await auditTx(tx, auditCtx, {
+        action: "topup.refund",
+        entityType: "intent",
+        entityId: intent.id,
+        before: { remainingMinor: remaining },
+        after: { amountMinor: amount, remainingMinor: remaining - amount, attempt: n, provider: intent.provider },
+        reason,
+      });
+
       return { amount, remainingMinor: remaining - amount, n };
     },
     { maxWait: 10_000, timeout: 20_000 },
@@ -759,15 +837,24 @@ const refundTopup = async (
   }
 
   const entry = { n, amountMinor: amount, at: new Date().toISOString(), by: adminId };
+  const auditOutcome = (status: RefundStatus, message?: string | null) =>
+    audit(auditCtx, {
+      action: "topup.refund_result",
+      entityType: "intent",
+      entityId: intent.id,
+      after: { attempt: n, amountMinor: amount, status, message: message ?? null },
+    });
 
   if (result.ok) {
     const refundRef = result.refundRef ?? null;
     await recordRefund(intent.id, { ...entry, refundRef, status: "COMPLETED" });
+    await auditOutcome("COMPLETED");
     return { refundedMinor: amount, remainingMinor, status: "COMPLETED" as RefundStatus, refundRef };
   }
 
   if (result.unknown) {
     await recordRefund(intent.id, { ...entry, status: "UNKNOWN", message: result.message ?? null });
+    await auditOutcome("UNKNOWN", result.message);
     console.error(
       `[payment.refund] needs manual check: intent=${intent.id} tran=${intent.transactionId} refund #${n} of ${amount} poisha via ${intent.provider} (${gatewayRef}) - ${result.message}. The wallet was debited; confirm in the merchant portal before touching it.`,
     );
@@ -802,6 +889,7 @@ const refundTopup = async (
   }
 
   await recordRefund(intent.id, { ...entry, status: "FAILED", message });
+  await auditOutcome("FAILED", message);
   throw new ApiError(StatusCodes.BAD_GATEWAY, message);
 };
 
@@ -1029,7 +1117,9 @@ export const PaymentIntentService = {
   listPaymentMethods,
   markIntentFailed,
   reconcilePendingIntents,
+  recheckIntent,
   refundTopup,
+  refundRequestInfo,
   listTopupsForAdmin,
   getMyIntents,
   getIntentStatus,

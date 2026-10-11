@@ -1,11 +1,17 @@
-import { StatusCodes } from "http-status-codes";
-import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { payoutScope } from "../Settlement/settlement.buckets";
 import {
   getPlatformEarnings,
   getSalonEarnings,
 } from "../Settlement/settlement.earnings";
 import { WalletService } from "../Wallet/wallet.service";
+import {
+  AccessUser,
+  assertOwnerOf,
+  getMyAccess,
+  scopeSalonIds,
+} from "../../utils/salonAccess";
+import { dateOnly, dhakaDay } from "../Analytics/analytics.days";
 
 /**
  * Every money figure on a dashboard comes from `settlement.earnings`, which
@@ -129,21 +135,23 @@ const getAdminDashboardStats = async () => {
   };
 };
 
-const getSalonOwnerDashboardStats = async (userId: string) => {
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-    include: { salons: { select: { id: true, name: true } } },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can access this route",
-    );
-  }
-
-  const salonIds = salonOwner.salons.map((salon) => salon.id);
-  const { start: todayStart, end: todayEnd } = dayBounds();
+/**
+ * The owner Home: every branch, or the one in `salonId`. A branch that is not
+ * theirs reads as an owner with no branches (zeros), never as an error.
+ */
+const getSalonOwnerDashboardStats = async (
+  user: AccessUser,
+  query: { salonId?: string } = {},
+) => {
+  await assertOwnerOf(user);
+  const salonIds =
+    (await scopeSalonIds(user, "reports.view", query.salonId)) ?? [];
+  const salons = (await getMyAccess(user)).map((branch) => ({
+    id: branch.salonId,
+    name: branch.salonName,
+  }));
+  // appointmentDate is a calendar date; "today" is the Asia/Dhaka one.
+  const today = dateOnly(dhakaDay());
 
   const [
     totalSalons,
@@ -156,10 +164,9 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
     recentAppointments,
     appointmentsByStatus,
     earnings,
-    wallet,
     recentPayouts,
   ] = await Promise.all([
-    prisma.salon.count({ where: { ownerId: salonOwner.id, isDeleted: false } }),
+    salonIds.length,
     prisma.service.count({
       where: { salonId: { in: salonIds }, isDeleted: false },
     }),
@@ -170,7 +177,7 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
     prisma.appointment.count({
       where: {
         salonId: { in: salonIds },
-        appointmentDate: { gte: todayStart, lte: todayEnd },
+        appointmentDate: today,
       },
     }),
     prisma.appointment.count({
@@ -199,15 +206,14 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
       where: { salonId: { in: salonIds } },
     }),
     getSalonEarnings(salonIds),
-    // The owner's own wallet, so the dashboard can show balance and payouts
-    // side by side instead of sending them to a second screen to find out.
-    WalletService.getWalletSummary(userId),
-    prisma.payout.findMany({
-      where: { salonId: { in: salonIds } },
-      take: 5,
-      orderBy: { createdAt: "desc" },
-      include: { salon: { select: { id: true, name: true } } },
-    }),
+    payoutScope(salonIds).then((where) =>
+      prisma.payout.findMany({
+        where,
+        take: 5,
+        orderBy: { createdAt: "desc" },
+        include: { salon: { select: { id: true, name: true } } },
+      }),
+    ),
   ]);
 
   return {
@@ -249,12 +255,7 @@ const getSalonOwnerDashboardStats = async (userId: string) => {
     standardCommissionPercent: earnings.standardCommissionPercent,
     monthlyEarnings: earnings.monthly,
 
-    walletBalanceMinor: wallet.balanceMinor,
-    walletAvailableMinor: wallet.availableMinor,
-    walletHeldMinor: wallet.heldBalanceMinor,
-    walletFrozen: wallet.isFrozen,
-
-    salons: salonOwner.salons,
+    salons,
     recentAppointments,
     recentPayouts,
     appointmentsByStatus,

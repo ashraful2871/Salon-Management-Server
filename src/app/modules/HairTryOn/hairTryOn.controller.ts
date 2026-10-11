@@ -12,7 +12,7 @@ const getStyles = catchAsync(async (_req: Request, res: Response) => {
     statusCode: StatusCodes.OK,
     success: true,
     message: "Hairstyles retrieved",
-    data: HairTryOnService.getStyles(),
+    data: await HairTryOnService.getStyles(),
   });
 });
 

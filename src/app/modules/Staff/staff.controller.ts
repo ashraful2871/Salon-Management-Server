@@ -3,11 +3,11 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { StaffService } from "./staff.service";
+import { withAccessCache } from "../../utils/salonAccess";
 
 const addStaff = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
 
-  const result = await StaffService.addStaff(userId, req.body);
+  const result = await StaffService.addStaff(withAccessCache(req), req.body);
 
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,
@@ -42,10 +42,9 @@ const getStaffById = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updateStaff = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
-  const result = await StaffService.updateStaff(userId, id, req.body);
+  const result = await StaffService.updateStaff(withAccessCache(req), id, req.body);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -56,10 +55,9 @@ const updateStaff = catchAsync(async (req: Request, res: Response) => {
 });
 
 const removeStaff = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
-  await StaffService.removeStaff(userId, id);
+  await StaffService.removeStaff(withAccessCache(req), id);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

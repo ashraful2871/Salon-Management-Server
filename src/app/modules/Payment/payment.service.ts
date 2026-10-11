@@ -3,8 +3,9 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import {
-  assertCanActOnAppointment,
-  ownedSalonIds,
+  accessibleSalonIds,
+  assertSalonPermission,
+  scopeSalonIds,
 } from "../../utils/salonAccess";
 import { paymentSummary } from "../Appointment/appointment.billing";
 
@@ -29,9 +30,6 @@ const serviceSelect = {
   priceMinor: true,
 } as const;
 
-const PAYMENT_ACCESS_MESSAGE =
-  "You can only record payments for your own salons";
-
 const createPayment = async (
   userId: string,
   userRole: string,
@@ -46,11 +44,10 @@ const createPayment = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
-  await assertCanActOnAppointment(
-    userId,
-    userRole,
+  await assertSalonPermission(
+    { userId, role: userRole },
     appointment.salonId,
-    PAYMENT_ACCESS_MESSAGE,
+    "bookings.manage",
   );
 
   if (!COUNTER_METHODS.includes(payload.paymentMethod)) {
@@ -117,9 +114,13 @@ const getAllPayments = async (userId: string, userRole: string, query: any) => {
   const whereConditions: Prisma.PaymentWhereInput = {};
 
   if (userRole === UserRole.SALON_OWNER) {
-    const salonIds = await ownedSalonIds(userId);
+    const salonIds = await scopeSalonIds(
+      { userId, role: userRole },
+      "money.view",
+      query.salonId,
+    );
 
-    if (salonIds.length === 0) {
+    if (!salonIds?.length) {
       return { meta: { page: pageNum, limit: limitNum, total: 0 }, data: [] };
     }
 
@@ -184,8 +185,8 @@ const getPaymentById = async (id: string, userId: string, userRole: string) => {
       throw new ApiError(StatusCodes.NOT_FOUND, "Payment not found");
     }
   } else if (userRole === UserRole.SALON_OWNER) {
-    const salonIds = await ownedSalonIds(userId);
-    if (!salonIds.includes(payment.appointment.salonId)) {
+    const salonIds = await accessibleSalonIds({ userId, role: userRole }, "money.view");
+    if (salonIds && !salonIds.includes(payment.appointment.salonId)) {
       throw new ApiError(StatusCodes.NOT_FOUND, "Payment not found");
     }
   }
@@ -208,11 +209,10 @@ const updatePaymentStatus = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Payment not found");
   }
 
-  await assertCanActOnAppointment(
-    userId,
-    userRole,
+  await assertSalonPermission(
+    { userId, role: userRole },
     payment.appointment.salonId,
-    PAYMENT_ACCESS_MESSAGE,
+    "bookings.manage",
   );
 
   return prisma.payment.update({

@@ -2,37 +2,10 @@ import { StatusCodes } from "http-status-codes";
 import { Prisma, UserRole } from "@prisma/client";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { AccessUser, assertSalonPermission } from "../../utils/salonAccess";
 
-const addStaff = async (ownerId: string, payload: any) => {
-  // Verify salon ownership
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId: ownerId },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can add staff",
-    );
-  }
-
-  const salon = await prisma.salon.findUnique({
-    where: {
-      id: payload.salonId,
-      isDeleted: false,
-    },
-  });
-
-  if (!salon) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
-  }
-
-  if (salon.ownerId !== salonOwner.id) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "You can only add staff to your own salons",
-    );
-  }
+const addStaff = async (actor: AccessUser, payload: any) => {
+  await assertSalonPermission(actor, payload.salonId, "team.invite");
 
   // Check if user exists
   const user = await prisma.user.findUnique({
@@ -204,6 +177,7 @@ const getStaffById = async (id: string) => {
         },
       },
       reviews: {
+        where: { status: "PUBLISHED" },
         include: {
           customer: {
             select: {
@@ -225,37 +199,19 @@ const getStaffById = async (id: string) => {
   return staff;
 };
 
-const updateStaff = async (ownerId: string, staffId: string, payload: any) => {
-  // Verify ownership
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { id: ownerId },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can update staff",
-    );
-  }
-
+const updateStaff = async (user: AccessUser, staffId: string, payload: any) => {
   const staff = await prisma.staff.findUnique({
     where: {
       id: staffId,
       isDeleted: false,
     },
-    include: { salon: true },
   });
 
   if (!staff) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Staff not found");
   }
 
-  if (staff.salon.ownerId !== salonOwner.id) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "You can only update your own staff",
-    );
-  }
+  await assertSalonPermission(user, staff.salonId, "team.invite");
 
   const result = await prisma.$transaction(
     async (tx: Prisma.TransactionClient) => {
@@ -302,37 +258,19 @@ const updateStaff = async (ownerId: string, staffId: string, payload: any) => {
   return result;
 };
 
-const removeStaff = async (ownerId: string, staffId: string) => {
-  // Verify ownership
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { id: ownerId },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can remove staff",
-    );
-  }
-
+const removeStaff = async (user: AccessUser, staffId: string) => {
   const staff = await prisma.staff.findUnique({
     where: {
       id: staffId,
       isDeleted: false,
     },
-    include: { salon: true },
   });
 
   if (!staff) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Staff not found");
   }
 
-  if (staff.salon.ownerId !== salonOwner.id) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "You can only remove your own staff",
-    );
-  }
+  await assertSalonPermission(user, staff.salonId, "team.invite");
 
   // Soft delete and revert user role
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {

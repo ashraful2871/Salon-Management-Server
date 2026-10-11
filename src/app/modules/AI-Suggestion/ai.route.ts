@@ -1,6 +1,7 @@
 import express from "express";
 import { aiController } from "./ai.controller";
 import auth from "../../middlewares/auth";
+import { adminAuth } from "../Admin/admin.middleware";
 import optionalAuth from "../../middlewares/optionalAuth";
 import validateRequest from "../../middlewares/validateRequest";
 import { aiSearchLimiter } from "../../middlewares/rateLimiter";
@@ -18,7 +19,7 @@ router.post(
   aiController.search,
 );
 
-router.get("/status", auth("ADMIN"), aiController.indexStatus);
+router.get("/status", adminAuth("system.view"), aiController.indexStatus);
 
 // Both of these spend quota per salon.
 router.post(
@@ -27,6 +28,6 @@ router.post(
   aiController.generateEmbedding,
 );
 
-router.post("/backfill", auth("ADMIN"), aiController.backfillEmbeddings);
+router.post("/backfill", adminAuth("system.operate"), aiController.backfillEmbeddings);
 
 export const AiRoutes = router;

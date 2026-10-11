@@ -5,7 +5,7 @@ import ApiError from "../Error/error";
 
 const globalErrorHandler = (
   err: any,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
 ) => {
@@ -72,6 +72,12 @@ const globalErrorHandler = (
   // Handle other errors
   else if (err instanceof Error) {
     message = err.message;
+  }
+
+  // One line per server error, tagged with the id the frontend sent, so a
+  // failure can be matched to its audit row (audit_logs.requestId).
+  if (statusCode >= 500) {
+    console.error(`[req ${req.get("x-request-id")?.slice(0, 100) ?? "-"}] ${req.method} ${req.originalUrl} -> ${statusCode}: ${message}`);
   }
 
   res.status(statusCode).json({

@@ -6,7 +6,12 @@ import config from '../../../config';
 import { sendEmail } from '../../utils/emailSender';
 import { getOtpEmailTemplate } from '../../utils/emailTemplates';
 import { OTP_TTL_SECONDS, issueOtp, maskEmail, otpTimings } from '../../utils/otp';
-import { createTicket } from '../../utils/verificationTicket';
+import {
+  createTicket,
+  createTwoFactorTicket,
+  TWO_FACTOR_TICKET_SECONDS,
+} from '../../utils/verificationTicket';
+import { enabledMfaStep } from '../../utils/mfa';
 
 export type SignedIn = {
   status: 'SIGNED_IN';
@@ -25,7 +30,21 @@ export type VerificationRequired = {
   redirect?: string;
 };
 
-export type AuthResult = SignedIn | VerificationRequired;
+/** ADMIN/AGENT with 2FA on: a correct password alone issues no session. */
+export type TwoFactorRequired = {
+  status: 'TWO_FACTOR_REQUIRED';
+  ticket: string;
+  expiresIn: number;
+  redirect?: string;
+};
+
+export type AuthResult = SignedIn | VerificationRequired | TwoFactorRequired;
+
+/** Admin and agent sessions must sign in again 12 h after the original sign-in. */
+export const ADMIN_SESSION_MAX_SECONDS = 12 * 60 * 60;
+
+export const isStaffAccount = (role: UserRole | string) =>
+  role === 'ADMIN' || role === 'AGENT';
 
 /**
  * The one place an access/refresh token pair is minted. Both carry the user's
@@ -37,7 +56,7 @@ export const issueSession = (user: {
   name?: string | null;
   role: UserRole | string;
   sessionVersion: number;
-}) => {
+}, opts: { at?: number } = {}) => {
   // `name` is display-only: the frontend verifies the token locally and shows
   // it in the header. It is a snapshot, so a rename shows after the next
   // refresh; nothing authorizes on it.
@@ -55,8 +74,10 @@ export const issueSession = (user: {
     config.jwt.expires_in as string
   );
 
+  // `at` is when this sign-in happened, carried forward by every refresh, so
+  // the 12 h admin cap counts from the password, not from the last refresh.
   const refreshToken = jwtHelpers.createToken(
-    jwtPayload,
+    { ...jwtPayload, at: opts.at ?? Math.floor(Date.now() / 1000) },
     config.jwt.refresh_token_secret as string,
     config.jwt.refresh_token_expires_in as string
   );
@@ -129,5 +150,29 @@ export const startEmailVerification = async (
     ticket: createTicket({ userId: user.id, sessionVersion: user.sessionVersion }),
     maskedEmail: maskEmail(user.email),
     ...t,
+  };
+};
+
+/**
+ * The second-factor step for ADMIN/AGENT accounts with 2FA enabled: returns a
+ * TWO_FACTOR_REQUIRED result to hand back instead of a session, or null when
+ * the account signs in directly. Every sign-in path must ask before issuing.
+ */
+export const twoFactorGate = async (user: {
+  id: string;
+  role: UserRole | string;
+  sessionVersion: number;
+}): Promise<TwoFactorRequired | null> => {
+  if (!isStaffAccount(user.role)) return null;
+  const mfa = await enabledMfaStep(user.id);
+  if (!mfa) return null;
+  return {
+    status: 'TWO_FACTOR_REQUIRED',
+    ticket: createTwoFactorTicket({
+      userId: user.id,
+      sessionVersion: user.sessionVersion,
+      lastUsedStep: mfa.step,
+    }),
+    expiresIn: TWO_FACTOR_TICKET_SECONDS,
   };
 };

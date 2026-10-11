@@ -1,0 +1,37 @@
+// System health: one row per background-job run, and the edge-triggered alert
+// state the `system.watch` job keeps (see src/app/modules/Admin/system/).
+
+enum JobRunStatus {
+  RUNNING
+  OK
+  FAILED
+  SKIPPED
+}
+
+model JobRun {
+  id         String       @id @default(uuid())
+  job        String
+  trigger    String       @default("timer") // timer | warmup | manual
+  status     JobRunStatus
+  startedAt  DateTime     @default(now())
+  finishedAt DateTime?
+  durationMs Int?
+  summary    Json?
+  error      String?
+
+  @@index([job, startedAt])
+  @@map("job_runs")
+}
+
+// One row per alert key. `status` is OK | FIRING; `lastNotifiedAt` throttles
+// the email to one per key every 6 h. Also holds bookkeeping keys such as
+// `digest.lastSent` (detail.day).
+model AlertState {
+  key            String    @id
+  status         String    @default("OK")
+  since          DateTime  @default(now())
+  lastNotifiedAt DateTime?
+  detail         Json?
+
+  @@map("alert_states")
+}

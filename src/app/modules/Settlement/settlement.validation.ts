@@ -10,17 +10,24 @@ const runPayoutBatchValidation = z.object({
   body: z.object({
     periodStart: z.string().optional(),
     periodEnd: z.string().optional(),
+    reason: z.string().trim().max(500).optional(),
   }),
 });
 
 const updatePayoutStatusValidation = z.object({
   body: z.object({
-    status: z.enum(["PENDING", "PROCESSING", "PAID", "FAILED"]),
+    // Legal moves are PAYOUT_TRANSITIONS; the service answers 409 otherwise.
+    status: z.enum(["APPROVED", "PROCESSING", "PAID", "FAILED", "CANCELLED"]),
     method: z.enum(["BKASH", "BANK"]).optional(),
     // Required when marking PAID - the service enforces that, because a payout
     // with no transfer reference cannot be traced later.
-    reference: z.string().trim().optional(),
-    failureReason: z.string().trim().optional(),
+    reference: z.string().trim().max(120).optional(),
+    // A link to the transfer screenshot or bank advice. Optional.
+    proofUrl: z.string().trim().url().max(500).optional(),
+    failureReason: z.string().trim().max(500).optional(),
+    // Required when cancelling - the service enforces it.
+    cancelledReason: z.string().trim().max(500).optional(),
+    reason: z.string().trim().max(500).optional(),
   }),
 });
 
@@ -33,6 +40,7 @@ const commissionRuleBody = {
   percentBps: z.number().int().min(0).max(10000).nullable().optional(),
   appliesTo: z.enum(["NEW_CUSTOMER", "OFF_PEAK", "ALL"]),
   priority: z.number().int().optional(),
+  reason: z.string().trim().max(500).optional(),
 };
 
 const createCommissionRuleValidation = z.object({

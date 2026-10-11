@@ -32,6 +32,14 @@ router.post(
   AuthController.verifyOtp,
 );
 
+// Second step of an ADMIN/AGENT sign-in (ticket from /login or Google).
+router.post(
+  "/2fa/verify",
+  authLimiter,
+  validateRequest(AuthValidation.twoFactorVerifyValidation, parsed),
+  AuthController.verifyTwoFactor,
+);
+
 router.post(
   "/resend-otp",
   otpLimiter,

@@ -32,6 +32,8 @@ const adminAdjustValidation = z.object({
       .string()
       .trim()
       .nonempty({ message: "A reason is required for a manual adjustment" }),
+    // A client-generated uuid: a retried or double-clicked adjust lands once.
+    idempotencyKey: z.string().uuid().optional(),
   }),
 });
 

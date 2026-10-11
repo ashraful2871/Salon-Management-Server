@@ -1,6 +1,7 @@
 import express from "express";
 import { AppointmentController } from "./appointment.controller";
 import auth from "../../middlewares/auth";
+import { adminAuth } from "../Admin/admin.middleware";
 import validateRequest from "../../middlewares/validateRequest";
 import { AppointmentValidation } from "./appointment.validation";
 import { UserRole } from "@prisma/client";
@@ -99,7 +100,7 @@ router.post(
 
 router.patch(
   "/:id/appeal",
-  auth(UserRole.ADMIN),
+  adminAuth("appeals.resolve"),
   validateRequest(AppointmentValidation.resolveAppealValidation),
   AppointmentController.resolveAppeal,
 );

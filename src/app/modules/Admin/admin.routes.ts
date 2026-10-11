@@ -1,0 +1,69 @@
+import express from "express";
+import validateRequest from "../../middlewares/validateRequest";
+import { adminLimiter } from "../../middlewares/rateLimiter";
+import { adminAuth, adminGate, adminOnly } from "./admin.middleware";
+import { AdminMfaRoutes } from "./me/me.routes";
+import { AdminUsersRoutes } from "./users/users.routes";
+import { AdminTeamRoutes } from "./team/team.routes";
+import { AdminAgentsRoutes } from "./agents/agents.routes";
+import { AdminSalonsRoutes } from "./salons/salons.routes";
+import { AdminBookingsRoutes } from "./bookings/bookings.routes";
+import { AdminAppealsRoutes } from "./appeals/appeals.routes";
+import { AdminSettingsRoutes } from "./settings/settings.routes";
+import { AdminFinanceRoutes } from "./finance/finance.routes";
+import { AdminApprovalsRoutes } from "./approvals/approvals.routes";
+import { AdminReviewsRoutes } from "./reviews/reviews.routes";
+import { AdminSupportRoutes } from "./support/support.routes";
+import { AdminAnalyticsRoutes } from "./analytics/analytics.routes";
+import { AdminSystemRoutes } from "./system/system.routes";
+import { AdminContentRoutes } from "./content/content.routes";
+import { AdminImpersonationRoutes } from "./impersonation/impersonation.routes";
+import { rejectImpersonation } from "../../utils/impersonation";
+import { AdminAgentsController } from "./agents/agents.controller";
+import { AdminController } from "./admin.controller";
+import { AdminValidation } from "./admin.validation";
+
+const router = express.Router();
+
+// Every /admin route: an ADMIN or AGENT with a profile and 2FA enabled, then
+// the per-account limiter. Routes below add the permissions they need. Only
+// /me and /mfa/* answer before 2FA is set up (403 TWO_FACTOR_SETUP_REQUIRED).
+// A "View as" token never reaches an admin route, not even a read.
+router.use(rejectImpersonation);
+router.use(adminGate({ mfaExempt: ["/me", "/mfa/"] }), adminLimiter);
+
+router.get("/me", AdminController.getMe);
+// Own preferences (alert emails); needs 2FA like everything past /me.
+router.patch("/me", adminAuth(), validateRequest(AdminValidation.updateMe, { replaceBody: true }), AdminController.updateMe);
+router.use("/mfa", AdminMfaRoutes);
+
+// Users, agents and the admin team (invitations live under the last two).
+router.use("/users", AdminUsersRoutes);
+router.use("/agents", AdminAgentsRoutes);
+router.use("/team", AdminTeamRoutes);
+router.use("/impersonate", AdminImpersonationRoutes);
+
+// Salons: the approval queue, Salon 360 and its actions.
+router.use("/salons", AdminSalonsRoutes);
+router.use("/bookings", AdminBookingsRoutes);
+router.use("/appeals", AdminAppealsRoutes);
+router.use("/settings", AdminSettingsRoutes);
+router.use("/finance", AdminFinanceRoutes);
+router.use("/approvals", AdminApprovalsRoutes);
+router.use("/reviews", AdminReviewsRoutes);
+router.use("/support", AdminSupportRoutes);
+router.use("/analytics", AdminAnalyticsRoutes);
+router.use("/system", AdminSystemRoutes);
+router.use("/content", AdminContentRoutes);
+router.get("/areas", adminAuth("agents.manage"), adminOnly, AdminAgentsController.areas);
+
+// Results and inbox items are filtered by the caller's permissions inside.
+router.get("/search", validateRequest(AdminValidation.search), AdminController.search);
+router.get("/inbox", AdminController.inbox);
+
+// Notes check the entity type's *.view permission inside.
+router.get("/notes", validateRequest(AdminValidation.listNotes), AdminController.listNotes);
+router.post("/notes", validateRequest(AdminValidation.createNote), AdminController.createNote);
+router.delete("/notes/:id", AdminController.deleteNote);
+
+export const AdminRoutes = router;

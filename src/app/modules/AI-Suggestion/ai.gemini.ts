@@ -158,6 +158,24 @@ const cooldownUntil = new Map<string, number>();
  */
 const TIMEOUTS_BEFORE_COOLDOWN = 2;
 const timeoutsInARow = new Map<string, number>();
+const lastFailure = new Map<string, { at: number; error: string }>();
+
+/** Read-only view of the model state above, for the admin System page. */
+export const geminiModelState = () => {
+  const now = Date.now();
+  return config.ai.chatModels.map((model) => {
+    const until = cooldownUntil.get(model) ?? 0;
+    const failure = lastFailure.get(model);
+    return {
+      model,
+      coolingDown: until > now,
+      cooldownUntil: until > now ? new Date(until) : null,
+      timeoutsInARow: timeoutsInARow.get(model) ?? 0,
+      lastFailureAt: failure ? new Date(failure.at) : null,
+      lastError: failure?.error ?? null,
+    };
+  });
+};
 
 const isTimeout = (error: unknown) =>
   error instanceof Error &&
@@ -195,6 +213,7 @@ const noteSuccess = (model: string) => {
 const noteFailure = (model: string, error: unknown, label: string, started: number) => {
   const timeouts = isTimeout(error) ? (timeoutsInARow.get(model) ?? 0) + 1 : 0;
   timeoutsInARow.set(model, timeouts);
+  lastFailure.set(model, { at: Date.now(), error: describeError(error) });
   if (!isTimeout(error) || timeouts >= TIMEOUTS_BEFORE_COOLDOWN) {
     cooldownUntil.set(model, Date.now() + COOLDOWN_MS);
   }

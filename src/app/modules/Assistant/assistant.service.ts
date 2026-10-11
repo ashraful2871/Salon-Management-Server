@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { rollupBeforeConversationPurge } from "../Analytics/analytics.rollup";
 import { AssistantAction, runAction } from "./assistant.actions";
 import { textTurn } from "./assistant.ai";
 import { notice } from "./assistant.blocks";
@@ -442,6 +443,8 @@ const deleteMyConversations = async (userId: string, anonymousId?: string) => {
  * itself is in `appointments` and is not touched.
  */
 export const purgeExpiredConversations = async (now = new Date()) => {
+  // The daily assistant metrics are counted from these rows: keep them first.
+  await rollupBeforeConversationPurge(now);
   const { count } = await prisma.assistantConversation.deleteMany({
     where: { expiresAt: { lt: now } },
   });

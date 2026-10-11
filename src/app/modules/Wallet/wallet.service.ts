@@ -2,6 +2,7 @@ import { Prisma, WalletTransaction, WalletTxType } from "@prisma/client";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { AuditCtx, auditTx } from "../../utils/audit";
 
 /**
  * Every movement of customer money goes through `mutate`. Nothing else writes
@@ -403,7 +404,15 @@ const getMyTransactions = async (userId: string, query: any) => {
  */
 const adminAdjust = async (
   adminUserId: string,
-  payload: { userId: string; amountMinor: number; reason: string },
+  payload: {
+    userId: string;
+    amountMinor: number;
+    reason: string;
+    /** `admin-adjust:<approvalId | client uuid>`: a retry or double-click lands once. */
+    idempotencyKey?: string;
+  },
+  auditCtx?: AuditCtx,
+  tx?: Prisma.TransactionClient,
 ) => {
   const reason = payload.reason?.trim();
 
@@ -421,7 +430,14 @@ const adminAdjust = async (
     );
   }
 
-  const user = await prisma.user.findFirst({
+  if (payload.userId === adminUserId) {
+    throw new ApiError(
+      StatusCodes.FORBIDDEN,
+      "You can't adjust your own wallet - ask another admin",
+    );
+  }
+
+  const user = await (tx ?? prisma).user.findFirst({
     where: { id: payload.userId, isDeleted: false },
     select: { id: true },
   });
@@ -430,15 +446,42 @@ const adminAdjust = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
 
-  const transaction = await mutate({
-    userId: payload.userId,
-    type: WalletTxType.ADJUSTMENT,
-    amount: payload.amountMinor,
-    description: `Admin adjustment: ${reason}`,
-    referenceType: "ADJUSTMENT",
-    referenceId: adminUserId,
-    metadata: { adminUserId, reason },
-  });
+  // The ledger row and its audit row commit together, or neither does.
+  const run = async (db: Prisma.TransactionClient) => {
+    if (payload.idempotencyKey) {
+      const existing = await db.walletTransaction.findUnique({
+        where: { idempotencyKey: payload.idempotencyKey },
+      });
+      // Already applied: hand back the original row, and don't audit twice.
+      if (existing) return existing;
+    }
+
+    const row = await mutate(
+      {
+        userId: payload.userId,
+        type: WalletTxType.ADJUSTMENT,
+        amount: payload.amountMinor,
+        description: `Admin adjustment: ${reason}`,
+        referenceType: "ADJUSTMENT",
+        referenceId: adminUserId,
+        idempotencyKey: payload.idempotencyKey,
+        metadata: { adminUserId, reason },
+      },
+      db,
+    );
+
+    await auditTx(db, auditCtx, {
+      action: "wallet.adjust",
+      entityType: "wallet",
+      entityId: payload.userId,
+      after: { amountMinor: payload.amountMinor, walletTransactionId: row.id },
+      reason,
+    });
+
+    return row;
+  };
+
+  const transaction = tx ? await run(tx) : await prisma.$transaction(run);
 
   return serializeTransaction(transaction);
 };
@@ -484,5 +527,6 @@ export const WalletService = {
   getWalletSummary,
   getMyTransactions,
   adminAdjust,
+  serializeTransaction,
   findDrift,
 };

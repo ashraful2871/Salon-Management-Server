@@ -19,8 +19,12 @@ const SWEEP_PAGE_SIZE = 500;
  * deleted, then drop rows older than 30 days (jobs go with them by cascade).
  * The row stays for a while after the photo is gone so the daily cap and the
  * reuse check still have their history.
+ *
+ * `beforeRowPurge` runs with the row cutoff before any row is dropped (the
+ * scheduler passes the analytics rollup); it is a parameter so this module
+ * still imports nothing from the others.
  */
-export const purgeHairTryOn = async () => {
+export const purgeHairTryOn = async (beforeRowPurge?: (olderThan: Date) => Promise<unknown>) => {
   const now = new Date();
 
   const expired = await prisma.hairTryOnUpload.findMany({
@@ -52,13 +56,16 @@ export const purgeHairTryOn = async () => {
     });
   }
 
+  const rowCutoff = new Date(now.getTime() - ROW_KEEP_MS);
+  await beforeRowPurge?.(rowCutoff);
   const purged = await prisma.hairTryOnUpload.deleteMany({
-    where: { createdAt: { lt: new Date(now.getTime() - ROW_KEEP_MS) } },
+    where: { createdAt: { lt: rowCutoff } },
   });
 
   console.log(
     `[jobs] hair.cleanup: deleted ${originals.length} photo(s), ${results.length} result(s), purged ${purged.count} row(s)`,
   );
+  return { photos: originals.length, results: results.length, rows: purged.count };
 };
 
 type TaggedResource = { public_id: string; created_at: string };
@@ -96,4 +103,5 @@ export const sweepHairTryOnTag = async () => {
   console.log(
     `[jobs] hair.sweep: scanned ${scanned} asset(s), deleted ${stale.length} older than 48 h`,
   );
+  return { scanned, deleted: stale.length };
 };

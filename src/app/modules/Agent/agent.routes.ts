@@ -1,18 +1,12 @@
 import express from "express";
-import validateRequest from "../../middlewares/validateRequest";
-import auth from "../../middlewares/auth";
+import { adminAuth } from "../Admin/admin.middleware";
 import { AgentController } from "./agent.controller";
-import { AgentValidation } from "./agent.validation";
 
 const router = express.Router();
 
-router.post(
-  "/create",
-  auth("ADMIN"),
-  validateRequest(AgentValidation.createAgentSchema),
-  AgentController.createAgent
-);
+// 410: agents are invited from the admin panel now.
+router.post("/create", adminAuth("agents.manage"), AgentController.createAgent);
 
-router.get("/", auth("ADMIN"), AgentController.getAllAgents);
+router.get("/", adminAuth("agents.manage"), AgentController.getAllAgents);
 
 export const AgentRoutes = router;

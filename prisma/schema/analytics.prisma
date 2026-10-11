@@ -1,0 +1,53 @@
+// Analytics (admin Phase 10): daily aggregates only. No row here names a
+// person: no user id, no email, no IP. `visitor_daily.hash` is a sha256 of a
+// salt that changes every Dhaka day and is never stored, so it cannot be
+// joined across days or back to a visitor. Days are Asia/Dhaka dates.
+
+/// One number per (Dhaka day, metric, dimension). Ids and definitions live in
+/// `modules/Analytics/analytics.metrics.ts`. A dimension starting with `*`
+/// includes test data; without it, test salons and customers are excluded.
+model MetricDaily {
+  day        DateTime @db.Date
+  metric     String
+  dimension  String   @default("")
+  value      Float
+  computedAt DateTime @default(now())
+
+  @@id([day, metric, dimension])
+  @@index([metric, day])
+  @@map("metric_daily")
+}
+
+/// Allow-listed discovery events from `POST /events`, counted per day.
+model EventDaily {
+  day       DateTime @db.Date
+  event     String
+  dimension String   @default("")
+  count     Int
+
+  @@id([day, event, dimension])
+  @@index([event, day])
+  @@map("event_daily")
+}
+
+/// Distinct visitors per day. Kept 35 days, rolled into `visitors.unique` first.
+model VisitorDaily {
+  day  DateTime @db.Date
+  hash String
+
+  @@id([day, hash])
+  @@map("visitor_daily")
+}
+
+/// Normalised search terms per day and surface (LIST | AI). Kept 90 days.
+model SearchQueryDaily {
+  day         DateTime @db.Date
+  term        String
+  surface     String
+  count       Int
+  zeroResults Int
+
+  @@id([day, term, surface])
+  @@index([day])
+  @@map("search_query_daily")
+}

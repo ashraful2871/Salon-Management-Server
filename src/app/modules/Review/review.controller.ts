@@ -17,6 +17,21 @@ const createReview = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const reportReview = catchAsync(async (req: Request, res: Response) => {
+  await ReviewService.reportReview(
+    { userId: req.user!.userId, role: req.user!.role },
+    String(req.params.id),
+    req.body,
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.CREATED,
+    success: true,
+    message: "Thanks — we'll take a look",
+    data: null,
+  });
+});
+
 const getAllReviews = catchAsync(async (req: Request, res: Response) => {
   const result = await ReviewService.getAllReviews(req.query);
 
@@ -70,6 +85,7 @@ const getReviewsByStaffId = catchAsync(async (req: Request, res: Response) => {
 
 export const ReviewController = {
   createReview,
+  reportReview,
   getAllReviews,
   getReviewById,
   getReviewsBySalonId,

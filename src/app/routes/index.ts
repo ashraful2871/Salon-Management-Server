@@ -18,7 +18,12 @@ import { SettlementRoutes } from "../modules/Settlement/settlement.routes";
 import { GeoRoutes } from "../modules/Geo/geo.route";
 import { AssistantRoutes } from "../modules/Assistant/assistant.routes";
 import { ContactRoutes } from "../modules/Contact/contact.routes";
+import { AnalyticsRoutes } from "../modules/Analytics/analytics.routes";
 import { HairTryOnRoutes } from "../modules/HairTryOn/hairTryOn.routes";
+import { AdminRoutes } from "../modules/Admin/admin.routes";
+import { InvitationRoutes } from "../modules/Admin/invitations/invitation.routes";
+import { SettingsRoutes } from "../modules/Settings/settings.routes";
+import { OwnerRoutes } from "../modules/Owner/owner.routes";
 
 const router = express.Router();
 
@@ -100,8 +105,28 @@ const moduleRoutes = [
     route: ContactRoutes,
   },
   {
+    path: "/events",
+    route: AnalyticsRoutes,
+  },
+  {
     path: "/hairstyle",
     route: HairTryOnRoutes,
+  },
+  {
+    path: "/admin",
+    route: AdminRoutes,
+  },
+  {
+    path: "/invitations",
+    route: InvitationRoutes,
+  },
+  {
+    path: "/settings",
+    route: SettingsRoutes,
+  },
+  {
+    path: "/owner",
+    route: OwnerRoutes,
   },
 ];
 

@@ -2,6 +2,35 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { OwnerApplicationStatus, UserRole } from "@prisma/client";
+import config from "../../../config";
+import { sendEmail } from "../../utils/emailSender";
+import { getOwnerApplicationDecisionTemplate } from "../../utils/emailTemplates";
+
+/** Tells the applicant; never fails the decision it reports. */
+const notifyApplicant = (
+  user: { name: string; email: string },
+  businessName: string | null,
+  approved: boolean,
+  reason?: string | null,
+) => {
+  const html = getOwnerApplicationDecisionTemplate({
+    approved,
+    name: user.name,
+    businessName: businessName || "your salon",
+    reason,
+    link: approved
+      ? `${config.frontend_url}/dashboard/store`
+      : `${config.frontend_url}/become-salon-owner`,
+    contactUrl: `${config.frontend_url}/contact`,
+  });
+  void sendEmail(
+    user.email,
+    approved
+      ? "Your salon owner application is approved"
+      : "Your salon owner application was not approved",
+    html,
+  ).catch(() => undefined);
+};
 
 const applySalonOwner = async (userId: string, payload: any) => {
   // Check user exists
@@ -72,21 +101,36 @@ const getAllApplications = async (query: any) => {
     ];
   }
 
-  const [data, total] = await Promise.all([
+  const [data, total, byStatus] = await Promise.all([
     prisma.salonOwner.findMany({
       where,
       skip,
       take: Number(limit),
       include: {
-        user: { select: { id: true, name: true, email: true, role: true } },
+        user: {
+          select: { id: true, name: true, email: true, phone: true, role: true, status: true, createdAt: true },
+        },
       },
       orderBy: { createdAt: "desc" },
     }),
     prisma.salonOwner.count({ where }),
+    // Chip counts: the same search, every status.
+    prisma.salonOwner.groupBy({
+      by: ["applicationStatus"],
+      where: { ...where, applicationStatus: undefined },
+      _count: { _all: true },
+    }),
   ]);
 
   return {
-    meta: { page: Number(page), limit: Number(limit), total },
+    meta: {
+      page: Number(page),
+      limit: Number(limit),
+      total,
+      statusCounts: Object.fromEntries(
+        byStatus.map((s) => [s.applicationStatus, s._count._all]),
+      ),
+    },
     data,
   };
 };
@@ -141,6 +185,8 @@ const approveApplication = async (
     return updatedApplication;
   });
 
+  notifyApplicant(application.user, application.businessName, true);
+
   return result;
 };
 
@@ -151,6 +197,7 @@ const rejectApplication = async (
 ) => {
   const application = await prisma.salonOwner.findUnique({
     where: { id: applicationId },
+    include: { user: { select: { name: true, email: true } } },
   });
 
   if (!application)
@@ -169,7 +216,7 @@ const rejectApplication = async (
     },
   });
 
-  // keep user role as CUSTOMER (do nothing)
+  notifyApplicant(application.user, application.businessName, false, payload.rejectionReason);
   return result;
 };
 

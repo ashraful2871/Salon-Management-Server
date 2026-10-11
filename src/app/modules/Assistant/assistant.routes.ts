@@ -2,6 +2,7 @@ import express, { NextFunction, Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import { UserRole } from "@prisma/client";
 import auth from "../../middlewares/auth";
+import { adminAuth } from "../Admin/admin.middleware";
 import optionalAuth from "../../middlewares/optionalAuth";
 import {
   assistantLimiter,
@@ -11,20 +12,28 @@ import {
 } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { AssistantController } from "./assistant.controller";
-import { ASSISTANT_ENABLED } from "./assistant.constants";
+import { getSetting } from "../../utils/settings";
+import { ASSISTANT_TOKEN_SECRET } from "./assistant.constants";
 import { AssistantValidation } from "./assistant.validation";
 
 const router = express.Router();
 
-/** The kill switch. Off, the whole surface is simply not there. */
-const assistantEnabled = (req: Request, res: Response, next: NextFunction) => {
-  if (!ASSISTANT_ENABLED) {
-    return res.status(StatusCodes.NOT_FOUND).json({
-      success: false,
-      message: "Not found",
-    });
+/**
+ * The kill switch (the assistant.enabled setting, read per request). Off - or
+ * with no secret to sign confirmations - the whole surface is simply not there.
+ */
+const assistantEnabled = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!(await getSetting("assistant.enabled")) || !ASSISTANT_TOKEN_SECRET) {
+      return res.status(StatusCodes.NOT_FOUND).json({
+        success: false,
+        message: "Not found",
+      });
+    }
+    next();
+  } catch (error) {
+    next(error);
   }
-  next();
 };
 
 router.use(assistantEnabled);
@@ -130,6 +139,6 @@ router.post(
 
 /** Launch numbers: per-day counts, the funnel, the top problems. No
  *  transcripts, ADMIN only. */
-router.get("/stats", auth(UserRole.ADMIN), AssistantController.stats);
+router.get("/stats", adminAuth("analytics.view"), AssistantController.stats);
 
 export const AssistantRoutes = router;

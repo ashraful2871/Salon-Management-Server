@@ -90,7 +90,7 @@ export const resendProvider: EmailProvider = {
 
   isConfigured: () => Boolean(config.email.resendApiKey),
 
-  async send({ to, subject, html }: EmailMessage): Promise<EmailResult> {
+  async send({ to, subject, html, replyTo }: EmailMessage): Promise<EmailResult> {
     let lastError = "unknown error";
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
@@ -106,6 +106,7 @@ export const resendProvider: EmailProvider = {
             to: [to],
             subject,
             html,
+            ...(replyTo ? { reply_to: replyTo } : {}),
           }),
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });

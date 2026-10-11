@@ -9,11 +9,36 @@ model Review {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  // Relations
-  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
-  customer    User        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  salon       Salon       @relation(fields: [salonId], references: [id], onDelete: Cascade)
-  staff       Staff?      @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  // Moderation. A hidden review keeps its text; it is only taken out of view.
+  status        ReviewStatus @default(PUBLISHED)
+  hiddenReason  String?
+  moderatedById String?
+  moderatedAt   DateTime?
+  reportCount   Int          @default(0)
 
+  // Relations
+  appointment Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  customer    User           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  salon       Salon          @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  staff       Staff?         @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  reports     ReviewReport[]
+
+  @@index([salonId, status])
+  @@index([status, createdAt])
   @@map("reviews")
+}
+
+/// One report per user per review. The reporter is never shown to the reviewer.
+model ReviewReport {
+  id         String   @id @default(uuid())
+  reviewId   String
+  reporterId String
+  reason     String // ABUSIVE | PERSONAL_INFO | SPAM | FAKE | OTHER
+  note       String?
+  createdAt  DateTime @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, reporterId])
+  @@map("review_reports")
 }

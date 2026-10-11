@@ -523,6 +523,63 @@ export const getDepositForfeitedTemplate = (
      <p>Think this is wrong? You can appeal within <strong>48 hours</strong> from your bookings page and an admin will review it.</p>`
   );
 
+/** A no-show appeal (or an admin's reversal) was decided. `note` is escaped here. */
+export const getAppealResolvedTemplate = (
+  customerName: string,
+  salonName: string,
+  outcome: { approve: boolean; amount: string; refunded: boolean; note?: string }
+) =>
+  moneyLayout(
+    outcome.approve ? "Appeal upheld" : "Appeal not upheld",
+    outcome.approve
+      ? `<p>Hi ${escapeHtml(customerName)},</p>
+     <p>We reviewed the no-show on your booking at ${escapeHtml(salonName)} and reversed it.${
+       outcome.refunded ? ` <strong>${outcome.amount}</strong> has been returned to your wallet.` : ""
+     }</p>
+     <p style="color:#7f8c8d;font-size:13px;">Sorry for the trouble.</p>`
+      : `<p>Hi ${escapeHtml(customerName)},</p>
+     <p>We reviewed your appeal about the no-show at ${escapeHtml(salonName)}, and the no-show stands, so the deposit stays forfeited.</p>${
+       outcome.note ? `<p><strong>Our note:</strong> ${escapeHtml(outcome.note)}</p>` : ""
+     }
+     <p style="color:#7f8c8d;font-size:13px;">If something is still not right, reply to this email.</p>`
+  );
+
+/** A payout to a salon was sent (PAID) or bounced (FAILED). */
+export const getPayoutUpdateTemplate = (
+  ownerName: string,
+  salonName: string,
+  payout: { paid: boolean; amount: string; method?: string | null; reference?: string | null; failureReason?: string | null }
+) =>
+  moneyLayout(
+    payout.paid ? "Payout sent" : "Payout failed",
+    payout.paid
+      ? `<p>Hi ${escapeHtml(ownerName)},</p>
+     <p>We sent <strong>${payout.amount}</strong> to ${escapeHtml(salonName)}${
+       payout.method ? ` by ${escapeHtml(payout.method === "BKASH" ? "bKash" : "bank transfer")}` : ""
+     }.</p>${payout.reference ? `<p>Transfer reference: <strong>${escapeHtml(payout.reference)}</strong></p>` : ""}
+     <p style="color:#7f8c8d;font-size:13px;">The bookings behind it are on your Earnings page.</p>`
+      : `<p>Hi ${escapeHtml(ownerName)},</p>
+     <p>Our transfer of <strong>${payout.amount}</strong> to ${escapeHtml(salonName)} did not go through.${
+       payout.failureReason ? ` Reason: ${escapeHtml(payout.failureReason)}.` : ""
+     }</p>
+     <p>Nothing is lost: the money has gone back to your balance automatically and will be sent with your next payout. Please check your payout details, and reply to this email if they need changing.</p>`
+  );
+
+/** Another admin asked for a second pair of eyes on a money move. */
+export const getApprovalRequestTemplate = (
+  requesterName: string,
+  summary: string,
+  reason: string,
+  url: string
+) =>
+  moneyLayout(
+    "Approval needed",
+    `<p>${escapeHtml(requesterName)} asked for approval:</p>
+     <p><strong>${escapeHtml(summary)}</strong></p>
+     <p>Reason: ${escapeHtml(reason)}</p>
+     <p><a href="${url}" style="color:#2c3e50;font-weight:bold;">Review it in the back office</a>. It expires in 24 hours.</p>`
+  );
+
 // For text a customer typed, such as their name. It lands in the salon owner's
 // inbox, so it must not be able to add links or markup of its own.
 export const escapeHtml = (value: string) =>
@@ -663,5 +720,278 @@ export const getBookingReminderTemplate = (reminder: {
        <a href="${reminder.manageUrl}" style="display:inline-block;padding:12px 24px;background-color:#2c3e50;color:#ffffff;text-decoration:none;border-radius:4px;font-weight:600;">Manage booking</a>
      </p>
      <p style="color:#7f8c8d;font-size:13px;">Show your token at the counter when you arrive.</p>`
+  );
+};
+
+/**
+ * An invitation to join the back office as an admin or an area agent. The
+ * link carries the only copy of the token; accepting needs a signed-in,
+ * verified account on this same address.
+ */
+export const getAdminInvitationTemplate = (invite: {
+  name?: string | null;
+  inviterName: string;
+  roleLabel: string;
+  link: string;
+  expiresAt: Date;
+}) =>
+  moneyLayout(
+    "You are invited to the SalonKhuji team",
+    `<p>Hi ${escapeHtml(invite.name || "there")},</p>
+     <p>${escapeHtml(invite.inviterName)} invited you to join SalonKhuji as <strong>${escapeHtml(invite.roleLabel)}</strong>.</p>
+     <p><a href="${escapeHtml(invite.link)}" style="display:inline-block;padding:10px 20px;background:#1f2937;color:#fff;border-radius:999px;text-decoration:none;">Accept the invitation</a></p>
+     <p>Sign in (or create an account) with this email address, then accept. You will set up an authenticator app before you can use the console.</p>
+     <p style="color:#7f8c8d;font-size:12px;">This link expires on ${invite.expiresAt.toUTCString()}. If you did not expect it, ignore this email.</p>`
+  );
+
+const contactLine = (contactUrl: string) =>
+  `<p>If you think this is a mistake, <a href="${escapeHtml(contactUrl)}">contact us</a> and quote this email.</p>`;
+
+export const getAccountSuspendedTemplate = (notice: {
+  name: string;
+  reason: string;
+  until?: Date | null;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    "Your SalonKhuji account is suspended",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>We have suspended your SalonKhuji account${notice.until ? ` until <strong>${notice.until.toUTCString()}</strong>` : ""}. While it is suspended you cannot sign in or book.</p>
+     <p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>
+     ${notice.until ? "<p>Your account reactivates on its own when the suspension ends.</p>" : ""}
+     ${contactLine(notice.contactUrl)}`
+  );
+
+export const getAccountBlockedTemplate = (notice: {
+  name: string;
+  reason: string;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    "Your SalonKhuji account is blocked",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>We have blocked your SalonKhuji account. You can no longer sign in or book.</p>
+     <p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>
+     ${contactLine(notice.contactUrl)}`
+  );
+
+export const getAccountReactivatedTemplate = (notice: { name: string; signInUrl: string }) =>
+  moneyLayout(
+    "Your SalonKhuji account is active again",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>Your SalonKhuji account is active again. You can <a href="${escapeHtml(notice.signInUrl)}">sign in</a> and book as usual.</p>`
+  );
+
+/** To a customer or owner when support starts a read-only "View as" of their account. */
+export const getImpersonationNoticeTemplate = (notice: { name: string; minutes: number; contactUrl: string }) =>
+  moneyLayout(
+    "SalonKhuji support viewed your account",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>A member of the SalonKhuji support team opened a read-only view of your account to help with a request. The view lasts at most ${notice.minutes} minutes and cannot change, book, cancel or pay for anything.</p>
+     <p>If you did not ask us for help, <a href="${escapeHtml(notice.contactUrl)}">contact us</a>.</p>`
+  );
+
+/** Sent to the affected admin and every SUPER_ADMIN on a team change. */
+export const getAdminTeamChangeTemplate = (notice: {
+  heading: string;
+  summary: string;
+  actorName: string;
+  reason?: string | null;
+}) =>
+  moneyLayout(
+    notice.heading,
+    `<p>${escapeHtml(notice.summary)}</p>
+     <p><strong>Changed by:</strong> ${escapeHtml(notice.actorName)}</p>
+     ${notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : ""}
+     <p style="color:#7f8c8d;font-size:12px;">If you did not expect this change, contact another super admin at once.</p>`
+  );
+
+const buttonLink = (href: string, label: string) =>
+  `<p><a href="${escapeHtml(href)}" style="display:inline-block;padding:10px 20px;background:#1f2937;color:#fff;border-radius:999px;text-decoration:none;">${escapeHtml(label)}</a></p>`;
+
+/** To a salon owner when an admin approves, rejects, suspends or reactivates a salon. */
+export const getSalonStatusTemplate = (notice: {
+  kind: "approved" | "rejected" | "suspended" | "reactivated";
+  ownerName: string;
+  salonName: string;
+  reason?: string | null;
+  fixHint?: string | null;
+  link: string;
+  contactUrl: string;
+}) => {
+  const name = escapeHtml(notice.ownerName);
+  const salon = `<strong>${escapeHtml(notice.salonName)}</strong>`;
+  const reason = notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : "";
+  switch (notice.kind) {
+    case "approved":
+      return moneyLayout(
+        "Your salon is live on SalonKhuji",
+        `<p>Hi ${name},</p>
+         <p>Good news: ${salon} is approved and customers can now find and book it.</p>
+         ${buttonLink(notice.link, "See your salon")}`
+      );
+    case "rejected":
+      return moneyLayout(
+        "Your salon was not approved",
+        `<p>Hi ${name},</p>
+         <p>We could not approve ${salon} yet.</p>
+         ${reason}
+         ${notice.fixHint ? `<p><strong>What to fix:</strong> ${escapeHtml(notice.fixHint)}</p>` : ""}
+         <p>Update the details and save; the salon goes back into our review queue.</p>
+         ${buttonLink(notice.link, "Fix and resubmit")}
+         ${contactLine(notice.contactUrl)}`
+      );
+    case "suspended":
+      return moneyLayout(
+        "Your salon is suspended",
+        `<p>Hi ${name},</p>
+         <p>We have suspended ${salon}. While it is suspended customers cannot find or book it.</p>
+         ${reason}
+         ${contactLine(notice.contactUrl)}`
+      );
+    default:
+      return moneyLayout(
+        "Your salon is live again",
+        `<p>Hi ${name},</p>
+         <p>${salon} is active again and customers can find and book it.</p>
+         ${buttonLink(notice.link, "See your salon")}`
+      );
+  }
+};
+
+/** To an applicant when their salon-owner application is decided. */
+export const getOwnerApplicationDecisionTemplate = (notice: {
+  approved: boolean;
+  name: string;
+  businessName: string;
+  reason?: string | null;
+  link: string;
+  contactUrl: string;
+}) =>
+  notice.approved
+    ? moneyLayout(
+        "You are now a salon owner on SalonKhuji",
+        `<p>Hi ${escapeHtml(notice.name)},</p>
+         <p>Your application for <strong>${escapeHtml(notice.businessName)}</strong> is approved. Sign out and back in, then add your salon from the dashboard; we review each salon before it goes live.</p>
+         ${buttonLink(notice.link, "Add your salon")}`
+      )
+    : moneyLayout(
+        "Your salon owner application was not approved",
+        `<p>Hi ${escapeHtml(notice.name)},</p>
+         <p>We could not approve your application for <strong>${escapeHtml(notice.businessName)}</strong>.</p>
+         ${notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : ""}
+         <p>You can correct the details and apply again.</p>
+         ${buttonLink(notice.link, "Apply again")}
+         ${contactLine(notice.contactUrl)}`
+      );
+
+/** An admin cancelled a booking on the customer's behalf. Sent to the customer and the salon. */
+export const getBookingCancelledByAdminTemplate = (notice: {
+  audience: "customer" | "salon";
+  name: string;
+  salonName: string;
+  serviceName: string;
+  when: string;
+  token: string | null;
+  reason: string;
+  refund: string | null;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    "Booking cancelled",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>SalonKhuji cancelled ${notice.audience === "customer" ? "your" : "a"} booking${
+       notice.token ? ` <strong>${escapeHtml(notice.token)}</strong>` : ""
+     } for ${escapeHtml(notice.serviceName)} at ${escapeHtml(notice.salonName)} on ${escapeHtml(notice.when)}${
+       notice.audience === "customer" ? "" : " on the customer's behalf"
+     }.</p>
+     <p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>
+     ${
+       notice.audience === "customer"
+         ? notice.refund
+           ? `<p>Your full deposit of <strong>${notice.refund}</strong> is back in your wallet.</p>`
+           : ""
+         : "<p>The slot is open again. Nothing is deducted from your earnings.</p>"
+     }
+     ${contactLine(notice.contactUrl)}`
+  );
+
+/**
+ * A moderator hid the customer's review. Says why by reason code only - never
+ * who reported it.
+ */
+export const getReviewHiddenTemplate = (notice: {
+  name: string;
+  salonName: string;
+  reason: string;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    "Your review has been hidden",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>We have hidden your review of ${escapeHtml(notice.salonName)} because it did not meet our review guidelines. It no longer appears on the salon's page or counts toward its rating.</p>
+     <p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>
+     ${contactLine(notice.contactUrl)}`
+  );
+
+/** An admin's reply on a support ticket. The subject carries `[#<number>]`. */
+export const getSupportReplyTemplate = (reply: {
+  name: string;
+  number: number;
+  subject: string;
+  body: string;
+}) =>
+  moneyLayout(
+    `Re: ${reply.subject}`,
+    `<p>Hi ${escapeHtml(reply.name)},</p>
+     <div style="white-space:normal;">${escapeHtml(reply.body).replace(/\r?\n/g, "<br>")}</div>
+     <p style="color:#7f8c8d;font-size:12px;margin-top:24px;">Ticket #${reply.number}. Reply to this email to answer us.</p>`
+  );
+
+/** `system.watch`: the alerts that just started or stopped, in one email. */
+export const getSystemAlertTemplate = (notice: {
+  firing: Array<{ label: string; detail: string }>;
+  resolved: Array<{ label: string; detail: string }>;
+  url: string;
+}) => {
+  const list = (items: Array<{ label: string; detail: string }>) =>
+    `<ul style="padding-left:18px;">${items
+      .map((i) => `<li><strong>${escapeHtml(i.label)}</strong> - ${escapeHtml(i.detail)}</li>`)
+      .join("")}</ul>`;
+  return moneyLayout(
+    notice.firing.length ? "System alert" : "System alert resolved",
+    `${notice.firing.length ? `<p>These checks started failing:</p>${list(notice.firing)}` : ""}${
+      notice.resolved.length ? `<p>These are healthy again:</p>${list(notice.resolved)}` : ""
+    }
+     <p><a href="${notice.url}" style="color:#2c3e50;font-weight:bold;">Open System health</a></p>
+     <p style="color:#7f8c8d;font-size:13px;">You get these because "Email me alerts" is on for your admin account. One email per alert every 6 hours at most.</p>`,
+  );
+};
+
+/** `admin.digest`: yesterday at a glance, once a day after 08:00 Dhaka. */
+export const getAdminDigestTemplate = (digest: {
+  day: string;
+  kpis: Array<{ label: string; value: string }>;
+  inbox: Array<{ label: string; count: number }>;
+  alerts: Array<{ label: string; since: string }>;
+  url: string;
+}) => {
+  const rows = (items: Array<[string, string]>) =>
+    `<table style="width:100%;border-collapse:collapse;font-size:14px;">${items
+      .map(
+        ([k, v]) =>
+          `<tr><td style="padding:6px 0;border-bottom:1px solid #eee;">${escapeHtml(k)}</td><td style="padding:6px 0;border-bottom:1px solid #eee;text-align:right;"><strong>${escapeHtml(v)}</strong></td></tr>`,
+      )
+      .join("")}</table>`;
+  return moneyLayout(
+    `Daily digest - ${escapeHtml(digest.day)}`,
+    `<h3 style="margin:0 0 6px;">Yesterday</h3>${rows(digest.kpis.map((k) => [k.label, k.value]))}
+     <h3 style="margin:22px 0 6px;">Needs attention</h3>${
+       digest.inbox.length ? rows(digest.inbox.map((i) => [i.label, String(i.count)])) : "<p>Nothing waiting.</p>"
+     }
+     <h3 style="margin:22px 0 6px;">Alerts firing</h3>${
+       digest.alerts.length ? rows(digest.alerts.map((a) => [a.label, `since ${a.since}`])) : "<p>None. All checks are healthy.</p>"
+     }
+     <p style="margin-top:22px;"><a href="${digest.url}" style="color:#2c3e50;font-weight:bold;">Open the back office</a></p>`,
   );
 };

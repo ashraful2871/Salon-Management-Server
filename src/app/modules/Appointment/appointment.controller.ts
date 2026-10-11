@@ -4,6 +4,31 @@ import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { AppointmentCheckout } from "./appointment.checkout";
 import { AppointmentService } from "./appointment.service";
+import { audit } from "../../utils/audit";
+import { assertAdminPermission } from "../Admin/admin.middleware";
+import type { Permission } from "../Admin/admin.permissions";
+
+// These routes are shared with owners, staff and customers. An ADMIN caller
+// additionally needs the permission; other roles keep their ownership checks.
+const asAdmin = (req: Request, permission: Permission) =>
+  assertAdminPermission(req, permission);
+
+/** Audits an admin acting on a booking; owners and staff are not audited. */
+const auditAdminWrite = (
+  req: Request,
+  action: string,
+  id: string,
+  after: Record<string, unknown>,
+) =>
+  req.admin
+    ? audit(req.auditCtx, {
+        action,
+        entityType: "booking",
+        entityId: id,
+        after,
+        reason: typeof req.body?.reason === "string" ? req.body.reason : null,
+      })
+    : Promise.resolve();
 
 const bookAppointment = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
@@ -19,6 +44,7 @@ const bookAppointment = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getAllAppointments = catchAsync(async (req: Request, res: Response) => {
+  await asAdmin(req, "bookings.view");
   const userId = req.user?.userId;
   const userRole = req.user?.role;
 
@@ -52,6 +78,7 @@ const getMyAppointments = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getAppointmentById = catchAsync(async (req: Request, res: Response) => {
+  await asAdmin(req, "bookings.view");
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
@@ -71,6 +98,7 @@ const getAppointmentById = catchAsync(async (req: Request, res: Response) => {
 
 const updateAppointmentStatus = catchAsync(
   async (req: Request, res: Response) => {
+    await asAdmin(req, "bookings.manage");
     const userId = req.user?.userId;
     const userRole = req.user?.role;
     const idParam = req.params.id;
@@ -82,6 +110,9 @@ const updateAppointmentStatus = catchAsync(
       id,
       req.body
     );
+    await auditAdminWrite(req, "booking.status_change", id, {
+      status: req.body.status,
+    });
 
     sendResponse(res, {
       statusCode: StatusCodes.OK,
@@ -162,6 +193,13 @@ const resolveAppeal = catchAsync(async (req: Request, res: Response) => {
     approve: req.body.approve,
     note: req.body.note,
   });
+  await audit(req.auditCtx, {
+    action: req.body.approve ? "appeal.approve" : "appeal.reject",
+    entityType: "booking",
+    entityId: id,
+    after: { appealStatus: req.body.approve ? "APPROVED" : "REJECTED", note: req.body.note ?? null },
+    reason: req.body.reason ?? req.body.note,
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -195,6 +233,7 @@ const bookWalkIn = catchAsync(async (req: Request, res: Response) => {
 });
 
 const lookupByToken = catchAsync(async (req: Request, res: Response) => {
+  await asAdmin(req, "bookings.view");
   const result = await AppointmentCheckout.lookupByToken(
     actor(req),
     String(req.query.token ?? ""),
@@ -209,10 +248,14 @@ const lookupByToken = catchAsync(async (req: Request, res: Response) => {
 });
 
 const checkIn = catchAsync(async (req: Request, res: Response) => {
+  await asAdmin(req, "bookings.manage");
   const result = await AppointmentCheckout.checkIn(
     actor(req),
     idFromParams(req),
   );
+  await auditAdminWrite(req, "booking.check_in", idFromParams(req), {
+    status: "CHECKED_IN",
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -223,7 +266,11 @@ const checkIn = catchAsync(async (req: Request, res: Response) => {
 });
 
 const startAppointment = catchAsync(async (req: Request, res: Response) => {
+  await asAdmin(req, "bookings.manage");
   const result = await AppointmentCheckout.start(actor(req), idFromParams(req));
+  await auditAdminWrite(req, "booking.start", idFromParams(req), {
+    status: "IN_PROGRESS",
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -234,6 +281,7 @@ const startAppointment = catchAsync(async (req: Request, res: Response) => {
 });
 
 const checkout = catchAsync(async (req: Request, res: Response) => {
+  await asAdmin(req, "bookings.manage");
   const result = await AppointmentCheckout.checkout(
     actor(req),
     idFromParams(req),
@@ -242,6 +290,11 @@ const checkout = catchAsync(async (req: Request, res: Response) => {
       reference: req.body.reference,
     },
   );
+  await auditAdminWrite(req, "booking.checkout", idFromParams(req), {
+    status: "COMPLETED",
+    paymentMethod: req.body.paymentMethod,
+    reference: req.body.reference ?? null,
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -252,6 +305,7 @@ const checkout = catchAsync(async (req: Request, res: Response) => {
 });
 
 const cashSummary = catchAsync(async (req: Request, res: Response) => {
+  await asAdmin(req, "finance.view");
   const salonId =
     typeof req.query.salonId === "string" && req.query.salonId
       ? req.query.salonId

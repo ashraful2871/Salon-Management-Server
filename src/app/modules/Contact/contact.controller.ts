@@ -6,12 +6,13 @@ import { clientIp } from "../../middlewares/rateLimiter";
 import { ContactService } from "./contact.service";
 
 const sendContact = catchAsync(async (req: Request, res: Response) => {
-  await ContactService.sendContactMessage(req.body, clientIp(req));
+  const data = await ContactService.sendContactMessage(req.body, clientIp(req));
 
   sendResponse(res, {
-    statusCode: StatusCodes.OK,
+    statusCode: StatusCodes.CREATED,
     success: true,
-    message: "Message sent. We'll get back to you soon.",
+    message: `Message sent — ticket #${data.ticketNumber}. We'll get back to you soon.`,
+    data,
   });
 });
 

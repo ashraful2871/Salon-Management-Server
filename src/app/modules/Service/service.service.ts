@@ -3,6 +3,11 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { toMinor } from "../../utils/money";
 import { scheduleReindex } from "../AI-Suggestion/ai.indexer";
+import {
+  AccessUser,
+  assertSalonPermission,
+  scopeSalonIds,
+} from "../../utils/salonAccess";
 
 /**
  * The API takes and returns taka, the column holds integer poisha. Converting
@@ -14,36 +19,8 @@ const withMinorPrice = (payload: any) => {
   return price === undefined ? rest : { ...rest, priceMinor: toMinor(price) };
 };
 
-const createService = async (userId: string, payload: any) => {
-  // Verify salon ownership
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can create services",
-    );
-  }
-
-  const salon = await prisma.salon.findUnique({
-    where: {
-      id: payload.salonId,
-      isDeleted: false,
-    },
-  });
-
-  if (!salon) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
-  }
-
-  if (salon.ownerId !== salonOwner.id) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "You can only create services for your own salons",
-    );
-  }
+const createService = async (user: AccessUser, payload: any) => {
+  await assertSalonPermission(user, payload.salonId, "services.edit");
 
   const service = await prisma.service.create({
     data: withMinorPrice(payload),
@@ -144,40 +121,28 @@ const getServiceById = async (id: string) => {
 };
 
 const updateService = async (
-  userId: string,
+  user: AccessUser,
   serviceId: string,
   payload: any,
 ) => {
-  // Verify ownership
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can update services",
-    );
-  }
-
   const service = await prisma.service.findUnique({
     where: {
       id: serviceId,
       isDeleted: false,
     },
-    include: { salon: true },
   });
 
   if (!service) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Service not found");
   }
 
-  if (service.salon.ownerId !== salonOwner.id) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "You can only update your own services",
-    );
-  }
+  // Switching a service on or off is a lighter permission than editing it.
+  const onlyToggle = Object.keys(payload ?? {}).every((key) => key === "isActive");
+  await assertSalonPermission(
+    user,
+    service.salonId,
+    onlyToggle ? "services.toggle" : "services.edit",
+  );
 
   const result = await prisma.service.update({
     where: { id: serviceId },
@@ -189,37 +154,19 @@ const updateService = async (
   return result;
 };
 
-const deleteService = async (userId: string, serviceId: string) => {
-  // Verify ownership
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can delete services",
-    );
-  }
-
+const deleteService = async (user: AccessUser, serviceId: string) => {
   const service = await prisma.service.findUnique({
     where: {
       id: serviceId,
       isDeleted: false,
     },
-    include: { salon: true },
   });
 
   if (!service) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Service not found");
   }
 
-  if (service.salon.ownerId !== salonOwner.id) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "You can only delete your own services",
-    );
-  }
+  await assertSalonPermission(user, service.salonId, "services.edit");
 
   // Soft delete
   await prisma.service.update({
@@ -232,17 +179,9 @@ const deleteService = async (userId: string, serviceId: string) => {
   return null;
 };
 
-const getMyServices = async (userId: string, query: any) => {
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-    include: { salons: true },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(StatusCodes.FORBIDDEN, "Only salon owners can access their services");
-  }
-
-  const salonIds = salonOwner.salons.map((s) => s.id);
+const getMyServices = async (user: AccessUser, query: any) => {
+  const salonIds =
+    (await scopeSalonIds(user, "services.toggle", query.salonId)) ?? [];
 
   const { page = 1, limit = 10, searchTerm, category } = query;
   const skip = (Number(page) - 1) * Number(limit);

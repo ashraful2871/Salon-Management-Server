@@ -3,8 +3,15 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { toMinor } from "../../utils/money";
+import { audit } from "../../utils/audit";
+import { requireApprovalIf } from "../Admin/approvals/approvals.service";
 import { SettlementEarnings } from "./settlement.earnings";
-import { CommissionAdmin, SettlementService } from "./settlement.service";
+import { withAccessCache } from "../../utils/salonAccess";
+import {
+  CommissionAdmin,
+  payoutNeedsApproval,
+  SettlementService,
+} from "./settlement.service";
 
 const runPayoutBatch = catchAsync(async (req: Request, res: Response) => {
   const result = await SettlementService.runPayoutBatch({
@@ -12,6 +19,9 @@ const runPayoutBatch = catchAsync(async (req: Request, res: Response) => {
       ? new Date(req.body.periodStart)
       : undefined,
     periodEnd: req.body?.periodEnd ? new Date(req.body.periodEnd) : undefined,
+  }, {
+    ctx: req.auditCtx,
+    reason: req.body?.reason,
   });
 
   sendResponse(res, {
@@ -38,7 +48,50 @@ const updatePayoutStatus = catchAsync(async (req: Request, res: Response) => {
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  const result = await SettlementService.updatePayoutStatus(id, req.body);
+  const { reason, ...payload } = req.body;
+
+  // Four-eyes: marking a payout paid needs a second admin when approvals are
+  // on (over approvals.payoutOverMinor, or every payout when that is unset) -
+  // unless a different admin already moved it to APPROVED.
+  if (
+    payload.status === "PAID" &&
+    (await requireApprovalIf(
+      req,
+      res,
+      "payout.mark_paid",
+      async () => {
+        // Fail the obvious mistakes now rather than after someone approves.
+        const payout = await SettlementService.assertPayable(id, payload);
+        if (
+          payout.status === "APPROVED" &&
+          payout.approvedById &&
+          payout.approvedById !== req.user!.userId
+        ) {
+          return false;
+        }
+        return payoutNeedsApproval(payout.netMinor);
+      },
+      {
+        payload: {
+          payoutId: id,
+          method: payload.method,
+          reference: payload.reference,
+          proofUrl: payload.proofUrl ?? null,
+          reason: reason ?? null,
+        },
+        summary: `Mark payout ${id.slice(0, 8)} paid (${payload.method}, ref ${payload.reference})`,
+        reason: reason || `Payout ${id} paid, ref ${payload.reference}`,
+      },
+    ))
+  ) {
+    return;
+  }
+
+  const result = await SettlementService.updatePayoutStatus(
+    id,
+    { ...payload, markedPaidById: req.user!.userId },
+    { ctx: req.auditCtx, reason },
+  );
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -50,7 +103,7 @@ const updatePayoutStatus = catchAsync(async (req: Request, res: Response) => {
 
 const getMyPayouts = catchAsync(async (req: Request, res: Response) => {
   const result = await SettlementService.getMyPayouts(
-    req.user!.userId,
+    withAccessCache(req),
     req.query,
   );
 
@@ -66,7 +119,7 @@ const getMyPayouts = catchAsync(async (req: Request, res: Response) => {
 /** A salon owner's full earnings view: totals, payouts, balances, line items. */
 const getMyEarnings = catchAsync(async (req: Request, res: Response) => {
   const result = await SettlementService.getMyEarnings(
-    req.user!.userId,
+    withAccessCache(req),
     req.query,
   );
 
@@ -135,13 +188,21 @@ const getCommissionRules = catchAsync(async (req: Request, res: Response) => {
 });
 
 const createCommissionRule = catchAsync(async (req: Request, res: Response) => {
-  const { minAmount, maxAmount, flatFee, ...rest } = req.body;
+  const { minAmount, maxAmount, flatFee, reason, ...rest } = req.body;
 
   const result = await CommissionAdmin.createCommissionRule({
     ...rest,
     minAmountMinor: minAmount === undefined ? undefined : toMinor(minAmount),
     maxAmountMinor: maxAmount === undefined ? null : toMinor(maxAmount),
     flatFeeMinor: flatFee === undefined ? null : toMinor(flatFee),
+  });
+  await audit(req.auditCtx, {
+    action: "commission_rule.create",
+    entityType: "commission_rule",
+    entityId: result.id,
+    salonId: result.salonId,
+    after: result,
+    reason,
   });
 
   sendResponse(res, {
@@ -156,13 +217,21 @@ const updateCommissionRule = catchAsync(async (req: Request, res: Response) => {
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  const { minAmount, maxAmount, flatFee, ...rest } = req.body;
+  const { minAmount, maxAmount, flatFee, reason, ...rest } = req.body;
 
   const result = await CommissionAdmin.updateCommissionRule(id, {
     ...rest,
     ...(minAmount !== undefined && { minAmountMinor: toMinor(minAmount) }),
     ...(maxAmount !== undefined && { maxAmountMinor: toMinor(maxAmount) }),
     ...(flatFee !== undefined && { flatFeeMinor: toMinor(flatFee) }),
+  });
+  await audit(req.auditCtx, {
+    action: "commission_rule.update",
+    entityType: "commission_rule",
+    entityId: id,
+    salonId: result.salonId,
+    after: req.body,
+    reason,
   });
 
   sendResponse(res, {

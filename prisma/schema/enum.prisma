@@ -71,6 +71,7 @@ enum SalonStatus {
   INACTIVE
   PENDING_APPROVAL
   REJECTED
+  SUSPENDED
 }
 
 enum LocationAccuracy {
@@ -127,6 +128,7 @@ enum WalletTxType {
 enum IntentPurpose {
   WALLET_TOPUP
   BOOKING
+  SALON_DUES
 }
 
 enum IntentStatus {
@@ -149,6 +151,14 @@ enum DepositStatus {
   PARTIALLY_FORFEITED
 }
 
+/// Who cancelled a booking. Null on rows cancelled before this was recorded.
+enum CancelledBy {
+  CUSTOMER
+  SALON
+  ADMIN
+  SYSTEM
+}
+
 enum AppealStatus {
   PENDING
   APPROVED
@@ -165,6 +175,7 @@ enum LedgerAccount {
   PLATFORM_REVENUE
   CUSTOMER_WALLET
   GATEWAY_CLEARING
+  PLATFORM_CASH
 }
 
 enum CommissionScope {
@@ -175,9 +186,11 @@ enum CommissionScope {
 
 enum PayoutStatus {
   PENDING
+  APPROVED
   PROCESSING
   PAID
   FAILED
+  CANCELLED
 }
 
 enum AssistantRole {
@@ -192,4 +205,54 @@ enum BookingChannel {
   WEB
   ASSISTANT
   WALK_IN
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  OPERATIONS
+  FINANCE
+  SUPPORT
+  MODERATOR
+  ANALYST
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+/// Four-eyes approvals: PENDING until a second admin decides or 24 h pass.
+/// APPROVED is the claimed state while the action runs; it ends EXECUTED or FAILED.
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  EXECUTED
+  FAILED
+}
+
+/// Review moderation: HIDDEN reviews drop out of every public read and out of
+/// the salon/staff rating. Text is never edited.
+enum ReviewStatus {
+  PUBLISHED
+  HIDDEN
+}
+
+/// Support tickets: OPEN until an admin replies (PENDING = waiting on the
+/// requester), RESOLVED by an admin, CLOSED by the support.autoclose job.
+enum TicketStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
 }

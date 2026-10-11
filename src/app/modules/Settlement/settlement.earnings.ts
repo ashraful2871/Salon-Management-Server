@@ -5,6 +5,13 @@ import {
   WalletTxType,
 } from "@prisma/client";
 import prisma from "../../shared/prisma";
+import { payoutScope, realPayoutWhere } from "./settlement.buckets";
+import { getSettingSync } from "../../utils/settings";
+import {
+  dateOnly,
+  dayStart,
+  dhakaDay as dhakaDate,
+} from "../Analytics/analytics.days";
 
 /**
  * The read side of the ledger: what a salon has earned, and what the platform
@@ -43,16 +50,29 @@ const monthLabel = (key: string) => {
  * a chart with holes in its axis reads as lost revenue rather than a quiet
  * month, so the gaps are filled here with explicit zeroes.
  */
-const trendWindow = () => {
-  const now = new Date();
+const trendWindow = (range?: { from?: Date; to?: Date }) => {
+  const now = range?.to ?? new Date();
+  // A chosen range draws its own months, capped at two years of bars.
+  const months = range?.from
+    ? Math.min(
+        24,
+        Math.max(
+          1,
+          (now.getFullYear() - range.from.getFullYear()) * 12 +
+            now.getMonth() -
+            range.from.getMonth() +
+            1,
+        ),
+      )
+    : TREND_MONTHS;
   const start = new Date(
     now.getFullYear(),
-    now.getMonth() - (TREND_MONTHS - 1),
+    now.getMonth() - (months - 1),
     1,
   );
 
   const keys: string[] = [];
-  for (let index = 0; index < TREND_MONTHS; index += 1) {
+  for (let index = 0; index < months; index += 1) {
     keys.push(
       monthKey(new Date(start.getFullYear(), start.getMonth() + index, 1)),
     );
@@ -96,22 +116,18 @@ const buildMonthly = (
 };
 
 /**
- * The one commission rate in force, as a percentage. Read from the same env var
+ * The one commission rate in force, as a percentage. Read from the same setting
  * the charging path reads, so a dashboard can state the rate without a second
  * copy of the number drifting out of step with what is billed.
  */
-export const getCommissionRates = () => {
-  const read = (value: string | undefined, fallback: number) => {
-    if (value === undefined || value.trim() === "") return fallback;
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return fallback;
-    return parsed;
-  };
+export const getCommissionRates = () => ({
+  standardCommissionPercent: getSettingSync("booking.commissionPercent"),
+});
 
-  return {
-    standardCommissionPercent: read(process.env.PLATFORM_COMMISSION_PERCENT, 10),
-  };
-};
+/** A completed booking the platform charged commission on (walk-ins may be exempt). */
+const COMMISSIONED = {
+  ledgerEntries: { some: { account: LedgerAccount.PLATFORM_REVENUE } },
+} satisfies Prisma.AppointmentWhereInput;
 
 const emptySalonEarnings = () => ({
   grossBookingsMinor: 0,
@@ -151,14 +167,19 @@ export const getSalonEarnings = async (
   const ids = Prisma.join(salonIds);
   const { start, keys } = trendWindow();
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
+  // "Today" and "this month" are Asia/Dhaka. appointmentDate is a calendar
+  // date (UTC midnight); ledger rows carry a real instant.
+  const today = dhakaDate();
+  const firstOfMonth = `${today.slice(0, 7)}-01`;
+  const todayStart = dateOnly(today);
+  const monthStart = dateOnly(firstOfMonth);
+  const monthStartAt = dayStart(firstOfMonth);
+
+  const payoutWhere = await payoutScope(salonIds);
 
   const [
     completed,
+    commissioned,
     depositsApplied,
     depositsHeld,
     commission,
@@ -175,6 +196,11 @@ export const getSalonEarnings = async (
       where: { salonId: { in: salonIds }, status: "COMPLETED" },
       _sum: { totalMinor: true },
       _count: true,
+    }),
+    // The bookings commission was actually charged on (walk-ins are exempt).
+    prisma.appointment.aggregate({
+      where: { salonId: { in: salonIds }, status: "COMPLETED", ...COMMISSIONED },
+      _sum: { totalMinor: true },
     }),
     // The slice of that which reached the salon through us as a deposit.
     prisma.appointment.aggregate({
@@ -209,7 +235,7 @@ export const getSalonEarnings = async (
     }),
     prisma.payout.groupBy({
       by: ["status"],
-      where: { salonId: { in: salonIds } },
+      where: payoutWhere,
       _sum: { netMinor: true },
       _count: true,
     }),
@@ -233,7 +259,7 @@ export const getSalonEarnings = async (
       where: {
         salonId: { in: salonIds },
         account: LedgerAccount.PLATFORM_REVENUE,
-        createdAt: { gte: monthStart },
+        createdAt: { gte: monthStartAt },
       },
       _sum: { amountMinor: true },
     }),
@@ -287,7 +313,9 @@ export const getSalonEarnings = async (
     depositsHeldMinor: sum(depositsHeld._sum.depositMinor),
     payableMinor: sum(payable._sum.amountMinor),
     processingPayoutMinor:
-      byStatus(PayoutStatus.PENDING) + byStatus(PayoutStatus.PROCESSING),
+      byStatus(PayoutStatus.PENDING) +
+      byStatus(PayoutStatus.APPROVED) +
+      byStatus(PayoutStatus.PROCESSING),
     paidOutMinor: byStatus(PayoutStatus.PAID),
     failedPayoutMinor: byStatus(PayoutStatus.FAILED),
     todayGrossMinor: sum(todayGross._sum.totalMinor),
@@ -302,9 +330,11 @@ export const getSalonEarnings = async (
     // What was actually charged over everything billed. Tracks the headline
     // rate now that every completed booking is commissioned at the same rate;
     // it can still drift on rounding, or on bookings billed before the change.
+    // Over the bookings that were commissioned, so exempt walk-ins do not
+    // dilute the rate.
     effectiveCommissionPercent:
-      grossBookingsMinor > 0
-        ? Number(((commissionMinor / grossBookingsMinor) * 100).toFixed(2))
+      sum(commissioned._sum.totalMinor) > 0
+        ? Number(((commissionMinor / sum(commissioned._sum.totalMinor)) * 100).toFixed(2))
         : 0,
     monthly: buildMonthly(keys, monthlyGross, monthlyCommission),
     ...getCommissionRates(),
@@ -315,8 +345,16 @@ export const getSalonEarnings = async (
  * The same view from the platform's side of the ledger: what we earned, what we
  * still owe salons, and how much customer money we are holding.
  */
-export const getPlatformEarnings = async () => {
-  const { start, keys } = trendWindow();
+export type EarningsRange = {
+  from?: Date;
+  to?: Date;
+  /** Seed/test salons and users. Default true, so the old callers see everything. */
+  includeTest?: boolean;
+};
+
+export const getPlatformEarnings = async (range: EarningsRange = {}) => {
+  const { start, keys } = trendWindow(range);
+  const includeTest = range.includeTest ?? true;
 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
@@ -324,8 +362,22 @@ export const getPlatformEarnings = async () => {
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
 
+  // Flows (bookings, commission, top-ups) follow the range; balances (float,
+  // held, payable, payouts) are what is true right now.
+  const inRange =
+    range.from || range.to
+      ? { ...(range.from && { gte: range.from }), ...(range.to && { lte: range.to }) }
+      : undefined;
+  const realSalon = includeTest ? {} : { salon: { isTest: false } };
+  const realUser = includeTest ? {} : { user: { isTest: false } };
+  const realLedger = includeTest ? {} : { salon: { isTest: false } };
+  const sqlFrom = range.from && range.from > start ? range.from : start;
+  const sqlTo = range.to ?? new Date("9999-12-31T00:00:00Z");
+  const sqlTest = includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false`;
+
   const [
     completed,
+    commissioned,
     platformRevenue,
     monthRevenue,
     todayRevenue,
@@ -339,18 +391,23 @@ export const getPlatformEarnings = async () => {
     monthlyCommission,
   ] = await Promise.all([
     prisma.appointment.aggregate({
-      where: { status: "COMPLETED" },
+      where: { status: "COMPLETED", appointmentDate: inRange, ...realSalon },
       _sum: { totalMinor: true },
       _count: true,
     }),
+    prisma.appointment.aggregate({
+      where: { status: "COMPLETED", appointmentDate: inRange, ...realSalon, ...COMMISSIONED },
+      _sum: { totalMinor: true },
+    }),
     prisma.ledgerEntry.aggregate({
-      where: { account: LedgerAccount.PLATFORM_REVENUE },
+      where: { account: LedgerAccount.PLATFORM_REVENUE, createdAt: inRange, ...realLedger },
       _sum: { amountMinor: true },
     }),
     prisma.ledgerEntry.aggregate({
       where: {
         account: LedgerAccount.PLATFORM_REVENUE,
         createdAt: { gte: monthStart },
+        ...realLedger,
       },
       _sum: { amountMinor: true },
     }),
@@ -358,31 +415,37 @@ export const getPlatformEarnings = async () => {
       where: {
         account: LedgerAccount.PLATFORM_REVENUE,
         createdAt: { gte: todayStart },
+        ...realLedger,
       },
       _sum: { amountMinor: true },
     }),
     prisma.ledgerEntry.aggregate({
-      where: { account: LedgerAccount.SALON_PAYABLE, payoutId: null },
+      where: { account: LedgerAccount.SALON_PAYABLE, payoutId: null, ...realLedger },
       _sum: { amountMinor: true },
     }),
     prisma.payout.groupBy({
       by: ["status"],
+      where: realPayoutWhere(includeTest),
       _sum: { netMinor: true },
       _count: true,
     }),
     // Customer money sitting with us. It is a liability, not revenue.
-    prisma.wallet.aggregate({ _sum: { balance: true, heldBalance: true } }),
+    prisma.wallet.aggregate({ where: realUser, _sum: { balance: true, heldBalance: true } }),
     prisma.walletTransaction.aggregate({
-      where: { type: WalletTxType.TOPUP },
+      where: {
+        type: WalletTxType.TOPUP,
+        createdAt: inRange,
+        ...(includeTest ? {} : { wallet: { user: { isTest: false } } }),
+      },
       _sum: { amount: true },
       _count: true,
     }),
     prisma.appointment.aggregate({
-      where: { depositStatus: "HELD" },
+      where: { depositStatus: "HELD", ...realSalon },
       _sum: { depositMinor: true },
     }),
     prisma.appointment.aggregate({
-      where: { depositStatus: "FORFEITED" },
+      where: { depositStatus: "FORFEITED", appointmentDate: inRange, ...realSalon },
       _sum: { depositMinor: true },
       _count: true,
     }),
@@ -393,8 +456,11 @@ export const getPlatformEarnings = async () => {
              COALESCE(SUM(a."totalMinor"), 0)::int AS "grossMinor",
              COUNT(*)::int AS bookings
       FROM appointments a
+      JOIN salons s ON s.id = a."salonId"
       WHERE a.status = 'COMPLETED'
-        AND a."appointmentDate" >= ${start}
+        AND a."appointmentDate" >= ${sqlFrom}
+        AND a."appointmentDate" <= ${sqlTo}
+        ${sqlTest}
       GROUP BY 1
     `,
     prisma.$queryRaw<Array<{ month: string; commissionMinor: number }>>`
@@ -402,8 +468,11 @@ export const getPlatformEarnings = async () => {
              COALESCE(SUM(l."amountMinor"), 0)::int AS "commissionMinor"
       FROM ledger_entries l
       JOIN appointments a ON a.id = l."appointmentId"
+      JOIN salons s ON s.id = a."salonId"
       WHERE l.account = 'PLATFORM_REVENUE'
-        AND a."appointmentDate" >= ${start}
+        AND a."appointmentDate" >= ${sqlFrom}
+        AND a."appointmentDate" <= ${sqlTo}
+        ${sqlTest}
       GROUP BY 1
     `,
   ]);
@@ -418,6 +487,7 @@ export const getPlatformEarnings = async () => {
   };
 
   const pending = byStatus(PayoutStatus.PENDING);
+  const approved = byStatus(PayoutStatus.APPROVED);
   const processing = byStatus(PayoutStatus.PROCESSING);
   const paid = byStatus(PayoutStatus.PAID);
   const failed = byStatus(PayoutStatus.FAILED);
@@ -429,8 +499,8 @@ export const getPlatformEarnings = async () => {
     todayRevenueMinor: sum(todayRevenue._sum.amountMinor),
     salonPayableMinor: sum(payable._sum.amountMinor),
     salonEarningsMinor: grossBookingsMinor - platformRevenueMinor,
-    pendingPayoutMinor: pending.amountMinor + processing.amountMinor,
-    pendingPayoutCount: pending.count + processing.count,
+    pendingPayoutMinor: pending.amountMinor + approved.amountMinor + processing.amountMinor,
+    pendingPayoutCount: pending.count + approved.count + processing.count,
     paidOutMinor: paid.amountMinor,
     paidPayoutCount: paid.count,
     failedPayoutMinor: failed.amountMinor,
@@ -448,16 +518,141 @@ export const getPlatformEarnings = async () => {
         ? Math.round(grossBookingsMinor / completedBookings)
         : 0,
     effectiveCommissionPercent:
-      grossBookingsMinor > 0
-        ? Number(((platformRevenueMinor / grossBookingsMinor) * 100).toFixed(2))
+      sum(commissioned._sum.totalMinor) > 0
+        ? Number(((platformRevenueMinor / sum(commissioned._sum.totalMinor)) * 100).toFixed(2))
         : 0,
     monthly: buildMonthly(keys, monthlyGross, monthlyCommission),
     ...getCommissionRates(),
   };
 };
 
+/**
+ * Money per Asia/Dhaka day, for analytics (`modules/Analytics`). The one place
+ * those figures are defined, so the dashboard and the finance console agree:
+ *
+ *   gmvMinor          `totalMinor` of COMPLETED bookings, on the day they were
+ *                     completed (`completedAt`, or the appointment date on rows
+ *                     completed before that was stamped)
+ *   commissionMinor   PLATFORM_REVENUE ledger entries by `createdAt`
+ *   topupVolumeMinor  TOPUP wallet transactions by `createdAt`
+ *
+ * `from`/`to` are UTC instants (`to` exclusive). Without `includeTest`, test
+ * salons and test customers are left out. `area`/`channel` narrow the booking
+ * figures; top-ups have neither, so they come back empty when either is set.
+ */
+export type MoneyFilter = {
+  from: Date;
+  to: Date;
+  includeTest: boolean;
+  area?: string;
+  channel?: string;
+};
+
+export type DailyMoney = {
+  day: string;
+  gmvMinor: number;
+  completed: number;
+  commissionMinor: number;
+  topupVolumeMinor: number;
+};
+
+const utcTs = (at: Date) => Prisma.sql`(${at.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
+const dhakaDay = (col: string) =>
+  Prisma.raw(`to_char((${col} AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Dhaka', 'YYYY-MM-DD')`);
+const COMPLETED_AT = `COALESCE(a."completedAt", a."appointmentDate")`;
+
+const narrow = (f: MoneyFilter) =>
+  Prisma.sql`${f.area ? Prisma.sql`AND lower(trim(s.area)) = ${f.area.trim().toLowerCase()}` : Prisma.empty}
+    ${f.channel ? Prisma.sql`AND a."bookedVia"::text = ${f.channel}` : Prisma.empty}`;
+
+const completedIn = (f: MoneyFilter) => Prisma.sql`
+  a.status = 'COMPLETED'
+  AND ${Prisma.raw(COMPLETED_AT)} >= ${utcTs(f.from)}
+  AND ${Prisma.raw(COMPLETED_AT)} < ${utcTs(f.to)}
+  ${f.includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false AND u."isTest" = false`}
+  ${narrow(f)}`;
+
+export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
+  const [gmv, commission, topups] = await Promise.all([
+    prisma.$queryRaw<Array<{ day: string; gmv: number; n: number }>>`
+      SELECT ${dhakaDay(COMPLETED_AT)} AS day,
+             COALESCE(SUM(a."totalMinor"), 0)::float AS gmv, COUNT(*)::int AS n
+      FROM appointments a
+      JOIN salons s ON s.id = a."salonId"
+      JOIN users u ON u.id = a."customerId"
+      WHERE ${completedIn(f)}
+      GROUP BY 1`,
+    // Without test data, rows whose salon was deleted (salonId set null) are
+    // left out, as getPlatformEarnings does, so analytics and finance agree.
+    prisma.$queryRaw<Array<{ day: string; v: number }>>`
+      SELECT ${dhakaDay(`l."createdAt"`)} AS day, COALESCE(SUM(l."amountMinor"), 0)::float AS v
+      FROM ledger_entries l
+      LEFT JOIN salons s ON s.id = l."salonId"
+      LEFT JOIN appointments a ON a.id = l."appointmentId"
+      LEFT JOIN users u ON u.id = a."customerId"
+      WHERE l.account = 'PLATFORM_REVENUE'
+        AND l."createdAt" >= ${utcTs(f.from)} AND l."createdAt" < ${utcTs(f.to)}
+        ${f.includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false AND COALESCE(u."isTest", false) = false`}
+        ${narrow(f)}
+      GROUP BY 1`,
+    f.area || f.channel
+      ? Promise.resolve([] as Array<{ day: string; v: number }>)
+      : prisma.$queryRaw<Array<{ day: string; v: number }>>`
+      SELECT ${dhakaDay(`t."createdAt"`)} AS day, COALESCE(SUM(t.amount), 0)::float AS v
+      FROM wallet_transactions t
+      JOIN wallets w ON w.id = t."walletId"
+      JOIN users u ON u.id = w."userId"
+      WHERE t.type = 'TOPUP'
+        AND t."createdAt" >= ${utcTs(f.from)} AND t."createdAt" < ${utcTs(f.to)}
+        ${f.includeTest ? Prisma.empty : Prisma.sql`AND u."isTest" = false`}
+      GROUP BY 1`,
+  ]);
+
+  const byDay = new Map<string, DailyMoney>();
+  const row = (day: string) => {
+    let r = byDay.get(day);
+    if (!r) {
+      r = { day, gmvMinor: 0, completed: 0, commissionMinor: 0, topupVolumeMinor: 0 };
+      byDay.set(day, r);
+    }
+    return r;
+  };
+  for (const g of gmv) Object.assign(row(g.day), { gmvMinor: g.gmv, completed: g.n });
+  for (const c of commission) row(c.day).commissionMinor = c.v;
+  for (const t of topups) row(t.day).topupVolumeMinor = t.v;
+  return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+};
+
+/** Completed GMV over a range, grouped by salon area (the geo report). */
+export const getMoneyByArea = (f: MoneyFilter) =>
+  prisma.$queryRaw<Array<{ area: string; district: string; gmvMinor: number; completed: number }>>`
+    SELECT s.area, s.district, COALESCE(SUM(a."totalMinor"), 0)::float AS "gmvMinor",
+           COUNT(*)::int AS completed
+    FROM appointments a
+    JOIN salons s ON s.id = a."salonId"
+    JOIN users u ON u.id = a."customerId"
+    WHERE ${completedIn(f)}
+    GROUP BY 1, 2
+    ORDER BY 3 DESC`;
+
+/** The salons with the most completed GMV over a range. */
+export const getMoneyBySalon = (f: MoneyFilter, limit = 20) =>
+  prisma.$queryRaw<Array<{ salonId: string; name: string; area: string; gmvMinor: number; completed: number }>>`
+    SELECT s.id AS "salonId", s.name, s.area,
+           COALESCE(SUM(a."totalMinor"), 0)::float AS "gmvMinor", COUNT(*)::int AS completed
+    FROM appointments a
+    JOIN salons s ON s.id = a."salonId"
+    JOIN users u ON u.id = a."customerId"
+    WHERE ${completedIn(f)}
+    GROUP BY 1, 2, 3
+    ORDER BY 4 DESC
+    LIMIT ${limit}`;
+
 export const SettlementEarnings = {
   getCommissionRates,
   getSalonEarnings,
   getPlatformEarnings,
+  getDailyMoney,
+  getMoneyByArea,
+  getMoneyBySalon,
 };

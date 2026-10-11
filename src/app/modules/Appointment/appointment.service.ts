@@ -8,6 +8,7 @@ import {
   AppointmentSource,
   AppointmentStatus,
   BookingChannel,
+  CancelledBy,
   DepositStatus,
   Prisma,
   SalonStatus,
@@ -20,7 +21,12 @@ import {
   getNewBookingOwnerTemplate,
 } from "../../utils/emailTemplates";
 import { formatBDT } from "../../utils/money";
-import { assertCanActOnAppointment } from "../../utils/salonAccess";
+import { getSetting } from "../../utils/settings";
+import {
+  accessibleSalonIds,
+  assertSalonPermission,
+  scopeSalonIds,
+} from "../../utils/salonAccess";
 import { hasSlotStarted } from "../../utils/slotTime";
 import { WalletService } from "../Wallet/wallet.service";
 import { withPaymentSummary } from "./appointment.billing";
@@ -62,6 +68,8 @@ const TRANSITIONS: Record<AppointmentStatus, AppointmentStatus[]> = {
 type CancelOptions = {
   reason?: string;
   fromStatuses?: AppointmentStatus[];
+  /** Recorded on the booking. Separate from `by`, which picks the money path. */
+  cancelledBy: CancelledBy;
 } & (
   | { by: "SALON" }
   // Whether the customer is inside the free window decides between a full
@@ -88,6 +96,8 @@ const cancelInTx = async (appointmentId: string, options: CancelOptions) => {
         data: {
           status: AppointmentStatus.CANCELLED,
           cancellationReason: options.reason,
+          cancelledAt: new Date(),
+          cancelledBy: options.cancelledBy,
         },
       });
 
@@ -162,13 +172,6 @@ const ACTIVE_BOOKING_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.CHECKED_IN,
 ];
 
-/** How many live bookings one customer may hold at one salon on one day. */
-const MAX_ACTIVE_BOOKINGS_PER_DAY = (() => {
-  const parsed = Math.floor(
-    Number(process.env.MAX_ACTIVE_BOOKINGS_PER_DAY ?? 3),
-  );
-  return Number.isFinite(parsed) && parsed >= 1 ? parsed : 3;
-})();
 
 /**
  * Whether two same-day bookings share any time. "HH:mm" is zero-padded, so
@@ -221,7 +224,8 @@ const assertWithinBookingLimits = async (
     (booking) => booking.salonId === salonId,
   ).length;
 
-  if (atThisSalon >= MAX_ACTIVE_BOOKINGS_PER_DAY) {
+  // How many live bookings one customer may hold at one salon on one day.
+  if (atThisSalon >= (await getSetting("booking.maxActiveBookingsPerDay"))) {
     throw new ApiError(
       StatusCodes.CONFLICT,
       `You already have ${atThisSalon} bookings at this salon that day, the most allowed. Cancel one to book another time.`,
@@ -343,6 +347,12 @@ const claimSlotAndCreate = async (
     );
   }
 
+  // The commission rate in force now, kept on the booking so a later change
+  // to the setting never reprices it.
+  const commissionBps = Math.round(
+    (await getSetting("booking.commissionPercent")) * 100,
+  );
+
   // Queue identity. The serial is the slot's position in its day, so it
   // is fixed by the slot the claim above just won - no lock needed.
   // Sequential, not Promise.all: these share one transaction connection.
@@ -373,6 +383,7 @@ const claimSlotAndCreate = async (
       depositMinor: input.depositMinor,
       depositStatus:
         input.depositMinor > 0 ? DepositStatus.HELD : DepositStatus.NONE,
+      commissionBps,
     },
     include: newBookingInclude,
   });
@@ -709,12 +720,7 @@ const bookWalkIn = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Slot not found");
   }
 
-  await assertCanActOnAppointment(
-    actor.userId,
-    actor.role,
-    slot.salonId,
-    "You can only add bookings for your own salon",
-  );
+  await assertSalonPermission(actor, slot.salonId, "walkin.create");
 
   if (slot.status !== "AVAILABLE" || slot.isBooked) {
     throw new ApiError(
@@ -882,24 +888,18 @@ const getAllAppointments = async (
 
     whereConditions.staffId = staff.id;
   } else if (userRole === UserRole.SALON_OWNER) {
-    // ✅ userId is from User table, so match by salonOwner.userId
-    const salonOwner = await prisma.salonOwner.findUnique({
-      where: { userId },
-      include: {
-        salons: {
-          select: { id: true },
-        },
-      },
-    });
+    const salonIds = await scopeSalonIds(
+      { userId, role: userRole },
+      "bookings.view",
+      salonId,
+    );
 
-    // If no owner profile or no salons, return empty
-    if (!salonOwner || salonOwner.salons.length === 0) {
+    // No salons, or a salon that is not theirs: an empty page
+    if (!salonIds?.length) {
       return emptyResult;
     }
 
-    whereConditions.salonId = {
-      in: salonOwner.salons.map((s: any) => s.id),
-    };
+    whereConditions.salonId = { in: salonIds };
   }
 
   // Admin can see all (no extra role filter)
@@ -1177,16 +1177,13 @@ const canViewAppointment = async (
       return true;
     case UserRole.CUSTOMER:
       return appointment.customerId === userId;
-    case UserRole.SALON_OWNER: {
-      const owner = await prisma.salonOwner.findUnique({ where: { userId } });
-      return owner !== null && appointment.salon.ownerId === owner.id;
-    }
+    case UserRole.SALON_OWNER:
     case UserRole.STAFF: {
-      const staff = await prisma.staff.findFirst({
-        where: { userId, salonId: appointment.salonId, isDeleted: false },
-        select: { id: true },
-      });
-      return Boolean(staff);
+      const salonIds = await accessibleSalonIds(
+        { userId, role: userRole },
+        "bookings.view",
+      );
+      return salonIds === null || salonIds.includes(appointment.salonId);
     }
     default:
       return false;
@@ -1256,15 +1253,11 @@ const updateAppointmentStatus = async (
       );
     }
   } else if (userRole === UserRole.SALON_OWNER) {
-    const salonOwner = await prisma.salonOwner.findUnique({
-      where: { userId },
-    });
-    if (!salonOwner || appointment.salon.ownerId !== salonOwner.id) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "You can only update appointments for your salons",
-      );
-    }
+    await assertSalonPermission(
+      { userId, role: userRole },
+      appointment.salonId,
+      "bookings.manage",
+    );
   }
 
   if (
@@ -1374,6 +1367,7 @@ const updateAppointmentStatus = async (
       AppointmentDeposit.assertCancellable(appointment);
       return cancelInTx(appointmentId, {
         by: "CUSTOMER",
+        cancelledBy: CancelledBy.CUSTOMER,
         freeCancellation: AppointmentDeposit.isWithinFreeCancellation(
           appointment,
           appointment.salon,
@@ -1387,6 +1381,8 @@ const updateAppointmentStatus = async (
     // salon-funded credit for the trouble.
     return cancelInTx(appointmentId, {
       by: "SALON",
+      cancelledBy:
+        userRole === UserRole.ADMIN ? CancelledBy.ADMIN : CancelledBy.SALON,
       reason: payload.cancellationReason,
       fromStatuses: [from],
     });
@@ -1414,6 +1410,7 @@ const updateAppointmentStatus = async (
             checkedInAt: new Date(),
             checkedInById: userId,
           }),
+          ...(to === AppointmentStatus.IN_PROGRESS && { startedAt: new Date() }),
         },
       });
 
@@ -1461,13 +1458,11 @@ const cancelAppointment = async (
   const bySalon = userRole === UserRole.SALON_OWNER;
 
   if (bySalon) {
-    const owner = await prisma.salonOwner.findUnique({ where: { userId } });
-    if (!owner || appointment.salon.ownerId !== owner.id) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "You can only cancel bookings for your own salon",
-      );
-    }
+    await assertSalonPermission(
+      { userId, role: userRole },
+      appointment.salonId,
+      "bookings.manage",
+    );
   } else if (appointment.customerId !== userId) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
@@ -1498,6 +1493,7 @@ const cancelAppointment = async (
   if (bySalon) {
     const result = await cancelInTx(appointmentId, {
       by: "SALON",
+      cancelledBy: CancelledBy.SALON,
       reason,
       fromStatuses: [
         AppointmentStatus.PENDING,
@@ -1533,6 +1529,7 @@ const cancelAppointment = async (
   // rest back - a late cancellation is not as expensive as never showing up.
   const result = await cancelInTx(appointmentId, {
     by: "CUSTOMER",
+    cancelledBy: CancelledBy.CUSTOMER,
     freeCancellation: quote.freeCancellation,
     reason,
   });
@@ -1596,11 +1593,36 @@ const appealNoShow = async (
 const resolveAppeal = async (
   adminUserId: string,
   appointmentId: string,
-  payload: { approve: boolean; note?: string },
+  payload: { approve: boolean; note?: string; withoutAppeal?: boolean },
 ) => AppointmentDeposit.resolveAppeal(adminUserId, appointmentId, payload);
 
+/**
+ * An admin cancelling on the platform's behalf (e.g. suspending the
+ * customer): the whole deposit goes back, no penalty and no goodwill credit.
+ */
+const cancelByAdmin = (appointmentId: string, reason: string) =>
+  cancelInTx(appointmentId, {
+    by: "CUSTOMER",
+    cancelledBy: CancelledBy.ADMIN,
+    freeCancellation: true,
+    reason,
+  });
+
+/**
+ * An admin cancelling on the salon's behalf (suspending it): exactly the
+ * salon-cancellation path - the whole deposit back plus the goodwill credit.
+ */
+const cancelForSalonByAdmin = (appointmentId: string, reason: string) =>
+  cancelInTx(appointmentId, {
+    by: "SALON",
+    cancelledBy: CancelledBy.ADMIN,
+    reason,
+  });
+
 export const AppointmentService = {
+  cancelForSalonByAdmin,
   bookAppointment,
+  cancelByAdmin,
   // Exported for the assistant, which quotes a price in the chat and re-quotes
   // it at Confirm. Read-only: it never books.
   quoteBooking,

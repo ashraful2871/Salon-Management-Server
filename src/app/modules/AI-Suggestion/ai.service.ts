@@ -2,6 +2,8 @@ import { StatusCodes } from "http-status-codes";
 import config from "../../../config";
 import ApiError from "../../Error/error";
 import { formatBDT } from "../../utils/money";
+import { recordAiSearch } from "../Analytics/analytics.capture";
+import { getSetting } from "../../utils/settings";
 import { TtlLruCache } from "../Geo/geo.cache";
 import { GeoService } from "../Geo/geo.service";
 import { CATEGORY_LABELS } from "./ai.constants";
@@ -229,7 +231,8 @@ const writeReply = async (
 // Search
 // ---------------------------------------------------------------------------
 
-const searchSalon = async (input: SearchInput) => {
+/** `record`: count this search in analytics (the HTTP route; not scripts). */
+const searchSalon = async (input: SearchInput, opts: { record?: boolean } = {}) => {
   const started = Date.now();
   const prompt = input.prompt.trim();
 
@@ -237,7 +240,10 @@ const searchSalon = async (input: SearchInput) => {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Tell us what you are looking for");
   }
 
-  const limit = Math.min(Math.max(input.limit ?? config.ai.searchLimit, 1), 12);
+  const limit = Math.min(
+    Math.max(input.limit ?? (await getSetting("ai.searchLimit")), 1),
+    12,
+  );
   const userOrigin: Origin | null =
     input.lat !== undefined && input.lng !== undefined
       ? {
@@ -313,6 +319,22 @@ const searchSalon = async (input: SearchInput) => {
       },
     })}`,
   );
+
+  if (opts.record) {
+    recordAiSearch({
+      prompt,
+      tier: ranked.counts.best
+        ? "best"
+        : ranked.counts.partial
+          ? "partial"
+          : ranked.salons.length
+            ? "alternative"
+            : "none",
+      latencyMs: Date.now() - started,
+      usedLlm: intent.understoodBy === "rules+ai" || (reply.model !== null && reply.model !== "cache"),
+      zeroResults: ranked.salons.length === 0,
+    });
+  }
 
   return {
     query: prompt,

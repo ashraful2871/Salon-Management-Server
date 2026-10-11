@@ -3,16 +3,28 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import config from "../../../config";
-import { toMinor } from "../../utils/money";
+import { formatBDT, toMinor } from "../../utils/money";
+import { approvalThresholds, requireApprovalIf } from "../Admin/approvals/approvals.service";
 import { PaymentService } from "./payment.service";
 import { PaymentIntentService } from "./paymentIntent.service";
+import { audit } from "../../utils/audit";
+import { assertAdminPermission } from "../Admin/admin.middleware";
 
 const createPayment = catchAsync(async (req: Request, res: Response) => {
+  await assertAdminPermission(req, "finance.payouts");
   const result = await PaymentService.createPayment(
     req.user!.userId,
     req.user!.role,
     req.body,
   );
+  if (req.admin) {
+    await audit(req.auditCtx, {
+      action: "payment.create",
+      entityType: "payment",
+      entityId: (result as { id?: string } | null)?.id ?? null,
+      after: req.body,
+    });
+  }
 
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,
@@ -23,6 +35,7 @@ const createPayment = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getAllPayments = catchAsync(async (req: Request, res: Response) => {
+  await assertAdminPermission(req, "finance.view");
   const result = await PaymentService.getAllPayments(
     req.user!.userId,
     req.user!.role,
@@ -39,6 +52,7 @@ const getAllPayments = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getPaymentById = catchAsync(async (req: Request, res: Response) => {
+  await assertAdminPermission(req, "finance.view");
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
   const result = await PaymentService.getPaymentById(
@@ -56,6 +70,7 @@ const getPaymentById = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updatePaymentStatus = catchAsync(async (req: Request, res: Response) => {
+  await assertAdminPermission(req, "finance.payouts");
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
   const result = await PaymentService.updatePaymentStatus(
@@ -64,6 +79,15 @@ const updatePaymentStatus = catchAsync(async (req: Request, res: Response) => {
     req.user!.role,
     req.body,
   );
+  if (req.admin) {
+    await audit(req.auditCtx, {
+      action: "payment.status_change",
+      entityType: "payment",
+      entityId: id,
+      after: { status: req.body.status },
+      reason: typeof req.body?.reason === "string" ? req.body.reason : null,
+    });
+  }
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -183,8 +207,15 @@ const handleCancelRedirect = (req: Request, res: Response) => {
   res.redirect(resultPage("cancelled", payload.tran_id));
 };
 
-const runReconciliation = catchAsync(async (_req: Request, res: Response) => {
+const runReconciliation = catchAsync(async (req: Request, res: Response) => {
   const result = await PaymentIntentService.reconcilePendingIntents();
+  await audit(req.auditCtx, {
+    action: "reconcile.run",
+    entityType: "system",
+    entityId: "payments.reconcile",
+    after: result as unknown as Record<string, unknown>,
+    reason: typeof req.body?.reason === "string" ? req.body.reason : null,
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -194,12 +225,57 @@ const runReconciliation = catchAsync(async (_req: Request, res: Response) => {
   });
 });
 
+const recheckIntent = catchAsync(async (req: Request, res: Response) => {
+  const result = await PaymentIntentService.recheckIntent(req.params.id);
+  if (result.status !== result.previousStatus) {
+    await audit(req.auditCtx, {
+      action: "topup.recheck",
+      entityType: "payment_intent",
+      entityId: result.id,
+      before: { status: result.previousStatus },
+      after: { status: result.status, failureReason: result.failureReason },
+    });
+  }
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      result.status === result.previousStatus
+        ? "The gateway still reports this payment as in progress"
+        : `Top-up is now ${result.status.toLowerCase()}`,
+    data: result,
+  });
+});
+
 const refundTopup = catchAsync(async (req: Request, res: Response) => {
+  const amountMinor: number | undefined =
+    req.body.amount === undefined ? undefined : toMinor(req.body.amount);
+  const intent = await PaymentIntentService.refundRequestInfo(req.user!.userId, req.params.id);
+  const requested = amountMinor ?? intent.amountMinor;
+
+  if (
+    await requireApprovalIf(
+      req,
+      res,
+      "topup.refund",
+      async () => requested >= (await approvalThresholds()).refundOverMinor,
+      {
+        payload: { intentId: intent.id, amountMinor: amountMinor ?? null, reason: req.body.reason },
+        summary: `Refund ${amountMinor === undefined ? "what is left of" : formatBDT(amountMinor) + " of"} top-up ${intent.transactionId} (${formatBDT(intent.amountMinor)})`,
+        reason: req.body.reason,
+      },
+    )
+  ) {
+    return;
+  }
+
   const result = await PaymentIntentService.refundTopup(
     req.user!.userId,
     req.params.id,
-    req.body.amount === undefined ? undefined : toMinor(req.body.amount),
+    amountMinor,
     req.body.reason,
+    req.auditCtx,
   );
 
   sendResponse(res, {
@@ -266,6 +342,7 @@ export const PaymentController = {
   handleBkashCallback,
   getPaymentMethods,
   runReconciliation,
+  recheckIntent,
   refundTopup,
   getAdminTopups,
 };
