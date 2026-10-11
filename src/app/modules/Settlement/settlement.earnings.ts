@@ -6,6 +6,11 @@ import {
 } from "@prisma/client";
 import prisma from "../../shared/prisma";
 import { getSettingSync } from "../../utils/settings";
+import {
+  dateOnly,
+  dayStart,
+  dhakaDay as dhakaDate,
+} from "../Analytics/analytics.days";
 
 /**
  * The read side of the ledger: what a salon has earned, and what the platform
@@ -156,11 +161,13 @@ export const getSalonEarnings = async (
   const ids = Prisma.join(salonIds);
   const { start, keys } = trendWindow();
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
+  // "Today" and "this month" are Asia/Dhaka. appointmentDate is a calendar
+  // date (UTC midnight); ledger rows carry a real instant.
+  const today = dhakaDate();
+  const firstOfMonth = `${today.slice(0, 7)}-01`;
+  const todayStart = dateOnly(today);
+  const monthStart = dateOnly(firstOfMonth);
+  const monthStartAt = dayStart(firstOfMonth);
 
   const [
     completed,
@@ -238,7 +245,7 @@ export const getSalonEarnings = async (
       where: {
         salonId: { in: salonIds },
         account: LedgerAccount.PLATFORM_REVENUE,
-        createdAt: { gte: monthStart },
+        createdAt: { gte: monthStartAt },
       },
       _sum: { amountMinor: true },
     }),

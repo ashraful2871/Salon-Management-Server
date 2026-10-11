@@ -3,11 +3,10 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { ServiceService } from "./service.service";
+import { withAccessCache } from "../../utils/salonAccess";
 
 const createService = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
-
-  const result = await ServiceService.createService(userId, req.body);
+  const result = await ServiceService.createService(withAccessCache(req), req.body);
 
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,
@@ -42,10 +41,9 @@ const getServiceById = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updateService = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
-  const result = await ServiceService.updateService(userId, id, req.body);
+  const result = await ServiceService.updateService(withAccessCache(req), id, req.body);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -56,10 +54,9 @@ const updateService = catchAsync(async (req: Request, res: Response) => {
 });
 
 const deleteService = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
-  await ServiceService.deleteService(userId, id);
+  await ServiceService.deleteService(withAccessCache(req), id);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -70,8 +67,7 @@ const deleteService = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getMyServices = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
-  const result = await ServiceService.getMyServices(userId, req.query);
+  const result = await ServiceService.getMyServices(withAccessCache(req), req.query);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

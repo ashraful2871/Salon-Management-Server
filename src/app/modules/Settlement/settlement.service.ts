@@ -11,6 +11,7 @@ import prisma from "../../shared/prisma";
 import { AuditOpts, auditTx, diff, systemAuditCtx } from "../../utils/audit";
 import { getSetting, getSettingSync } from "../../utils/settings";
 import { getSalonEarnings } from "./settlement.earnings";
+import { AccessUser, scopeSalonIds } from "../../utils/salonAccess";
 import { sendEmail } from "../../utils/emailSender";
 import { getPayoutUpdateTemplate } from "../../utils/emailTemplates";
 import { formatBDT } from "../../utils/money";
@@ -648,17 +649,9 @@ const emailPayoutOwner = async (payout: {
 };
 
 /** A salon owner's own settlement view. */
-const getMyPayouts = async (userId: string, query: any) => {
-  const owner = await prisma.salonOwner.findUnique({
-    where: { userId },
-    include: { salons: { select: { id: true } } },
-  });
-
-  if (!owner) {
-    throw new ApiError(StatusCodes.FORBIDDEN, "Only salon owners have payouts");
-  }
-
-  const salonIds = owner.salons.map((salon) => salon.id);
+const getMyPayouts = async (user: AccessUser, query: any) => {
+  const salonIds =
+    (await scopeSalonIds(user, "money.view", query?.salonId)) ?? [];
 
   if (salonIds.length === 0) {
     return { meta: { page: 1, limit: 0, total: 0 }, data: [], balances: [] };
@@ -731,18 +724,16 @@ export const recordGoodwillCredit = async (
  * frontend caches on a single tag - splitting it would let the cards and the
  * table disagree after a payout run.
  */
-const getMyEarnings = async (userId: string, query: any = {}) => {
-  const owner = await prisma.salonOwner.findUnique({
-    where: { userId },
-    include: { salons: { select: { id: true, name: true } } },
-  });
-
-  if (!owner) {
-    throw new ApiError(StatusCodes.FORBIDDEN, "Only salon owners have earnings");
-  }
-
-  const salons = owner.salons;
-  const salonIds = salons.map((salon) => salon.id);
+const getMyEarnings = async (user: AccessUser, query: any = {}) => {
+  const salonIds =
+    (await scopeSalonIds(user, "money.view", query?.salonId)) ?? [];
+  const salons = salonIds.length
+    ? await prisma.salon.findMany({
+        where: { id: { in: salonIds } },
+        select: { id: true, name: true },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
 
   const limit = Math.min(Number(query?.limit ?? 20) || 20, 100);
 

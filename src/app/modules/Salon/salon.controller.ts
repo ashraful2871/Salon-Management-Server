@@ -3,14 +3,14 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { SalonService } from "./salon.service";
+import { withAccessCache } from "../../utils/salonAccess";
 import { findSalonMarkers } from "./salon.geo";
 import { NEARBY_MAX_RADIUS_KM, SalonValidation } from "./salon.validation";
 import { recordSearchTerm } from "../Analytics/analytics.capture";
 
 const createSalon = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
 
-  const result = await SalonService.createSalon(userId, req.body);
+  const result = await SalonService.createSalon(withAccessCache(req), req.body);
 
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,
@@ -65,9 +65,8 @@ const getSalonMarkers = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getMySalons = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
 
-  const result = await SalonService.getMySalons(userId, req.query);
+  const result = await SalonService.getMySalons(withAccessCache(req), req.query);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -92,11 +91,10 @@ const getSalonById = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updateSalon = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  const result = await SalonService.updateSalon(userId, id, req.body);
+  const result = await SalonService.updateSalon(withAccessCache(req), id, req.body);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -107,11 +105,10 @@ const updateSalon = catchAsync(async (req: Request, res: Response) => {
 });
 
 const updateSalonLocation = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  const result = await SalonService.updateSalonLocation(userId, id, {
+  const result = await SalonService.updateSalonLocation(withAccessCache(req), id, {
     latitude: req.body.latitude,
     longitude: req.body.longitude,
   });
@@ -125,11 +122,10 @@ const updateSalonLocation = catchAsync(async (req: Request, res: Response) => {
 });
 
 const deleteSalon = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  await SalonService.deleteSalon(userId, id);
+  await SalonService.deleteSalon(withAccessCache(req), id);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

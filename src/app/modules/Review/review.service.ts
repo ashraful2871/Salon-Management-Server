@@ -2,6 +2,7 @@ import { StatusCodes } from "http-status-codes";
 import { Prisma } from "@prisma/client";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { assertSalonPermission } from "../../utils/salonAccess";
 
 /** Only PUBLISHED reviews are shown, and only they count toward a rating. */
 const PUBLISHED = { status: "PUBLISHED" } as const;
@@ -336,12 +337,12 @@ const reportReview = async (
 ) => {
   const review = await prisma.review.findFirst({
     where: { id: reviewId, ...PUBLISHED },
-    select: { id: true, customerId: true, salon: { select: { owner: { select: { userId: true } } } } },
+    select: { id: true, customerId: true, salonId: true },
   });
   if (!review) throw new ApiError(StatusCodes.NOT_FOUND, "Review not found");
 
-  if (user.role === "SALON_OWNER" && review.salon.owner.userId !== user.userId) {
-    throw new ApiError(StatusCodes.FORBIDDEN, "You can only report reviews of your own salon");
+  if (user.role === "SALON_OWNER") {
+    await assertSalonPermission(user, review.salonId, "reviews.reply");
   }
   if (review.customerId === user.userId) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "You can't report your own review");

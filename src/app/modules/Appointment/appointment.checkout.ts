@@ -4,15 +4,11 @@ import {
   PaymentMethod,
   PaymentStatus,
   Prisma,
-  UserRole,
 } from "@prisma/client";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
-import {
-  assertCanActOnAppointment,
-  ownedSalonIds,
-} from "../../utils/salonAccess";
+import { assertSalonPermission, scopeSalonIds } from "../../utils/salonAccess";
 import { paymentSummary, withPaymentSummary } from "./appointment.billing";
 import { getSetting } from "../../utils/settings";
 import { AppointmentDeposit } from "./appointment.deposit";
@@ -123,7 +119,7 @@ const loadForCounter = async (user: Actor, appointmentId: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
-  await assertCanActOnAppointment(user.userId, user.role, appointment.salonId);
+  await assertSalonPermission(user, appointment.salonId, "bookings.manage");
 
   return appointment;
 };
@@ -183,11 +179,7 @@ const lookupByToken = async (user: Actor, rawToken: string) => {
 
   // Another salon's booking reads as missing, so tokens cannot be probed
   // across salons.
-  await assertCanActOnAppointment(
-    user.userId,
-    user.role,
-    appointment.salonId,
-  ).catch(() => {
+  await assertSalonPermission(user, appointment.salonId, "bookings.view").catch(() => {
     throw notFound;
   });
 
@@ -298,7 +290,7 @@ const checkout = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
-  await assertCanActOnAppointment(user.userId, user.role, appointment.salonId);
+  await assertSalonPermission(user, appointment.salonId, "bookings.manage");
 
   if (appointment.status === AppointmentStatus.COMPLETED) {
     return toReceipt(appointment);
@@ -400,14 +392,9 @@ const cashSummary = async (
   }
   const to = new Date(from.getTime() + DAY_MS);
 
-  let salonIds: string[];
-
-  if (query.salonId) {
-    await assertCanActOnAppointment(user.userId, user.role, query.salonId);
-    salonIds = [query.salonId];
-  } else if (user.role === UserRole.SALON_OWNER) {
-    salonIds = await ownedSalonIds(user.userId);
-  } else {
+  // An admin sees every salon, so they must name one.
+  const salonIds = await scopeSalonIds(user, "money.view", query.salonId);
+  if (salonIds === null) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       "Choose a salon to summarise",

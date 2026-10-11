@@ -5,6 +5,12 @@ import prisma from "../../shared/prisma";
 import { scheduleReindex } from "../AI-Suggestion/ai.indexer";
 import { countNearbySalons, findNearbySalonIds } from "./salon.geo";
 import { SalonListQuery } from "./salon.validation";
+import {
+  AccessUser,
+  OwnerPermission,
+  assertOwnerOf,
+  assertSalonPermission,
+} from "../../utils/salonAccess";
 
 // Fields an owner may change through PATCH /salons/:id. Status, rating,
 // totalReviews, ownerId, isDeleted and noShowSalonSharePct are deliberately
@@ -31,18 +37,15 @@ const OWNER_EDITABLE_FIELDS = [
   "cancellationWindowMin",
 ] as const;
 
-const createSalon = async (userId: string, payload: any) => {
-  // Check if user is salon owner
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-  });
+// The booking policy part of the above: needs policy.manage, not branch.profile.
+const POLICY_FIELDS = [
+  "depositMinor",
+  "depositPercent",
+  "cancellationWindowMin",
+] as const;
 
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can create salons",
-    );
-  }
+const createSalon = async (user: AccessUser, payload: any) => {
+  const { ownerId } = await assertOwnerOf(user);
 
   const salon = await prisma.salon.create({
     data: {
@@ -59,7 +62,7 @@ const createSalon = async (userId: string, payload: any) => {
       email: payload.email,
       images: payload.images ?? [],
       operatingHours: payload.operatingHours,
-      ownerId: salonOwner.id,
+      ownerId,
       ...(payload.latitude !== undefined && {
         latitude: payload.latitude,
         longitude: payload.longitude,
@@ -277,26 +280,16 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
   };
 };
 
-const getMySalons = async (userId: string, query: any) => {
+const getMySalons = async (user: AccessUser, query: any) => {
   const { page = 1, limit = 10 } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  // ✅ Get salon owner by userId
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can access this route",
-    );
-  }
+  const { ownerId } = await assertOwnerOf(user);
 
   const [salons, total] = await Promise.all([
     prisma.salon.findMany({
       where: {
-        ownerId: salonOwner.id,
+        ownerId,
         isDeleted: false,
       },
       skip,
@@ -380,7 +373,7 @@ const getMySalons = async (userId: string, query: any) => {
 
     prisma.salon.count({
       where: {
-        ownerId: salonOwner.id,
+        ownerId,
         isDeleted: false,
       },
     }),
@@ -467,18 +460,7 @@ const getSalonById = async (
   return salon;
 };
 
-const updateSalon =async (userId: string, salonId: string, payload: any) => {
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can update salons",
-    );
-  }
-
+const updateSalon = async (user: AccessUser, salonId: string, payload: any) => {
   const salon = await prisma.salon.findUnique({
     where: {
       id: salonId,
@@ -490,11 +472,22 @@ const updateSalon =async (userId: string, salonId: string, payload: any) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
-  if (salon.ownerId !== salonOwner.id) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "You can only update your own salons",
+  // Each kind of change needs its own permission at this branch.
+  const needed = new Set<OwnerPermission>();
+  for (const field of OWNER_EDITABLE_FIELDS) {
+    if (payload[field] === undefined) continue;
+    needed.add(
+      (POLICY_FIELDS as readonly string[]).includes(field)
+        ? "policy.manage"
+        : "branch.profile",
     );
+  }
+  if (payload.latitude !== undefined && payload.longitude !== undefined) {
+    needed.add("branch.location");
+  }
+  if (!needed.size) needed.add("branch.profile");
+  for (const perm of needed) {
+    await assertSalonPermission(user, salonId, perm);
   }
 
   // Pick only what an owner may edit. Writing req.body straight through would
@@ -531,21 +524,10 @@ const updateSalon =async (userId: string, salonId: string, payload: any) => {
 };
 
 const updateSalonLocation = async (
-  userId: string,
+  user: AccessUser,
   salonId: string,
   payload: { latitude: number; longitude: number },
 ) => {
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can update salons",
-    );
-  }
-
   const salon = await prisma.salon.findUnique({
     where: {
       id: salonId,
@@ -557,12 +539,7 @@ const updateSalonLocation = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
-  if (salon.ownerId !== salonOwner.id) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "You can only update your own salons",
-    );
-  }
+  await assertSalonPermission(user, salonId, "branch.location");
 
   // No re-embed: coordinates are not part of the embedded salon text.
   const result = await prisma.salon.update({
@@ -579,7 +556,7 @@ const updateSalonLocation = async (
 };
 
 /** Owners only; admins delete through DELETE /admin/salons/:id. */
-const deleteSalon = async (userId: string, salonId: string) => {
+const deleteSalon = async (user: AccessUser, salonId: string) => {
   const salon = await prisma.salon.findUnique({
     where: {
       id: salonId,
@@ -591,15 +568,10 @@ const deleteSalon = async (userId: string, salonId: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-  });
-
-  if (!salonOwner || salon.ownerId !== salonOwner.id) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "You can only delete your own salons",
-    );
+  // Only the owner closes a branch for good.
+  const { ownerId } = await assertOwnerOf(user);
+  if (salon.ownerId !== ownerId) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Not found");
   }
 
   // Soft delete

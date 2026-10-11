@@ -6,6 +6,7 @@ import { toMinor } from "../../utils/money";
 import { audit } from "../../utils/audit";
 import { requireApprovalIf } from "../Admin/approvals/approvals.service";
 import { SettlementEarnings } from "./settlement.earnings";
+import { withAccessCache } from "../../utils/salonAccess";
 import { CommissionAdmin, SettlementService } from "./settlement.service";
 
 const runPayoutBatch = catchAsync(async (req: Request, res: Response) => {
@@ -89,7 +90,7 @@ const updatePayoutStatus = catchAsync(async (req: Request, res: Response) => {
 
 const getMyPayouts = catchAsync(async (req: Request, res: Response) => {
   const result = await SettlementService.getMyPayouts(
-    req.user!.userId,
+    withAccessCache(req),
     req.query,
   );
 
@@ -105,7 +106,7 @@ const getMyPayouts = catchAsync(async (req: Request, res: Response) => {
 /** A salon owner's full earnings view: totals, payouts, balances, line items. */
 const getMyEarnings = catchAsync(async (req: Request, res: Response) => {
   const result = await SettlementService.getMyEarnings(
-    req.user!.userId,
+    withAccessCache(req),
     req.query,
   );
 

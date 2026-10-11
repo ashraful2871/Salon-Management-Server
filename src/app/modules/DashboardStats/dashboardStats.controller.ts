@@ -3,6 +3,7 @@ import { StatusCodes } from 'http-status-codes';
 import catchAsync from '../../shared/catchAsync';
 import sendResponse from '../../shared/sendResponse';
 import { DashboardStatsService } from './dashboardStats.service';
+import { withAccessCache } from '../../utils/salonAccess';
 
 const getAdminDashboardStats = catchAsync(async (_req: Request, res: Response) => {
   const result = await DashboardStatsService.getAdminDashboardStats();
@@ -16,9 +17,12 @@ const getAdminDashboardStats = catchAsync(async (_req: Request, res: Response) =
 });
 
 const getSalonOwnerDashboardStats = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
-
-  const result = await DashboardStatsService.getSalonOwnerDashboardStats(userId);
+  const salonId =
+    typeof req.query.salonId === "string" ? req.query.salonId : undefined;
+  const result = await DashboardStatsService.getSalonOwnerDashboardStats(
+    withAccessCache(req),
+    { salonId },
+  );
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

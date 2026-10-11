@@ -6,6 +6,7 @@ import { UserService } from "./user.service";
 import ApiError from "../../Error/error";
 import { assertAdminPermission } from "../Admin/admin.middleware";
 import { audit } from "../../utils/audit";
+import { withAccessCache } from "../../utils/salonAccess";
 
 const reasonOf = (req: Request): string | undefined => {
   const r = req.body?.reason ?? req.query.reason;
@@ -39,8 +40,7 @@ const getAllUsers = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getMyCustomers = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user?.userId;
-  const result = await UserService.getMyCustomers(userId, req.query);
+  const result = await UserService.getMyCustomers(withAccessCache(req), req.query);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

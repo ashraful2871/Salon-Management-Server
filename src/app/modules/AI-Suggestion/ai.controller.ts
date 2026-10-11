@@ -4,7 +4,7 @@ import config from "../../../config";
 import ApiError from "../../Error/error";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
-import { ownedSalonIds } from "../../utils/salonAccess";
+import { assertSalonPermission, withAccessCache } from "../../utils/salonAccess";
 import { audit } from "../../utils/audit";
 import { assertAdminPermission } from "../Admin/admin.middleware";
 import { isGeminiConfigured } from "./ai.gemini";
@@ -55,8 +55,8 @@ const generateEmbedding = catchAsync(async (req: Request, res: Response) => {
   const isAdmin = req.user?.role === "ADMIN";
   await assertAdminPermission(req, "system.operate");
 
-  if (!isAdmin && !(await ownedSalonIds(req.user?.userId)).includes(id)) {
-    throw new ApiError(StatusCodes.FORBIDDEN, "You can only re-index your own salons");
+  if (!isAdmin) {
+    await assertSalonPermission(withAccessCache(req), String(id), "branch.profile");
   }
 
   // Owners get the cheap path: an unchanged salon costs no Gemini call.

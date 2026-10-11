@@ -22,7 +22,11 @@ import {
 } from "../../utils/emailTemplates";
 import { formatBDT } from "../../utils/money";
 import { getSetting } from "../../utils/settings";
-import { assertCanActOnAppointment } from "../../utils/salonAccess";
+import {
+  accessibleSalonIds,
+  assertSalonPermission,
+  scopeSalonIds,
+} from "../../utils/salonAccess";
 import { hasSlotStarted } from "../../utils/slotTime";
 import { WalletService } from "../Wallet/wallet.service";
 import { withPaymentSummary } from "./appointment.billing";
@@ -716,12 +720,7 @@ const bookWalkIn = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Slot not found");
   }
 
-  await assertCanActOnAppointment(
-    actor.userId,
-    actor.role,
-    slot.salonId,
-    "You can only add bookings for your own salon",
-  );
+  await assertSalonPermission(actor, slot.salonId, "walkin.create");
 
   if (slot.status !== "AVAILABLE" || slot.isBooked) {
     throw new ApiError(
@@ -889,24 +888,18 @@ const getAllAppointments = async (
 
     whereConditions.staffId = staff.id;
   } else if (userRole === UserRole.SALON_OWNER) {
-    // ✅ userId is from User table, so match by salonOwner.userId
-    const salonOwner = await prisma.salonOwner.findUnique({
-      where: { userId },
-      include: {
-        salons: {
-          select: { id: true },
-        },
-      },
-    });
+    const salonIds = await scopeSalonIds(
+      { userId, role: userRole },
+      "bookings.view",
+      salonId,
+    );
 
-    // If no owner profile or no salons, return empty
-    if (!salonOwner || salonOwner.salons.length === 0) {
+    // No salons, or a salon that is not theirs: an empty page
+    if (!salonIds?.length) {
       return emptyResult;
     }
 
-    whereConditions.salonId = {
-      in: salonOwner.salons.map((s: any) => s.id),
-    };
+    whereConditions.salonId = { in: salonIds };
   }
 
   // Admin can see all (no extra role filter)
@@ -1184,16 +1177,13 @@ const canViewAppointment = async (
       return true;
     case UserRole.CUSTOMER:
       return appointment.customerId === userId;
-    case UserRole.SALON_OWNER: {
-      const owner = await prisma.salonOwner.findUnique({ where: { userId } });
-      return owner !== null && appointment.salon.ownerId === owner.id;
-    }
+    case UserRole.SALON_OWNER:
     case UserRole.STAFF: {
-      const staff = await prisma.staff.findFirst({
-        where: { userId, salonId: appointment.salonId, isDeleted: false },
-        select: { id: true },
-      });
-      return Boolean(staff);
+      const salonIds = await accessibleSalonIds(
+        { userId, role: userRole },
+        "bookings.view",
+      );
+      return salonIds === null || salonIds.includes(appointment.salonId);
     }
     default:
       return false;
@@ -1263,15 +1253,11 @@ const updateAppointmentStatus = async (
       );
     }
   } else if (userRole === UserRole.SALON_OWNER) {
-    const salonOwner = await prisma.salonOwner.findUnique({
-      where: { userId },
-    });
-    if (!salonOwner || appointment.salon.ownerId !== salonOwner.id) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "You can only update appointments for your salons",
-      );
-    }
+    await assertSalonPermission(
+      { userId, role: userRole },
+      appointment.salonId,
+      "bookings.manage",
+    );
   }
 
   if (
@@ -1472,13 +1458,11 @@ const cancelAppointment = async (
   const bySalon = userRole === UserRole.SALON_OWNER;
 
   if (bySalon) {
-    const owner = await prisma.salonOwner.findUnique({ where: { userId } });
-    if (!owner || appointment.salon.ownerId !== owner.id) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "You can only cancel bookings for your own salon",
-      );
-    }
+    await assertSalonPermission(
+      { userId, role: userRole },
+      appointment.salonId,
+      "bookings.manage",
+    );
   } else if (appointment.customerId !== userId) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,

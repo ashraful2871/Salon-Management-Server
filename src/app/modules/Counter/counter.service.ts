@@ -1,29 +1,14 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import {
+  AccessUser,
+  assertSalonPermission,
+  scopeSalonIds,
+} from "../../utils/salonAccess";
 
-const createCounter = async (userId: string, payload: any) => {
-  const salonOwner = await prisma.salonOwner.findUniqueOrThrow({
-    where: {
-      userId,
-    },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Salon owner not found");
-  }
-
-  const salon = await prisma.salon.findFirst({
-    where: {
-      id: payload.salonId,
-      ownerId: salonOwner.id,
-      isDeleted: false,
-    },
-  });
-
-  if (!salon) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
-  }
+const createCounter = async (user: AccessUser, payload: any) => {
+  await assertSalonPermission(user, payload.salonId, "counters.manage");
 
   if (payload.code) {
     const isCodeExists = await prisma.counter.findFirst({
@@ -52,14 +37,15 @@ const createCounter = async (userId: string, payload: any) => {
   return counter;
 };
 
-const getAllCounters = async (query: any) => {
+const getAllCounters = async (user: AccessUser, query: any) => {
   const { page = 1, limit = 10, salonId } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
   const whereConditions: any = { isDeleted: false };
 
-  if (salonId) {
-    whereConditions.salonId = salonId;
+  const salonIds = await scopeSalonIds(user, "counters.manage", salonId);
+  if (salonIds !== null) {
+    whereConditions.salonId = { in: salonIds };
   }
 
   const [counters, total] = await Promise.all([
@@ -90,7 +76,7 @@ const getAllCounters = async (query: any) => {
   };
 };
 
-const getCounterById = async (id: string) => {
+const getCounterById = async (user: AccessUser, id: string) => {
   const counter = await prisma.counter.findUnique({
     where: { id },
     include: {
@@ -106,6 +92,8 @@ const getCounterById = async (id: string) => {
   if (!counter) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Counter not found");
   }
+
+  await assertSalonPermission(user, counter.salonId, "counters.manage");
 
   return counter;
 };

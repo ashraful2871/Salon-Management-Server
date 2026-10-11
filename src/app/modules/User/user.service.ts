@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { audit, AuditOpts } from "../../utils/audit";
+import { AccessUser, scopeSalonIds } from "../../utils/salonAccess";
 
 const getAllUsers = async (query: any) => {
   const { page = 1, limit = 10, searchTerm, role, status } = query;
@@ -62,24 +63,12 @@ const getAllUsers = async (query: any) => {
   };
 };
 
-const getMyCustomers = async (userId: string, query: any) => {
+const getMyCustomers = async (user: AccessUser, query: any) => {
   const { page = 1, limit = 10, searchTerm } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  // Find the salon owner and their salons
-  const salonOwner = await prisma.salonOwner.findUnique({
-    where: { userId },
-    include: { salons: { select: { id: true } } },
-  });
-
-  if (!salonOwner) {
-    throw new ApiError(
-      StatusCodes.FORBIDDEN,
-      "Only salon owners can access this route",
-    );
-  }
-
-  const salonIds = salonOwner.salons.map((s) => s.id);
+  const salonIds =
+    (await scopeSalonIds(user, "customers.view", query.salonId)) ?? [];
 
   // Find distinct customers who booked at these salons
   const appointments = await prisma.appointment.findMany({
