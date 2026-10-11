@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../../Error/error";
 import prisma from "../../../shared/prisma";
+import { realPayoutWhere } from "../../Settlement/settlement.buckets";
 import { audit } from "../../../utils/audit";
 import { CsvColumn, streamCsv } from "../../../utils/csv";
 import { parseRange } from "./finance.service";
@@ -107,20 +108,24 @@ const ledger = (range: Range, includeTest: boolean) => {
 const payouts = (range: Range, includeTest: boolean) => {
   const where: Prisma.PayoutWhereInput = {
     createdAt: window(range),
-    ...(includeTest ? {} : { salon: { isTest: false } }),
+    ...realPayoutWhere(includeTest),
   };
   const fetch = (after: Keyed | undefined, take: number) =>
     prisma.payout.findMany({
       where,
       ...page(after, take),
-      include: { salon: { select: { name: true, area: true } } },
+      include: {
+        salon: { select: { name: true, area: true } },
+        owner: { select: { businessName: true } },
+      },
     });
   type Row = Awaited<ReturnType<typeof fetch>>[number];
   const columns: CsvColumn<Row>[] = [
     { header: "Payout ID", value: (r) => r.id },
     { header: "Created at", value: (r) => r.createdAt },
-    { header: "Salon", value: (r) => r.salon.name },
-    { header: "Area", value: (r) => r.salon.area },
+    { header: "Business", value: (r) => r.owner.businessName },
+    { header: "Salon", value: (r) => r.salon?.name ?? "All branches" },
+    { header: "Area", value: (r) => r.salon?.area ?? null },
     { header: "Period start", value: (r) => r.periodStart },
     { header: "Period end", value: (r) => r.periodEnd },
     { header: "Gross (BDT)", value: (r) => r.grossMinor, money: true },

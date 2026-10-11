@@ -1,4 +1,5 @@
 import prisma from "../../shared/prisma";
+import { payoutScope } from "../Settlement/settlement.buckets";
 import {
   getPlatformEarnings,
   getSalonEarnings,
@@ -205,12 +206,14 @@ const getSalonOwnerDashboardStats = async (
       where: { salonId: { in: salonIds } },
     }),
     getSalonEarnings(salonIds),
-    prisma.payout.findMany({
-      where: { salonId: { in: salonIds } },
-      take: 5,
-      orderBy: { createdAt: "desc" },
-      include: { salon: { select: { id: true, name: true } } },
-    }),
+    payoutScope(salonIds).then((where) =>
+      prisma.payout.findMany({
+        where,
+        take: 5,
+        orderBy: { createdAt: "desc" },
+        include: { salon: { select: { id: true, name: true } } },
+      }),
+    ),
   ]);
 
   return {

@@ -128,6 +128,7 @@ enum WalletTxType {
 enum IntentPurpose {
   WALLET_TOPUP
   BOOKING
+  SALON_DUES
 }
 
 enum IntentStatus {
@@ -174,6 +175,7 @@ enum LedgerAccount {
   PLATFORM_REVENUE
   CUSTOMER_WALLET
   GATEWAY_CLEARING
+  PLATFORM_CASH
 }
 
 enum CommissionScope {
@@ -184,9 +186,11 @@ enum CommissionScope {
 
 enum PayoutStatus {
   PENDING
+  APPROVED
   PROCESSING
   PAID
   FAILED
+  CANCELLED
 }
 
 enum AssistantRole {

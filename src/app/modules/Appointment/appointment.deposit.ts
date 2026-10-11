@@ -1,5 +1,6 @@
 import {
   Appointment,
+  AppointmentSource,
   AppealStatus,
   DepositStatus,
   Prisma,
@@ -249,12 +250,21 @@ export const settleCompletedTx = async (
     });
   }
 
+  // The salon's own walk-in pays no commission unless the platform turns
+  // booking.commissionOnDirect on. Read at completion: bookings completed
+  // before this rule shipped keep what they were charged (no backfill).
+  const exemptDirect =
+    appointment.source === AppointmentSource.SALON_DIRECT &&
+    !(await getSetting("booking.commissionOnDirect"));
+
   // The rate in force when the booking was made; older bookings have none.
-  const commissionMinor = SettlementService.resolveCommissionMinor(
-    appointment.totalMinor,
-    appointment.commissionBps ??
-      (await SettlementService.currentCommissionBps()),
-  );
+  const commissionMinor = exemptDirect
+    ? 0
+    : SettlementService.resolveCommissionMinor(
+        appointment.totalMinor,
+        appointment.commissionBps ??
+          (await SettlementService.currentCommissionBps()),
+      );
 
   await SettlementService.recordCompletedBooking(
     tx,

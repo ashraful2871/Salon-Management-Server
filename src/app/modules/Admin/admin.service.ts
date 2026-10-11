@@ -230,13 +230,19 @@ const search = async (admin: AdminContext, rawQ: string): Promise<SearchHit[]> =
         ? prisma.payout
             .findMany({
               where: { id },
-              select: { id: true, status: true, netMinor: true, salon: { select: { name: true } } },
+              select: {
+                id: true,
+                status: true,
+                netMinor: true,
+                salon: { select: { name: true } },
+                owner: { select: { businessName: true } },
+              },
             })
             .then((r) =>
               r.map((p) => ({
                 kind: "payout" as const,
                 id: p.id,
-                title: `Payout · ${p.salon.name}`,
+                title: `Payout · ${p.salon?.name ?? p.owner.businessName ?? "business"}`,
                 subtitle: `${p.status} · ৳${(p.netMinor / 100).toFixed(2)}`,
                 href: HREF.payout(p.id),
               })),

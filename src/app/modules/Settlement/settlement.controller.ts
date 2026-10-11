@@ -7,7 +7,11 @@ import { audit } from "../../utils/audit";
 import { requireApprovalIf } from "../Admin/approvals/approvals.service";
 import { SettlementEarnings } from "./settlement.earnings";
 import { withAccessCache } from "../../utils/salonAccess";
-import { CommissionAdmin, SettlementService } from "./settlement.service";
+import {
+  CommissionAdmin,
+  payoutNeedsApproval,
+  SettlementService,
+} from "./settlement.service";
 
 const runPayoutBatch = catchAsync(async (req: Request, res: Response) => {
   const result = await SettlementService.runPayoutBatch({
@@ -46,7 +50,9 @@ const updatePayoutStatus = catchAsync(async (req: Request, res: Response) => {
 
   const { reason, ...payload } = req.body;
 
-  // Four-eyes: marking a payout paid always needs a second admin when on.
+  // Four-eyes: marking a payout paid needs a second admin when approvals are
+  // on (over approvals.payoutOverMinor, or every payout when that is unset) -
+  // unless a different admin already moved it to APPROVED.
   if (
     payload.status === "PAID" &&
     (await requireApprovalIf(
@@ -55,8 +61,15 @@ const updatePayoutStatus = catchAsync(async (req: Request, res: Response) => {
       "payout.mark_paid",
       async () => {
         // Fail the obvious mistakes now rather than after someone approves.
-        await SettlementService.assertPayable(id, payload);
-        return true;
+        const payout = await SettlementService.assertPayable(id, payload);
+        if (
+          payout.status === "APPROVED" &&
+          payout.approvedById &&
+          payout.approvedById !== req.user!.userId
+        ) {
+          return false;
+        }
+        return payoutNeedsApproval(payout.netMinor);
       },
       {
         payload: {

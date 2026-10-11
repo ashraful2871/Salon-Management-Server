@@ -5,12 +5,14 @@ import {
   PayoutStatus,
   Prisma,
 } from "@prisma/client";
+import { randomUUID } from "crypto";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { AuditOpts, auditTx, diff, systemAuditCtx } from "../../utils/audit";
 import { getSetting, getSettingSync } from "../../utils/settings";
 import { getSalonEarnings } from "./settlement.earnings";
+import { holdCutoff, payoutScope, salonBalances } from "./settlement.buckets";
 import { AccessUser, scopeSalonIds } from "../../utils/salonAccess";
 import { sendEmail } from "../../utils/emailSender";
 import { getPayoutUpdateTemplate } from "../../utils/emailTemplates";
@@ -84,13 +86,28 @@ type EntryDraft = {
   description: string;
 };
 
-const writeEntries = async (
+type JournalInput = {
+  appointmentId?: string | null;
+  salonId: string | null;
+  /** The business; read from the salon when not given. */
+  ownerId?: string | null;
+  /** What the set is, for the refusal message (e.g. "booking.completed"). */
+  kind: string;
+  drafts: EntryDraft[];
+};
+
+/**
+ * The only writer of ledger_entries. One call is one journal: a set of rows
+ * that sums to zero and shares a journalId - the appointment's id for a
+ * booking's sets, else a fresh uuid. Returns the journalId, or null when every
+ * draft was zero and nothing was written.
+ */
+export const writeJournal = async (
   db: Prisma.TransactionClient,
-  appointment: { id: string; salonId: string },
-  drafts: EntryDraft[],
+  input: JournalInput,
 ) => {
-  const entries = drafts.filter((entry) => entry.amountMinor !== 0);
-  if (entries.length === 0) return;
+  const entries = input.drafts.filter((entry) => entry.amountMinor !== 0);
+  if (entries.length === 0) return null;
 
   const sum = entries.reduce((total, entry) => total + entry.amountMinor, 0);
 
@@ -99,20 +116,48 @@ const writeEntries = async (
     // it is in, and it would poison every reconciliation run afterwards.
     throw new ApiError(
       StatusCodes.INTERNAL_SERVER_ERROR,
-      `Refusing to write an unbalanced ledger set for appointment ${appointment.id} (sums to ${sum})`,
+      `Refusing to write an unbalanced ledger set (${input.kind}${input.appointmentId ? `, appointment ${input.appointmentId}` : ""}) - sums to ${sum}`,
     );
+  }
+
+  const journalId = input.appointmentId ?? randomUUID();
+  let ownerId = input.ownerId ?? null;
+  if (!ownerId && input.salonId) {
+    const salon = await db.salon.findUnique({
+      where: { id: input.salonId },
+      select: { ownerId: true },
+    });
+    ownerId = salon?.ownerId ?? null;
   }
 
   await db.ledgerEntry.createMany({
     data: entries.map((entry) => ({
-      appointmentId: appointment.id,
-      salonId: appointment.salonId,
+      journalId,
+      appointmentId: input.appointmentId ?? null,
+      salonId: input.salonId,
+      ownerId,
       account: entry.account,
       amountMinor: entry.amountMinor,
       description: entry.description,
     })),
   });
+
+  return journalId;
 };
+
+/** A booking's set: journal = the appointment, business = its salon's owner. */
+const bookingJournal = (
+  db: Prisma.TransactionClient,
+  appointment: { id: string; salonId: string },
+  kind: string,
+  drafts: EntryDraft[],
+) =>
+  writeJournal(db, {
+    appointmentId: appointment.id,
+    salonId: appointment.salonId,
+    kind,
+    drafts,
+  });
 
 /** Nothing should ever write a second set of entries for the same appointment. */
 const hasEntries = async (db: Prisma.TransactionClient, appointmentId: string) =>
@@ -131,7 +176,7 @@ export const recordCompletedBooking = async (
 
   const deposit = appointment.depositMinor;
 
-  await writeEntries(db, appointment, [
+  await bookingJournal(db, appointment, "booking.completed", [
     {
       account: LedgerAccount.CUSTOMER_WALLET,
       amountMinor: -deposit,
@@ -170,7 +215,7 @@ export const recordForfeitedDeposit = async (
   const salonShare = Math.round((deposit * clampedPct) / 100);
   const platformShare = deposit - salonShare;
 
-  await writeEntries(db, appointment, [
+  await bookingJournal(db, appointment, "booking.forfeit", [
     {
       account: LedgerAccount.CUSTOMER_WALLET,
       amountMinor: -deposit,
@@ -203,7 +248,7 @@ export const recordLateCancellationPenalty = async (
   if (penaltyMinor <= 0) return;
   if (await hasEntries(db, appointment.id)) return;
 
-  await writeEntries(db, appointment, [
+  await bookingJournal(db, appointment, "booking.late_cancel", [
     {
       account: LedgerAccount.CUSTOMER_WALLET,
       amountMinor: -penaltyMinor,
@@ -233,7 +278,7 @@ export const reverseForfeitedDeposit = async (
   const salonShare = Math.round((deposit * clampedPct) / 100);
   const platformShare = deposit - salonShare;
 
-  await writeEntries(db, appointment, [
+  await bookingJournal(db, appointment, "booking.forfeit_reversed", [
     {
       account: LedgerAccount.CUSTOMER_WALLET,
       amountMinor: deposit,
@@ -256,64 +301,173 @@ export const reverseForfeitedDeposit = async (
 // Payouts
 // ---------------------------------------------------------------------------
 
-/** What a salon is owed right now: unpaid SALON_PAYABLE, netted. */
+/**
+ * What a salon is owed and not yet in a payout: unpaid SALON_PAYABLE, netted,
+ * both available (past the hold) and pending (still inside it).
+ */
 const getSalonBalance = async (salonId: string) => {
-  const result = await prisma.ledgerEntry.aggregate({
-    where: {
-      salonId,
-      account: LedgerAccount.SALON_PAYABLE,
-      payoutId: null,
-    },
-    _sum: { amountMinor: true },
-  });
+  const cutoff = holdCutoff(await getSetting("payouts.holdDays"));
+  const [available, pending] = await Promise.all(
+    [{ lte: cutoff }, { gt: cutoff }].map((createdAt) =>
+      prisma.ledgerEntry.aggregate({
+        where: { salonId, account: LedgerAccount.SALON_PAYABLE, payoutId: null, createdAt },
+        _sum: { amountMinor: true },
+      }),
+    ),
+  );
+  const availableMinor = available._sum.amountMinor ?? 0;
+  const pendingMinor = pending._sum.amountMinor ?? 0;
 
-  return { salonId, payableMinor: result._sum.amountMinor ?? 0 };
+  return {
+    salonId,
+    payableMinor: availableMinor + pendingMinor,
+    availableMinor,
+    pendingMinor,
+  };
 };
 
-/** Every salon's unpaid SALON_PAYABLE up to `periodEnd`, netted. */
-const payableGroups = (periodEnd: Date) =>
-  prisma.ledgerEntry.groupBy({
-    by: ["salonId"],
+type BusinessGroup = {
+  ownerId: string;
+  businessName: string;
+  isTest: boolean;
+  salonIds: string[];
+  salonNames: string[];
+  area: string | null;
+  netMinor: number;
+  oldestAt: Date;
+};
+
+type SkipReason = "below minimum" | "dues";
+
+/**
+ * Every business's available SALON_PAYABLE up to `cutoff`, netted across its
+ * salons. One groupBy for the money, one read each for the names.
+ */
+const payableBusinesses = async (
+  cutoff: Date,
+  db: Prisma.TransactionClient = prisma,
+  ownerId?: string,
+): Promise<BusinessGroup[]> => {
+  const grouped = await db.ledgerEntry.groupBy({
+    by: ["ownerId", "salonId"],
     where: {
       account: LedgerAccount.SALON_PAYABLE,
       payoutId: null,
-      salonId: { not: null },
-      createdAt: { lte: periodEnd },
+      ownerId: ownerId ?? { not: null },
+      createdAt: { lte: cutoff },
     },
     _sum: { amountMinor: true },
+    _min: { createdAt: true },
   });
+  if (grouped.length === 0) return [];
+
+  const ownerIds = [...new Set(grouped.map((row) => row.ownerId as string))];
+  const salonIds = [
+    ...new Set(grouped.map((row) => row.salonId).filter((id): id is string => !!id)),
+  ];
+  const [owners, salons] = await Promise.all([
+    db.salonOwner.findMany({
+      where: { id: { in: ownerIds } },
+      select: { id: true, businessName: true, user: { select: { name: true, isTest: true } } },
+    }),
+    db.salon.findMany({
+      where: { id: { in: salonIds } },
+      select: { id: true, name: true, area: true, isTest: true },
+    }),
+  ]);
+  const ownerById = new Map(owners.map((owner) => [owner.id, owner]));
+  const salonById = new Map(salons.map((salon) => [salon.id, salon]));
+
+  const byOwner = new Map<string, BusinessGroup>();
+  for (const row of grouped) {
+    const ownerId = row.ownerId as string;
+    const owner = ownerById.get(ownerId);
+    const salon = row.salonId ? salonById.get(row.salonId) : undefined;
+    const group =
+      byOwner.get(ownerId) ??
+      ({
+        ownerId,
+        businessName: owner?.businessName || owner?.user.name || "Unknown business",
+        isTest: owner?.user.isTest ?? false,
+        salonIds: [],
+        salonNames: [],
+        area: null,
+        netMinor: 0,
+        oldestAt: row._min.createdAt ?? cutoff,
+      } satisfies BusinessGroup);
+
+    group.netMinor += row._sum.amountMinor ?? 0;
+    if (row._min.createdAt && row._min.createdAt < group.oldestAt) {
+      group.oldestAt = row._min.createdAt;
+    }
+    if (row.salonId) {
+      group.salonIds.push(row.salonId);
+      group.salonNames.push(salon?.name ?? "Deleted branch");
+      group.area ??= salon?.area ?? null;
+      if (salon?.isTest) group.isTest = true;
+    }
+    byOwner.set(ownerId, group);
+  }
+
+  return [...byOwner.values()].sort((a, b) => b.netMinor - a.netMinor);
+};
+
+/** The payout rules in force: the hold, the minimum, and the cutoff they give. */
+const batchRules = async (periodEnd?: Date) => {
+  const [holdDays, minMinor] = await Promise.all([
+    getSetting("payouts.holdDays"),
+    getSetting("payouts.minMinor"),
+  ]);
+  const held = holdCutoff(holdDays);
+  const cutoff = periodEnd && periodEnd < held ? periodEnd : held;
+  return { holdDays, minMinor, cutoff };
+};
+
+const skipReason = (netMinor: number, minMinor: number): SkipReason | null =>
+  netMinor <= 0 ? "dues" : netMinor < minMinor ? "below minimum" : null;
+
+const businessRow = (group: BusinessGroup) => ({
+  ownerId: group.ownerId,
+  businessName: group.businessName,
+  // The single salon when the business has one; a business payout otherwise.
+  salonId: group.salonIds.length === 1 ? group.salonIds[0] : null,
+  salonName:
+    group.salonNames.length === 1
+      ? group.salonNames[0]
+      : `${group.salonNames.length} branches`,
+  salons: group.salonIds.length,
+  area: group.area,
+  isTest: group.isTest,
+  netMinor: group.netMinor,
+});
 
 /**
  * What `runPayoutBatch` would raise right now, without writing anything: the
- * same grouping and the same "positive net only" rule, so the totals match.
+ * same grouping, hold and minimum, so the totals match.
  */
-const previewPayoutBatch = async (input?: { periodEnd?: Date }) => {
-  const periodEnd = input?.periodEnd ?? new Date();
-  const grouped = (await payableGroups(periodEnd)).filter(
-    (group) => (group._sum.amountMinor ?? 0) > 0,
-  );
-  const salons = await prisma.salon.findMany({
-    where: { id: { in: grouped.map((group) => group.salonId as string) } },
-    select: { id: true, name: true, area: true, isTest: true },
-  });
-  const byId = new Map(salons.map((salon) => [salon.id, salon]));
+const previewPayoutBatch = async (input?: {
+  periodEnd?: Date;
+  /** One business only. */
+  ownerId?: string;
+  db?: Prisma.TransactionClient;
+}) => {
+  const { cutoff, holdDays, minMinor } = await batchRules(input?.periodEnd);
+  const groups = await payableBusinesses(cutoff, input?.db, input?.ownerId);
 
-  const rows = grouped
-    .map((group) => {
-      const salon = byId.get(group.salonId as string);
-      return {
-        salonId: group.salonId as string,
-        salonName: salon?.name ?? "Unknown salon",
-        area: salon?.area ?? null,
-        isTest: salon?.isTest ?? false,
-        netMinor: group._sum.amountMinor ?? 0,
-      };
-    })
-    .sort((a, b) => b.netMinor - a.netMinor);
+  const rows: Array<ReturnType<typeof businessRow>> = [];
+  const skipped: Array<ReturnType<typeof businessRow> & { reason: SkipReason }> = [];
+  for (const group of groups) {
+    const reason = skipReason(group.netMinor, minMinor);
+    if (reason) skipped.push({ ...businessRow(group), reason });
+    else rows.push(businessRow(group));
+  }
 
   return {
-    periodEnd,
+    periodEnd: cutoff,
+    holdDays,
+    minMinor,
     rows,
+    skipped,
     totals: {
       salons: rows.length,
       netMinor: rows.reduce((total, row) => total + row.netMinor, 0),
@@ -322,48 +476,66 @@ const previewPayoutBatch = async (input?: { periodEnd?: Date }) => {
 };
 
 /**
- * Rolls every salon's unpaid SALON_PAYABLE rows into one Payout each. Entries
- * are claimed with a `payoutId: null` filter, so two concurrent runs cannot
- * put the same entry into two payouts.
+ * Rolls each business's available SALON_PAYABLE rows (past the hold, across
+ * all its salons) into one Payout. Entries are claimed with a `payoutId: null`
+ * filter, so two concurrent runs cannot put the same entry into two payouts.
  */
 const runPayoutBatch = async (
   input?: {
+    /** Accepted for older callers; a payout's start is its oldest entry. */
     periodStart?: Date;
     periodEnd?: Date;
+    /** One business only. */
+    ownerId?: string;
+    /** Run inside this transaction instead of one per business. */
+    db?: Prisma.TransactionClient;
   },
   opts: AuditOpts = {},
 ) => {
   const auditCtx = opts.ctx ?? systemAuditCtx("job");
-  const periodEnd = input?.periodEnd ?? new Date();
-  const periodStart =
-    input?.periodStart ?? new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const { cutoff: periodEnd, minMinor } = await batchRules(input?.periodEnd);
+  const groups = await payableBusinesses(periodEnd, input?.db, input?.ownerId);
+  const inTx = <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) =>
+    input?.db ? fn(input.db) : prisma.$transaction(fn);
 
-  const grouped = await payableGroups(periodEnd);
+  const created: Array<{
+    payoutId: string;
+    ownerId: string;
+    businessName: string;
+    salonId: string | null;
+    netMinor: number;
+  }> = [];
+  const skipped: Array<{
+    ownerId: string;
+    businessName: string;
+    salonId: string | null;
+    netMinor: number;
+    reason: SkipReason;
+  }> = [];
 
-  const created: Array<{ payoutId: string; salonId: string; netMinor: number }> =
-    [];
-  const skipped: Array<{ salonId: string; netMinor: number }> = [];
+  for (const group of groups) {
+    const row = businessRow(group);
+    const reason = skipReason(group.netMinor, minMinor);
 
-  for (const group of grouped) {
-    const salonId = group.salonId as string;
-    const netMinor = group._sum.amountMinor ?? 0;
-
-    // Nothing owed, or the salon owes us: carry it into the next period rather
-    // than raising a payout for zero or a negative amount.
-    if (netMinor <= 0) {
-      skipped.push({ salonId, netMinor });
+    // Nothing owed, the business owes us, or too little to send: carry it
+    // into the next run rather than raising a payout.
+    if (reason) {
+      skipped.push({ ...pick(row), reason });
       continue;
     }
 
-    const payout = await prisma.$transaction(async (tx) => {
+    // Phase 3: verified account - skip (reason "no verified account") until
+    // the business has a verified payout account past its cooldown.
+
+    const payout = await inTx(async (tx) => {
       const entries = await tx.ledgerEntry.findMany({
         where: {
-          salonId,
+          ownerId: group.ownerId,
           account: LedgerAccount.SALON_PAYABLE,
           payoutId: null,
           createdAt: { lte: periodEnd },
         },
-        select: { id: true, amountMinor: true },
+        select: { id: true, amountMinor: true, salonId: true, createdAt: true },
       });
 
       if (entries.length === 0) return null;
@@ -376,11 +548,22 @@ const runPayoutBatch = async (
         .reduce((total, entry) => total - entry.amountMinor, 0);
       const settledNet = grossMinor - commissionMinor;
 
-      if (settledNet <= 0) return null;
+      // Re-checked on the rows actually claimed: they may have moved since the
+      // grouping read.
+      if (skipReason(settledNet, minMinor)) return null;
 
-      const row = await tx.payout.create({
+      const salonIds = [
+        ...new Set(entries.map((entry) => entry.salonId).filter((id): id is string => !!id)),
+      ];
+      const periodStart = entries.reduce(
+        (oldest, entry) => (entry.createdAt < oldest ? entry.createdAt : oldest),
+        periodEnd,
+      );
+
+      const payoutRow = await tx.payout.create({
         data: {
-          salonId,
+          ownerId: group.ownerId,
+          salonId: salonIds.length === 1 ? salonIds[0] : null,
           periodStart,
           periodEnd,
           grossMinor,
@@ -392,7 +575,7 @@ const runPayoutBatch = async (
 
       const claimed = await tx.ledgerEntry.updateMany({
         where: { id: { in: entries.map((entry) => entry.id) }, payoutId: null },
-        data: { payoutId: row.id },
+        data: { payoutId: payoutRow.id },
       });
 
       // Somebody else claimed these entries between the read and the write.
@@ -406,9 +589,11 @@ const runPayoutBatch = async (
       await auditTx(tx, auditCtx, {
         action: "payout.run",
         entityType: "payout",
-        entityId: row.id,
-        salonId,
+        entityId: payoutRow.id,
+        salonId: payoutRow.salonId,
         after: {
+          ownerId: group.ownerId,
+          salons: salonIds.length,
           periodStart: periodStart.toISOString(),
           periodEnd: periodEnd.toISOString(),
           grossMinor,
@@ -419,20 +604,29 @@ const runPayoutBatch = async (
         reason: opts.reason,
       });
 
-      return row;
+      return payoutRow;
     });
 
     if (payout) {
-      created.push({
-        payoutId: payout.id,
-        salonId,
-        netMinor: payout.netMinor,
-      });
+      created.push({ ...pick(row), payoutId: payout.id, salonId: payout.salonId, netMinor: payout.netMinor });
     }
   }
 
-  return { periodStart, periodEnd, created, skipped };
+  return { periodStart: input?.periodStart ?? null, periodEnd, created, skipped };
 };
+
+const pick = (row: ReturnType<typeof businessRow>) => ({
+  ownerId: row.ownerId,
+  businessName: row.businessName,
+  salonId: row.salonId,
+  netMinor: row.netMinor,
+});
+
+/** A payout's salon (null for a multi-branch business payout) and business. */
+const PAYOUT_OWNER_INCLUDE = {
+  salon: { select: { id: true, name: true } },
+  owner: { select: { id: true, businessName: true } },
+} satisfies Prisma.PayoutInclude;
 
 const getAllPayouts = async (query: any) => {
   const { page = 1, limit = 20, status, salonId } = query;
@@ -451,6 +645,7 @@ const getAllPayouts = async (query: any) => {
       orderBy: { createdAt: "desc" },
       include: {
         salon: { select: { id: true, name: true, phone: true, area: true } },
+        owner: { select: { id: true, businessName: true } },
       },
     }),
     prisma.payout.count({ where }),
@@ -459,26 +654,60 @@ const getAllPayouts = async (query: any) => {
   return { meta: { page: pageNum, limit: limitNum, total }, data };
 };
 
+/**
+ * Where a payout may go from each status. PENDING -> PAID skips the APPROVED
+ * step, so with four-eyes on it only happens through an approved request.
+ * PAID, FAILED and CANCELLED are terminal: FAILED and CANCELLED hand their
+ * entries back to the balance, so moving them again would pay twice.
+ */
+export const PAYOUT_TRANSITIONS = {
+  PENDING: ["APPROVED", "PROCESSING", "PAID", "CANCELLED"],
+  APPROVED: ["PROCESSING", "PAID", "CANCELLED"],
+  PROCESSING: ["PAID", "FAILED"],
+  PAID: [],
+  FAILED: [],
+  CANCELLED: [],
+} as const satisfies Record<PayoutStatus, readonly PayoutStatus[]>;
+
+export const canTransitionPayout = (from: PayoutStatus, to: PayoutStatus) =>
+  (PAYOUT_TRANSITIONS[from] as readonly PayoutStatus[]).includes(to);
+
 type PayoutStatusChange = {
   status: PayoutStatus;
   method?: string;
   reference?: string;
   proofUrl?: string;
   failureReason?: string;
+  cancelledReason?: string;
   /** Who marked it paid: the requester, also when a second admin approved it. */
   markedPaidById?: string | null;
 };
 
-/**
- * The checks a status change must pass. Run again inside the update, and on
- * its own before a "mark paid" is sent for approval.
- */
-const PAYOUT_FAILED_MESSAGE =
-  "This payout failed. Its money is back in the salon's balance and will go in the next payout.";
+export type PayoutTransitionPayload = Omit<PayoutStatusChange, "status">;
+
+export type PayoutTransitionOpts = AuditOpts & {
+  /** Set by the four-eyes executor: a second admin already approved this. */
+  fourEyesCleared?: boolean;
+};
+
+const PAYOUT_TERMINAL_MESSAGE: Partial<Record<PayoutStatus, string>> = {
+  PAID: "This payout is already marked as paid",
+  FAILED:
+    "This payout failed. Its money is back in the salon's balance and will go in the next payout.",
+  CANCELLED:
+    "This payout was cancelled. Its money is back in the salon's balance and will go in the next payout.",
+};
+
+const illegalMove = (from: PayoutStatus, to: PayoutStatus) =>
+  new ApiError(
+    StatusCodes.CONFLICT,
+    PAYOUT_TERMINAL_MESSAGE[from] ?? `A payout cannot go from ${from} to ${to}`,
+  );
 
 /**
  * Detaches a payout's ledger entries so they count as payable again. Run it in
- * the transaction that marks the payout FAILED. Returns how many were released.
+ * the transaction that marks the payout FAILED or CANCELLED. Returns how many
+ * were released.
  */
 export const releasePayoutEntries = async (
   db: Prisma.TransactionClient,
@@ -491,6 +720,21 @@ export const releasePayoutEntries = async (
   return released.count;
 };
 
+/**
+ * Whether marking this payout paid needs a second admin: approvals are on and
+ * either no threshold is set (every payout) or the payout is over it.
+ */
+export const payoutNeedsApproval = async (netMinor: number) => {
+  if (!(await getSetting("approvals.enabled"))) return false;
+  const over = await getSetting("approvals.payoutOverMinor");
+  return over === null || netMinor > over;
+};
+
+/**
+ * The checks a move must pass: the payout exists, the move is legal, and the
+ * fields that move needs are present. Run again inside `transitionPayout`, and
+ * on its own before a "mark paid" is sent for approval.
+ */
 const assertPayable = async (
   id: string,
   payload: PayoutStatusChange,
@@ -502,91 +746,122 @@ const assertPayable = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Payout not found");
   }
 
-  if (payout.status === PayoutStatus.PAID) {
-    throw new ApiError(
-      StatusCodes.CONFLICT,
-      "This payout is already marked as paid",
-    );
-  }
+  const to = payload.status;
+  if (!canTransitionPayout(payout.status, to)) throw illegalMove(payout.status, to);
 
-  // FAILED is terminal: its entries went back to the balance, so settling it
-  // now would pay the same money twice.
-  if (payout.status === PayoutStatus.FAILED) {
-    throw new ApiError(StatusCodes.CONFLICT, PAYOUT_FAILED_MESSAGE);
-  }
-
-  const paid = payload.status === PayoutStatus.PAID;
-
-  if (paid && !payload.reference?.trim()) {
+  if (to === PayoutStatus.PAID && !payload.reference?.trim()) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       "A transfer reference is required when marking a payout paid",
     );
   }
 
-  if (paid && !payload.method) {
+  if (to === PayoutStatus.PAID && !payload.method) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
       "Choose how the payout was sent (bKash or bank) when marking it paid",
     );
   }
 
-  if (payload.status === PayoutStatus.FAILED && !payload.failureReason?.trim()) {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      "Say why the payout failed",
-    );
+  if (to === PayoutStatus.FAILED && !payload.failureReason?.trim()) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Say why the payout failed");
+  }
+
+  if (to === PayoutStatus.CANCELLED && !payload.cancelledReason?.trim()) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Say why the payout is cancelled");
   }
 
   return payout;
 };
 
-const updatePayoutStatus = async (
+/**
+ * Moves a payout along PAYOUT_TRANSITIONS. The claim is conditional on the
+ * status it was read in, so two admins (or an approval and a direct call)
+ * cannot both move the same payout. APPROVED stamps the approver; FAILED and
+ * CANCELLED release the entries back to the balance in the same transaction.
+ */
+export const transitionPayout = async (
   id: string,
-  payload: PayoutStatusChange,
-  opts: AuditOpts = {},
+  to: PayoutStatus,
+  payload: PayoutTransitionPayload = {},
+  opts: PayoutTransitionOpts = {},
   tx?: Prisma.TransactionClient,
 ) => {
-  const payout = await assertPayable(id, payload, tx);
-  const paid = payload.status === PayoutStatus.PAID;
+  const change: PayoutStatusChange = { ...payload, status: to };
+  const actorId = opts.ctx?.actorUserId ?? null;
 
   const run = async (db: Prisma.TransactionClient) => {
-    // Conditional on "not PAID or FAILED yet": two admins (or an approval and
-    // a direct call) cannot both settle the same payout.
-    const claimed = await db.payout.updateMany({
-      where: { id, status: { notIn: [PayoutStatus.PAID, PayoutStatus.FAILED] } },
-      data: {
-        status: payload.status,
-        method: payload.method,
-        reference: payload.reference,
-        proofUrl: paid ? (payload.proofUrl ?? null) : undefined,
-        failureReason: payload.failureReason,
-        paidAt: paid ? new Date() : null,
-        markedPaidById: paid ? (payload.markedPaidById ?? opts.ctx?.actorUserId ?? null) : null,
-      },
-    });
+    const payout = await assertPayable(id, change, db);
+    const from = payout.status;
 
-    if (claimed.count === 0) {
-      const current = await db.payout.findUnique({ where: { id }, select: { status: true } });
+    // Four-eyes: PAID needs either an approved request or an APPROVED payout
+    // whose approver is someone other than the person marking it paid.
+    if (
+      to === PayoutStatus.PAID &&
+      !opts.fourEyesCleared &&
+      (await payoutNeedsApproval(payout.netMinor)) &&
+      !(from === PayoutStatus.APPROVED && payout.approvedById && payout.approvedById !== actorId)
+    ) {
       throw new ApiError(
         StatusCodes.CONFLICT,
-        current?.status === PayoutStatus.FAILED
-          ? PAYOUT_FAILED_MESSAGE
-          : "This payout is already marked as paid",
+        "A second admin must approve this payout before it is marked paid",
       );
     }
 
-    // A failed transfer hands its money back to the salon's balance, so the
-    // next payout run picks it up again.
+    const paid = to === PayoutStatus.PAID;
+    const data: Prisma.PayoutUpdateManyMutationInput = { status: to };
+    if (to === PayoutStatus.APPROVED) {
+      data.approvedById = actorId;
+      data.approvedAt = new Date();
+    }
+    if (paid) {
+      data.method = change.method;
+      data.reference = change.reference?.trim();
+      data.proofUrl = change.proofUrl ?? null;
+      data.paidAt = new Date();
+      data.markedPaidById = change.markedPaidById ?? actorId;
+    }
+    if (to === PayoutStatus.PROCESSING && change.method) data.method = change.method;
+    if (to === PayoutStatus.FAILED) data.failureReason = change.failureReason?.trim();
+    if (to === PayoutStatus.CANCELLED) data.cancelledReason = change.cancelledReason?.trim();
+
+    let claimed;
+    try {
+      claimed = await db.payout.updateMany({ where: { id, status: from }, data });
+    } catch (error) {
+      if ((error as { code?: string }).code === "P2002") {
+        throw new ApiError(
+          StatusCodes.CONFLICT,
+          "This transfer reference is already recorded on another payout",
+        );
+      }
+      throw error;
+    }
+
+    if (claimed.count === 0) {
+      const current = await db.payout.findUnique({ where: { id }, select: { status: true } });
+      throw illegalMove(current?.status ?? from, to);
+    }
+
+    // A failed or cancelled payout hands its money back to the business's
+    // balance, so the next run picks it up again.
     const releasedEntries =
-      payload.status === PayoutStatus.FAILED ? await releasePayoutEntries(db, id) : undefined;
+      to === PayoutStatus.FAILED || to === PayoutStatus.CANCELLED
+        ? await releasePayoutEntries(db, id)
+        : undefined;
 
     const updated = await db.payout.findUniqueOrThrow({ where: { id } });
 
-    const changes = diff(
-      { status: payout.status, method: payout.method, reference: payout.reference, proofUrl: payout.proofUrl, failureReason: payout.failureReason },
-      { status: updated.status, method: updated.method, reference: updated.reference, proofUrl: updated.proofUrl, failureReason: updated.failureReason },
-    );
+    const fields = (row: typeof payout) => ({
+      status: row.status,
+      method: row.method,
+      reference: row.reference,
+      proofUrl: row.proofUrl,
+      failureReason: row.failureReason,
+      cancelledReason: row.cancelledReason,
+      approvedById: row.approvedById,
+    });
+    const changes = diff(fields(payout), fields(updated));
 
     await auditTx(db, opts.ctx ?? systemAuditCtx("job"), {
       action: "payout.update",
@@ -594,7 +869,8 @@ const updatePayoutStatus = async (
       entityId: id,
       salonId: payout.salonId,
       before: changes.before,
-      after: releasedEntries === undefined ? changes.after : { ...changes.after, releasedEntries },
+      after:
+        releasedEntries === undefined ? changes.after : { ...changes.after, releasedEntries },
       reason: opts.reason,
     });
 
@@ -610,9 +886,21 @@ const updatePayoutStatus = async (
   return updated;
 };
 
-/** PAID and FAILED both reach the salon owner. Never throws. */
+/** The admin route's and the four-eyes action's entry point. */
+const updatePayoutStatus = (
+  id: string,
+  payload: PayoutStatusChange,
+  opts: PayoutTransitionOpts = {},
+  tx?: Prisma.TransactionClient,
+) => {
+  const { status, ...rest } = payload;
+  return transitionPayout(id, status, rest, opts, tx);
+};
+
+/** PAID and FAILED both reach the business owner. Never throws. */
 const emailPayoutOwner = async (payout: {
-  salonId: string;
+  ownerId: string;
+  salonId: string | null;
   status: PayoutStatus;
   netMinor: number;
   method: string | null;
@@ -620,19 +908,26 @@ const emailPayoutOwner = async (payout: {
   failureReason: string | null;
 }) => {
   try {
-    const salon = await prisma.salon.findUnique({
-      where: { id: payout.salonId },
-      select: { name: true, owner: { select: { user: { select: { name: true, email: true } } } } },
+    const owner = await prisma.salonOwner.findUnique({
+      where: { id: payout.ownerId },
+      select: {
+        businessName: true,
+        user: { select: { name: true, email: true } },
+        salons: payout.salonId
+          ? { where: { id: payout.salonId }, select: { name: true } }
+          : { select: { name: true }, take: 0 },
+      },
     });
-    const owner = salon?.owner?.user;
-    if (!salon || !owner?.email) return;
+    const user = owner?.user;
+    if (!owner || !user?.email) return;
+    const name = owner.salons[0]?.name ?? owner.businessName ?? "your business";
 
     const result = await sendEmail(
-      owner.email,
+      user.email,
       payout.status === PayoutStatus.PAID
         ? `Payout sent: ${formatBDT(payout.netMinor)}`
         : "Your payout did not go through",
-      getPayoutUpdateTemplate(owner.name, salon.name, {
+      getPayoutUpdateTemplate(user.name, name, {
         paid: payout.status === PayoutStatus.PAID,
         amount: formatBDT(payout.netMinor),
         method: payout.method,
@@ -641,7 +936,7 @@ const emailPayoutOwner = async (payout: {
       }),
     );
     console.log(
-      `[payout] ${payout.status} email to the owner of ${salon.name}: ${result.ok ? "sent" : `not sent (${result.error})`}`,
+      `[payout] ${payout.status} email to the owner of ${name}: ${result.ok ? "sent" : `not sent (${result.error})`}`,
     );
   } catch (error) {
     console.error("[payout] owner email failed", error);
@@ -661,31 +956,33 @@ const getMyPayouts = async (user: AccessUser, query: any) => {
   const pageNum = Number(page);
   const limitNum = Number(limit);
 
+  const where = await payoutScope(salonIds);
   const [data, total, balances] = await Promise.all([
     prisma.payout.findMany({
-      where: { salonId: { in: salonIds } },
+      where,
       skip: (pageNum - 1) * limitNum,
       take: limitNum,
       orderBy: { createdAt: "desc" },
-      include: { salon: { select: { id: true, name: true } } },
+      include: PAYOUT_OWNER_INCLUDE,
     }),
-    prisma.payout.count({ where: { salonId: { in: salonIds } } }),
-    Promise.all(salonIds.map((salonId) => getSalonBalance(salonId))),
+    prisma.payout.count({ where }),
+    salonBalances(salonIds),
   ]);
 
   return { meta: { page: pageNum, limit: limitNum, total }, data, balances };
 };
 
 /**
- * Proves the books balance: every appointment's entries must sum to zero.
+ * Proves the books balance: every journal's entries must sum to zero. The
+ * name is historical - a journal is an appointment's id for booking sets, so
+ * appointmentId is returned alongside (null for non-booking journals).
  * Anything listed here is a bug that shipped.
  */
 const findUnbalancedAppointments = async () =>
-  prisma.$queryRaw<Array<{ appointmentId: string; total: number }>>`
-    SELECT "appointmentId", SUM("amountMinor")::int AS total
+  prisma.$queryRaw<Array<{ journalId: string; appointmentId: string | null; total: number }>>`
+    SELECT "journalId", MAX("appointmentId") AS "appointmentId", SUM("amountMinor")::int AS total
     FROM ledger_entries
-    WHERE "appointmentId" IS NOT NULL
-    GROUP BY "appointmentId"
+    GROUP BY "journalId"
     HAVING SUM("amountMinor") <> 0
   `;
 
@@ -702,7 +999,7 @@ export const recordGoodwillCredit = async (
   if (amountMinor <= 0) return;
   if (await hasEntries(db, appointment.id)) return;
 
-  await writeEntries(db, appointment, [
+  await bookingJournal(db, appointment, "booking.goodwill", [
     {
       account: LedgerAccount.CUSTOMER_WALLET,
       amountMinor,
@@ -749,13 +1046,15 @@ const getMyEarnings = async (user: AccessUser, query: any = {}) => {
 
   const [summary, payouts, balances, recentBookings] = await Promise.all([
     getSalonEarnings(salonIds),
-    prisma.payout.findMany({
-      where: { salonId: { in: salonIds } },
-      take: limit,
-      orderBy: { createdAt: "desc" },
-      include: { salon: { select: { id: true, name: true } } },
-    }),
-    Promise.all(salonIds.map((salonId) => getSalonBalance(salonId))),
+    payoutScope(salonIds).then((where) =>
+      prisma.payout.findMany({
+        where,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        include: PAYOUT_OWNER_INCLUDE,
+      }),
+    ),
+    salonBalances(salonIds),
     // The line items behind the totals, so an owner can see which booking a
     // commission came from rather than being asked to trust a single number.
     prisma.appointment.findMany({
@@ -820,6 +1119,7 @@ export const SettlementService = {
   previewPayoutBatch,
   getAllPayouts,
   updatePayoutStatus,
+  transitionPayout,
   assertPayable,
   getMyPayouts,
   getMyEarnings,

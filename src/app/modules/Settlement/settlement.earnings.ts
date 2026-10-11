@@ -5,6 +5,7 @@ import {
   WalletTxType,
 } from "@prisma/client";
 import prisma from "../../shared/prisma";
+import { payoutScope, realPayoutWhere } from "./settlement.buckets";
 import { getSettingSync } from "../../utils/settings";
 import {
   dateOnly,
@@ -123,6 +124,11 @@ export const getCommissionRates = () => ({
   standardCommissionPercent: getSettingSync("booking.commissionPercent"),
 });
 
+/** A completed booking the platform charged commission on (walk-ins may be exempt). */
+const COMMISSIONED = {
+  ledgerEntries: { some: { account: LedgerAccount.PLATFORM_REVENUE } },
+} satisfies Prisma.AppointmentWhereInput;
+
 const emptySalonEarnings = () => ({
   grossBookingsMinor: 0,
   commissionMinor: 0,
@@ -169,8 +175,11 @@ export const getSalonEarnings = async (
   const monthStart = dateOnly(firstOfMonth);
   const monthStartAt = dayStart(firstOfMonth);
 
+  const payoutWhere = await payoutScope(salonIds);
+
   const [
     completed,
+    commissioned,
     depositsApplied,
     depositsHeld,
     commission,
@@ -187,6 +196,11 @@ export const getSalonEarnings = async (
       where: { salonId: { in: salonIds }, status: "COMPLETED" },
       _sum: { totalMinor: true },
       _count: true,
+    }),
+    // The bookings commission was actually charged on (walk-ins are exempt).
+    prisma.appointment.aggregate({
+      where: { salonId: { in: salonIds }, status: "COMPLETED", ...COMMISSIONED },
+      _sum: { totalMinor: true },
     }),
     // The slice of that which reached the salon through us as a deposit.
     prisma.appointment.aggregate({
@@ -221,7 +235,7 @@ export const getSalonEarnings = async (
     }),
     prisma.payout.groupBy({
       by: ["status"],
-      where: { salonId: { in: salonIds } },
+      where: payoutWhere,
       _sum: { netMinor: true },
       _count: true,
     }),
@@ -299,7 +313,9 @@ export const getSalonEarnings = async (
     depositsHeldMinor: sum(depositsHeld._sum.depositMinor),
     payableMinor: sum(payable._sum.amountMinor),
     processingPayoutMinor:
-      byStatus(PayoutStatus.PENDING) + byStatus(PayoutStatus.PROCESSING),
+      byStatus(PayoutStatus.PENDING) +
+      byStatus(PayoutStatus.APPROVED) +
+      byStatus(PayoutStatus.PROCESSING),
     paidOutMinor: byStatus(PayoutStatus.PAID),
     failedPayoutMinor: byStatus(PayoutStatus.FAILED),
     todayGrossMinor: sum(todayGross._sum.totalMinor),
@@ -314,9 +330,11 @@ export const getSalonEarnings = async (
     // What was actually charged over everything billed. Tracks the headline
     // rate now that every completed booking is commissioned at the same rate;
     // it can still drift on rounding, or on bookings billed before the change.
+    // Over the bookings that were commissioned, so exempt walk-ins do not
+    // dilute the rate.
     effectiveCommissionPercent:
-      grossBookingsMinor > 0
-        ? Number(((commissionMinor / grossBookingsMinor) * 100).toFixed(2))
+      sum(commissioned._sum.totalMinor) > 0
+        ? Number(((commissionMinor / sum(commissioned._sum.totalMinor)) * 100).toFixed(2))
         : 0,
     monthly: buildMonthly(keys, monthlyGross, monthlyCommission),
     ...getCommissionRates(),
@@ -359,6 +377,7 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
 
   const [
     completed,
+    commissioned,
     platformRevenue,
     monthRevenue,
     todayRevenue,
@@ -375,6 +394,10 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
       where: { status: "COMPLETED", appointmentDate: inRange, ...realSalon },
       _sum: { totalMinor: true },
       _count: true,
+    }),
+    prisma.appointment.aggregate({
+      where: { status: "COMPLETED", appointmentDate: inRange, ...realSalon, ...COMMISSIONED },
+      _sum: { totalMinor: true },
     }),
     prisma.ledgerEntry.aggregate({
       where: { account: LedgerAccount.PLATFORM_REVENUE, createdAt: inRange, ...realLedger },
@@ -402,7 +425,7 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
     }),
     prisma.payout.groupBy({
       by: ["status"],
-      where: realSalon,
+      where: realPayoutWhere(includeTest),
       _sum: { netMinor: true },
       _count: true,
     }),
@@ -464,6 +487,7 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
   };
 
   const pending = byStatus(PayoutStatus.PENDING);
+  const approved = byStatus(PayoutStatus.APPROVED);
   const processing = byStatus(PayoutStatus.PROCESSING);
   const paid = byStatus(PayoutStatus.PAID);
   const failed = byStatus(PayoutStatus.FAILED);
@@ -475,8 +499,8 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
     todayRevenueMinor: sum(todayRevenue._sum.amountMinor),
     salonPayableMinor: sum(payable._sum.amountMinor),
     salonEarningsMinor: grossBookingsMinor - platformRevenueMinor,
-    pendingPayoutMinor: pending.amountMinor + processing.amountMinor,
-    pendingPayoutCount: pending.count + processing.count,
+    pendingPayoutMinor: pending.amountMinor + approved.amountMinor + processing.amountMinor,
+    pendingPayoutCount: pending.count + approved.count + processing.count,
     paidOutMinor: paid.amountMinor,
     paidPayoutCount: paid.count,
     failedPayoutMinor: failed.amountMinor,
@@ -494,8 +518,8 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
         ? Math.round(grossBookingsMinor / completedBookings)
         : 0,
     effectiveCommissionPercent:
-      grossBookingsMinor > 0
-        ? Number(((platformRevenueMinor / grossBookingsMinor) * 100).toFixed(2))
+      sum(commissioned._sum.totalMinor) > 0
+        ? Number(((platformRevenueMinor / sum(commissioned._sum.totalMinor)) * 100).toFixed(2))
         : 0,
     monthly: buildMonthly(keys, monthlyGross, monthlyCommission),
     ...getCommissionRates(),

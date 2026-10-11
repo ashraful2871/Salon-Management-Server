@@ -83,7 +83,7 @@ export const ACTIONS = {
           proofUrl: p.proofUrl ?? undefined,
           markedPaidById: run.requestedById,
         },
-        { ctx: run.ctx, reason: p.reason },
+        { ctx: run.ctx, reason: p.reason, fourEyesCleared: true },
         tx,
       ),
   }),

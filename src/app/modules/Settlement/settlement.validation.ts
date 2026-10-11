@@ -16,7 +16,8 @@ const runPayoutBatchValidation = z.object({
 
 const updatePayoutStatusValidation = z.object({
   body: z.object({
-    status: z.enum(["PENDING", "PROCESSING", "PAID", "FAILED"]),
+    // Legal moves are PAYOUT_TRANSITIONS; the service answers 409 otherwise.
+    status: z.enum(["APPROVED", "PROCESSING", "PAID", "FAILED", "CANCELLED"]),
     method: z.enum(["BKASH", "BANK"]).optional(),
     // Required when marking PAID - the service enforces that, because a payout
     // with no transfer reference cannot be traced later.
@@ -24,6 +25,8 @@ const updatePayoutStatusValidation = z.object({
     // A link to the transfer screenshot or bank advice. Optional.
     proofUrl: z.string().trim().url().max(500).optional(),
     failureReason: z.string().trim().max(500).optional(),
+    // Required when cancelling - the service enforces it.
+    cancelledReason: z.string().trim().max(500).optional(),
     reason: z.string().trim().max(500).optional(),
   }),
 });

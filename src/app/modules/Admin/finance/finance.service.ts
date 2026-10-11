@@ -2,6 +2,7 @@ import { LedgerAccount, PayoutStatus, Prisma } from "@prisma/client";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../../Error/error";
 import prisma from "../../../shared/prisma";
+import { realPayoutWhere } from "../../Settlement/settlement.buckets";
 import { audit, AuditCtx } from "../../../utils/audit";
 import { getPlatformEarnings } from "../../Settlement/settlement.earnings";
 import { SettlementService } from "../../Settlement/settlement.service";
@@ -89,7 +90,9 @@ const reconciliation = async () => {
 
   const [appointments, users] = await Promise.all([
     prisma.appointment.findMany({
-      where: { id: { in: unbalanced.map((row) => row.appointmentId) } },
+      where: {
+        id: { in: unbalanced.map((row) => row.appointmentId).filter((id): id is string => !!id) },
+      },
       select: { id: true, token: true, appointmentDate: true, salon: { select: { name: true } } },
     }),
     prisma.user.findMany({
@@ -103,8 +106,9 @@ const reconciliation = async () => {
   return {
     ...counts,
     unbalanced: unbalanced.map((row) => {
-      const appt = apptById.get(row.appointmentId);
+      const appt = row.appointmentId ? apptById.get(row.appointmentId) : undefined;
       return {
+        journalId: row.journalId,
         appointmentId: row.appointmentId,
         token: appt?.token ?? null,
         salonName: appt?.salon.name ?? null,
@@ -138,7 +142,7 @@ const listPayouts = async (query: Record<string, unknown>) => {
   const limit = Math.min(100, Math.max(1, Number.parseInt(String(query.limit ?? 20), 10) || 20));
   const where: Prisma.PayoutWhereInput = {
     status: status as PayoutStatus,
-    ...(flag(query.includeTest) ? {} : { salon: { isTest: false } }),
+    ...realPayoutWhere(flag(query.includeTest)),
   };
 
   const [rows, total, counts] = await Promise.all([
@@ -147,12 +151,17 @@ const listPayouts = async (query: Record<string, unknown>) => {
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * limit,
       take: limit,
-      include: { salon: { select: { id: true, name: true, area: true, phone: true } } },
+      include: {
+        salon: { select: { id: true, name: true, area: true, phone: true } },
+        owner: {
+          select: { id: true, businessName: true, user: { select: { name: true } } },
+        },
+      },
     }),
     prisma.payout.count({ where }),
     prisma.payout.groupBy({
       by: ["status"],
-      where: flag(query.includeTest) ? {} : { salon: { isTest: false } },
+      where: realPayoutWhere(flag(query.includeTest)),
       _count: true,
       _sum: { netMinor: true },
     }),
@@ -173,8 +182,10 @@ const listPayouts = async (query: Record<string, unknown>) => {
           return [s, { count: row?._count ?? 0, netMinor: row?._sum.netMinor ?? 0 }];
         }),
       ),
-      items: rows.map((row) => ({
+      items: rows.map(({ owner, ...row }) => ({
         ...row,
+        ownerId: owner.id,
+        businessName: owner.businessName || owner.user.name,
         markedPaidBy: row.markedPaidById
           ? { id: row.markedPaidById, name: nameOf.get(row.markedPaidById) ?? null }
           : null,
