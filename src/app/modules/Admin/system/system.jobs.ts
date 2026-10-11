@@ -183,8 +183,8 @@ const CHECKS: Array<() => Promise<Check | Check[]>> = [
     return { key: "payments.stuck", firing: count > 0, message: `${count} payment(s) PENDING for over an hour`, data: { count } };
   },
   async () => {
-    const count = await prisma.payout.count({ where: { status: "FAILED" } });
-    return { key: "payouts.failed", firing: count > 0, message: `${count} payout(s) FAILED`, data: { count } };
+    const count = await prisma.payout.count({ where: { status: "FAILED", entries: { some: {} } } });
+    return { key: "payouts.failed", firing: count > 0, message: `${count} FAILED payout(s) still hold ledger entries (npm run payouts:release-failed)`, data: { count } };
   },
   async () => {
     const s = await databaseStorage();

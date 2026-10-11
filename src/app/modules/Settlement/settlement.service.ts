@@ -472,6 +472,24 @@ type PayoutStatusChange = {
  * The checks a status change must pass. Run again inside the update, and on
  * its own before a "mark paid" is sent for approval.
  */
+const PAYOUT_FAILED_MESSAGE =
+  "This payout failed. Its money is back in the salon's balance and will go in the next payout.";
+
+/**
+ * Detaches a payout's ledger entries so they count as payable again. Run it in
+ * the transaction that marks the payout FAILED. Returns how many were released.
+ */
+export const releasePayoutEntries = async (
+  db: Prisma.TransactionClient,
+  payoutId: string,
+) => {
+  const released = await db.ledgerEntry.updateMany({
+    where: { payoutId },
+    data: { payoutId: null },
+  });
+  return released.count;
+};
+
 const assertPayable = async (
   id: string,
   payload: PayoutStatusChange,
@@ -488,6 +506,12 @@ const assertPayable = async (
       StatusCodes.CONFLICT,
       "This payout is already marked as paid",
     );
+  }
+
+  // FAILED is terminal: its entries went back to the balance, so settling it
+  // now would pay the same money twice.
+  if (payout.status === PayoutStatus.FAILED) {
+    throw new ApiError(StatusCodes.CONFLICT, PAYOUT_FAILED_MESSAGE);
   }
 
   const paid = payload.status === PayoutStatus.PAID;
@@ -526,10 +550,10 @@ const updatePayoutStatus = async (
   const paid = payload.status === PayoutStatus.PAID;
 
   const run = async (db: Prisma.TransactionClient) => {
-    // Conditional on "not PAID yet": two admins (or an approval and a direct
-    // call) cannot both mark the same payout paid.
+    // Conditional on "not PAID or FAILED yet": two admins (or an approval and
+    // a direct call) cannot both settle the same payout.
     const claimed = await db.payout.updateMany({
-      where: { id, status: { not: PayoutStatus.PAID } },
+      where: { id, status: { notIn: [PayoutStatus.PAID, PayoutStatus.FAILED] } },
       data: {
         status: payload.status,
         method: payload.method,
@@ -542,20 +566,34 @@ const updatePayoutStatus = async (
     });
 
     if (claimed.count === 0) {
-      throw new ApiError(StatusCodes.CONFLICT, "This payout is already marked as paid");
+      const current = await db.payout.findUnique({ where: { id }, select: { status: true } });
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        current?.status === PayoutStatus.FAILED
+          ? PAYOUT_FAILED_MESSAGE
+          : "This payout is already marked as paid",
+      );
     }
 
+    // A failed transfer hands its money back to the salon's balance, so the
+    // next payout run picks it up again.
+    const releasedEntries =
+      payload.status === PayoutStatus.FAILED ? await releasePayoutEntries(db, id) : undefined;
+
     const updated = await db.payout.findUniqueOrThrow({ where: { id } });
+
+    const changes = diff(
+      { status: payout.status, method: payout.method, reference: payout.reference, proofUrl: payout.proofUrl, failureReason: payout.failureReason },
+      { status: updated.status, method: updated.method, reference: updated.reference, proofUrl: updated.proofUrl, failureReason: updated.failureReason },
+    );
 
     await auditTx(db, opts.ctx ?? systemAuditCtx("job"), {
       action: "payout.update",
       entityType: "payout",
       entityId: id,
       salonId: payout.salonId,
-      ...diff(
-        { status: payout.status, method: payout.method, reference: payout.reference, proofUrl: payout.proofUrl, failureReason: payout.failureReason },
-        { status: updated.status, method: updated.method, reference: updated.reference, proofUrl: updated.proofUrl, failureReason: updated.failureReason },
-      ),
+      before: changes.before,
+      after: releasedEntries === undefined ? changes.after : { ...changes.after, releasedEntries },
       reason: opts.reason,
     });
 

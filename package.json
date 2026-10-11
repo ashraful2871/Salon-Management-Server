@@ -31,6 +31,7 @@
     "admin:create": "ts-node-dev --transpile-only ./src/scripts/adminCreate.ts",
     "admin:reset-mfa": "ts-node-dev --transpile-only ./src/scripts/adminResetMfa.ts",
     "wallet:fix-drift": "ts-node-dev --transpile-only ./src/scripts/walletFixDrift.ts",
+    "payouts:release-failed": "ts-node-dev --transpile-only ./src/scripts/releaseFailedPayouts.ts",
     "analytics:backfill": "ts-node-dev --transpile-only ./src/scripts/analyticsBackfill.ts"
   },
   "keywords": [

@@ -413,7 +413,8 @@ const inbox = async (admin: AdminContext): Promise<InboxItem[]> => {
         })),
       prisma.payout
         .aggregate({
-          where: { status: "FAILED" },
+          // FAILED releases its entries; only one still holding them is stuck.
+          where: { status: "FAILED", entries: { some: {} } },
           _count: { _all: true },
           _min: { createdAt: true },
         })

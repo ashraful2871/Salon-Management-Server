@@ -562,7 +562,7 @@ export const getPayoutUpdateTemplate = (
      <p>Our transfer of <strong>${payout.amount}</strong> to ${escapeHtml(salonName)} did not go through.${
        payout.failureReason ? ` Reason: ${escapeHtml(payout.failureReason)}.` : ""
      }</p>
-     <p>The money is still owed to you. Please check your payout details and reply to this email.</p>`
+     <p>Nothing is lost: the money has gone back to your balance automatically and will be sent with your next payout. Please check your payout details, and reply to this email if they need changing.</p>`
   );
 
 /** Another admin asked for a second pair of eyes on a money move. */
