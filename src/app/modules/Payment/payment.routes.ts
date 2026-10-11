@@ -39,6 +39,13 @@ router.post(
   PaymentController.runReconciliation,
 );
 
+// Asks the gateway about one pending top-up now and settles it either way.
+router.post(
+  "/admin/intents/:id/check",
+  adminAuth("finance.reconcile"),
+  PaymentController.recheckIntent,
+);
+
 // Sends a top-up (or part of it) back to the gateway. `:id` is the intent's id
 // or its transactionId.
 router.post(

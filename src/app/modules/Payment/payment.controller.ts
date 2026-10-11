@@ -225,6 +225,29 @@ const runReconciliation = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const recheckIntent = catchAsync(async (req: Request, res: Response) => {
+  const result = await PaymentIntentService.recheckIntent(req.params.id);
+  if (result.status !== result.previousStatus) {
+    await audit(req.auditCtx, {
+      action: "topup.recheck",
+      entityType: "payment_intent",
+      entityId: result.id,
+      before: { status: result.previousStatus },
+      after: { status: result.status, failureReason: result.failureReason },
+    });
+  }
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message:
+      result.status === result.previousStatus
+        ? "The gateway still reports this payment as in progress"
+        : `Top-up is now ${result.status.toLowerCase()}`,
+    data: result,
+  });
+});
+
 const refundTopup = catchAsync(async (req: Request, res: Response) => {
   const amountMinor: number | undefined =
     req.body.amount === undefined ? undefined : toMinor(req.body.amount);
@@ -319,6 +342,7 @@ export const PaymentController = {
   handleBkashCallback,
   getPaymentMethods,
   runReconciliation,
+  recheckIntent,
   refundTopup,
   getAdminTopups,
 };

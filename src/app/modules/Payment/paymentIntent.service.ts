@@ -32,8 +32,12 @@ const MAX_TOPUP_MINOR = 5000000; // BDT 50,000
 
 /** Intents older than this with no IPN get chased by the reconciliation job. */
 const STALE_AFTER_MS = 30 * 60 * 1000;
-/** Past this, a stuck intent is not a hiccup any more - it needs a human. */
-const ALERT_AFTER_MS = 24 * 60 * 60 * 1000;
+/**
+ * Past this, a payment the gateway still calls pending was abandoned (the
+ * customer closed the checkout page) and is closed as EXPIRED. Safe because a
+ * late IPN or success return still credits an EXPIRED intent.
+ */
+const GIVE_UP_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const newTransactionId = (prefix: string) =>
   `${prefix}-${Date.now()}-${randomBytes(4).toString("hex")}`;
@@ -359,8 +363,17 @@ const settleFromGateway = async (intent: PaymentIntent) => {
     return IntentStatus.FAILED;
   }
 
-  // Still genuinely in flight at the gateway - leave it alone.
-  if (result.state === "PENDING") return intent.status;
+  if (result.state === "PENDING") {
+    // Still genuinely in flight at the gateway - leave it alone.
+    if (Date.now() - intent.createdAt.getTime() < GIVE_UP_AFTER_MS) return intent.status;
+
+    await markIntentFailed(
+      intent.transactionId,
+      "Never completed at the gateway within 24 hours",
+      IntentStatus.EXPIRED,
+    );
+    return IntentStatus.EXPIRED;
+  }
 
   const status: TerminalStatus =
     result.state === "CANCELLED"
@@ -550,6 +563,36 @@ const listPaymentMethods = () =>
 let lastReconcileRunAt: Date | null = null;
 export const getLastReconcileAt = () => lastReconcileRunAt;
 
+/**
+ * "Check status" on one stuck top-up: asks its gateway now instead of waiting
+ * for the hourly sweep. `:id` is the intent's id or its transactionId.
+ */
+const recheckIntent = async (intentIdOrTxn: string) => {
+  const intent = await prisma.paymentIntent.findFirst({
+    where: { OR: [{ id: intentIdOrTxn }, { transactionId: intentIdOrTxn }] },
+  });
+  if (!intent) throw new ApiError(StatusCodes.NOT_FOUND, "Payment not found");
+
+  const before = intent.status;
+  if (isOpen(before)) {
+    try {
+      await settleFromGateway(intent);
+    } catch (error) {
+      console.error(`[payment.recheck] could not reach the gateway for intent=${intent.id}`, error);
+      throw new ApiError(
+        StatusCodes.BAD_GATEWAY,
+        "Couldn't reach the payment gateway. Try again in a few minutes.",
+      );
+    }
+  }
+
+  const after = await prisma.paymentIntent.findUniqueOrThrow({
+    where: { id: intent.id },
+    select: { id: true, transactionId: true, status: true, failureReason: true },
+  });
+  return { ...after, previousStatus: before };
+};
+
 const reconcilePendingIntents = async () => {
   lastReconcileRunAt = new Date();
   const staleBefore = new Date(Date.now() - STALE_AFTER_MS);
@@ -572,13 +615,7 @@ const reconcilePendingIntents = async () => {
 
       if (status === IntentStatus.SUCCESS) {
         credited += 1;
-      } else if (status === IntentStatus.INITIATED || status === IntentStatus.PENDING) {
-        if (Date.now() - intent.createdAt.getTime() > ALERT_AFTER_MS) {
-          console.error(
-            `[payment.reconcile] intent=${intent.id} has been pending for over 24h - needs manual review`,
-          );
-        }
-      } else {
+      } else if (!isOpen(status)) {
         failed += 1;
       }
     } catch (error) {
@@ -1080,6 +1117,7 @@ export const PaymentIntentService = {
   listPaymentMethods,
   markIntentFailed,
   reconcilePendingIntents,
+  recheckIntent,
   refundTopup,
   refundRequestInfo,
   listTopupsForAdmin,
