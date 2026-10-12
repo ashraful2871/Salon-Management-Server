@@ -565,6 +565,66 @@ export const getPayoutUpdateTemplate = (
      <p>Nothing is lost: the money has gone back to your balance automatically and will be sent with your next payout. Please check your payout details, and reply to this email if they need changing.</p>`
   );
 
+/**
+ * Sent to the owner's sign-in email and the business email when a payout
+ * account is added. A hijacked account redirecting payouts is the attack this
+ * warns about, so it goes to every address we have.
+ */
+export const getPayoutAccountAddedTemplate = (notice: {
+  ownerName: string;
+  account: string;
+  cooldownHours: number | null;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    "A payout account was added",
+    `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>A new payout account was added to your SalonKhuji business: <strong>${escapeHtml(notice.account)}</strong>.</p>
+     <p>Our finance team checks every new account before money is sent to it.${
+       notice.cooldownHours
+         ? ` Payouts keep going to your current account for at least ${notice.cooldownHours} hours.`
+         : ""
+     }</p>
+     <p style="color:#c0392b;font-size:13px;">If this wasn't you, <a href="${escapeHtml(notice.contactUrl)}">contact us</a> straight away and change your password - someone may be trying to redirect your payouts.</p>`
+  );
+
+/** Finance verified or rejected a payout account. */
+export const getPayoutAccountDecisionTemplate = (notice: {
+  ownerName: string;
+  account: string;
+  verified: boolean;
+  reason?: string | null;
+  settingsUrl: string;
+}) =>
+  moneyLayout(
+    notice.verified ? "Payout account verified" : "Payout account not approved",
+    notice.verified
+      ? `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>Your payout account <strong>${escapeHtml(notice.account)}</strong> is verified. Future payouts go to it.</p>`
+      : `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>We could not verify your payout account <strong>${escapeHtml(notice.account)}</strong>.</p>
+     ${notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : ""}
+     <p>You can <a href="${escapeHtml(notice.settingsUrl)}">add the account again</a> with the details corrected.</p>`
+  );
+
+/** Finance verified or rejected the business's KYC details. */
+export const getKycDecisionTemplate = (notice: {
+  ownerName: string;
+  verified: boolean;
+  reason?: string | null;
+  settingsUrl: string;
+}) =>
+  moneyLayout(
+    notice.verified ? "Business details verified" : "Business details need changes",
+    notice.verified
+      ? `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>Your business details (legal name, trade licence and tax numbers) are verified.</p>`
+      : `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>We could not verify your business details.</p>
+     ${notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : ""}
+     <p>Please <a href="${escapeHtml(notice.settingsUrl)}">update them</a> and submit again.</p>`
+  );
+
 /** Another admin asked for a second pair of eyes on a money move. */
 export const getApprovalRequestTemplate = (
   requesterName: string,

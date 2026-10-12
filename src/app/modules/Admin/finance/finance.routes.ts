@@ -8,6 +8,7 @@ import validateRequest from "../../../middlewares/validateRequest";
 import { SettlementService } from "../../Settlement/settlement.service";
 import { adminAuth, adminOnly, requireStepUp } from "../admin.middleware";
 import { exportCsv } from "./finance.export";
+import { PayoutAccountReview } from "./finance.payoutAccounts";
 import { AdminFinanceService, parseRange } from "./finance.service";
 
 /**
@@ -133,6 +134,104 @@ router.get(
   adminOnly,
   adminSensitiveLimiter,
   catchAsync(exportCsv),
+);
+
+const reasonBody = z.object({
+  body: z.object({ reason: z.string().trim().min(3, "A reason is required").max(500) }),
+});
+
+// Payout accounts & KYC: list (masked), reveal (users.view_pii, audited),
+// verify / reject (tier 3).
+router.get(
+  "/payout-accounts",
+  adminAuth("finance.payout_accounts"),
+  adminOnly,
+  catchAsync(async (req: Request, res: Response) => {
+    const { meta, data } = await PayoutAccountReview.listAccounts(req.query);
+    ok(res, "Payout accounts", data, meta);
+  }),
+);
+
+router.get(
+  "/payout-accounts/:id/reveal",
+  adminAuth("finance.payout_accounts", "users.view_pii"),
+  adminOnly,
+  adminSensitiveLimiter,
+  catchAsync(async (req: Request, res: Response) => {
+    ok(res, "Account number", await PayoutAccountReview.reveal(req.auditCtx, req.params.id));
+  }),
+);
+
+router.post(
+  "/payout-accounts/:id/verify",
+  adminAuth("finance.payout_accounts"),
+  adminOnly,
+  adminSensitiveLimiter,
+  requireStepUp(),
+  catchAsync(async (req: Request, res: Response) => {
+    const data = await PayoutAccountReview.decideAccount(
+      req.auditCtx,
+      req.user!.userId,
+      req.params.id,
+      { verified: true },
+    );
+    ok(res, "Payout account verified", data);
+  }),
+);
+
+router.post(
+  "/payout-accounts/:id/reject",
+  adminAuth("finance.payout_accounts"),
+  adminOnly,
+  validateRequest(reasonBody, { replaceBody: true }),
+  adminSensitiveLimiter,
+  requireStepUp(),
+  catchAsync(async (req: Request, res: Response) => {
+    const data = await PayoutAccountReview.decideAccount(
+      req.auditCtx,
+      req.user!.userId,
+      req.params.id,
+      { verified: false, reason: req.body.reason },
+    );
+    ok(res, "Payout account rejected", data);
+  }),
+);
+
+router.get(
+  "/kyc",
+  adminAuth("finance.payout_accounts"),
+  adminOnly,
+  catchAsync(async (req: Request, res: Response) => {
+    const { meta, data } = await PayoutAccountReview.listKyc(req.query);
+    ok(res, "Business KYC", data, meta);
+  }),
+);
+
+router.post(
+  "/kyc/:ownerId/verify",
+  adminAuth("finance.payout_accounts"),
+  adminOnly,
+  adminSensitiveLimiter,
+  requireStepUp(),
+  catchAsync(async (req: Request, res: Response) => {
+    ok(res, "Business details verified", await PayoutAccountReview.decideKyc(req.auditCtx, req.params.ownerId, { verified: true }));
+  }),
+);
+
+router.post(
+  "/kyc/:ownerId/reject",
+  adminAuth("finance.payout_accounts"),
+  adminOnly,
+  validateRequest(reasonBody, { replaceBody: true }),
+  adminSensitiveLimiter,
+  requireStepUp(),
+  catchAsync(async (req: Request, res: Response) => {
+    const data = await PayoutAccountReview.decideKyc(req.auditCtx, req.params.ownerId, {
+      verified: false,
+      reason: req.body.reason,
+    });
+    ok(res, "Business details rejected", data);
+  }),
 );
 
 export const AdminFinanceRoutes = router;

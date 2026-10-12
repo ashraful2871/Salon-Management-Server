@@ -79,6 +79,7 @@ interface Config {
   mfa: {
     key: string;
   };
+  payoutEncryptionKey: string;
   google: {
     clientId: string;
     clientSecret: string;
@@ -310,6 +311,12 @@ const config = {
   mfa: {
     key: env("MFA_ENCRYPTION_KEY"),
   },
+
+  /**
+   * Payout bank account numbers are AES-256-GCM encrypted with this key (32
+   * bytes, base64). Checked at first use, not at boot.
+   */
+  payoutEncryptionKey: env("PAYOUT_ENCRYPTION_KEY"),
 
   /**
    * Google sign-in (Authorization Code + PKCE). The redirect lands on the

@@ -2,6 +2,8 @@ import {
   Appointment,
   CommissionScope,
   LedgerAccount,
+  PayoutAccount,
+  PayoutAccountStatus,
   PayoutStatus,
   Prisma,
 } from "@prisma/client";
@@ -337,7 +339,62 @@ type BusinessGroup = {
   oldestAt: Date;
 };
 
-type SkipReason = "below minimum" | "dues";
+type SkipReason =
+  | "below minimum"
+  | "dues"
+  | "frozen"
+  | "no verified account"
+  | "account cooldown";
+
+type Destination = { account: PayoutAccount | null; frozen: boolean };
+
+/**
+ * Where each business would be paid: its VERIFIED payout account (at most one;
+ * verifying a new one disables the old) and whether Finance froze its payouts.
+ */
+const payoutDestinations = async (
+  ownerIds: string[],
+  db: Prisma.TransactionClient = prisma,
+): Promise<Map<string, Destination>> => {
+  if (ownerIds.length === 0) return new Map();
+  const [owners, accounts] = await Promise.all([
+    db.salonOwner.findMany({
+      where: { id: { in: ownerIds } },
+      select: { id: true, payoutsFrozen: true },
+    }),
+    db.payoutAccount.findMany({
+      where: { ownerId: { in: ownerIds }, status: PayoutAccountStatus.VERIFIED },
+      orderBy: { verifiedAt: "desc" },
+    }),
+  ]);
+  const map = new Map<string, Destination>();
+  for (const owner of owners) {
+    map.set(owner.id, {
+      frozen: owner.payoutsFrozen,
+      account: accounts.find((a) => a.ownerId === owner.id) ?? null,
+    });
+  }
+  return map;
+};
+
+/** Frozen, no verified account, or the account is still in its cooldown. */
+const destinationSkip = (dest: Destination | undefined, now = new Date()): SkipReason | null =>
+  dest?.frozen
+    ? "frozen"
+    : !dest?.account
+      ? "no verified account"
+      : dest.account.cooldownUntil && dest.account.cooldownUntil > now
+        ? "account cooldown"
+        : null;
+
+/** What the payout records about where it is going (no full number). */
+const destinationSnapshot = (account: PayoutAccount) => ({
+  type: account.type,
+  accountName: account.accountName,
+  last4: account.last4,
+  bankName: account.bankName,
+  routingNumber: account.routingNumber,
+});
 
 /**
  * Every business's available SALON_PAYABLE up to `cutoff`, netted across its
@@ -453,11 +510,16 @@ const previewPayoutBatch = async (input?: {
 }) => {
   const { cutoff, holdDays, minMinor } = await batchRules(input?.periodEnd);
   const groups = await payableBusinesses(cutoff, input?.db, input?.ownerId);
+  const destinations = await payoutDestinations(
+    groups.map((group) => group.ownerId),
+    input?.db,
+  );
 
   const rows: Array<ReturnType<typeof businessRow>> = [];
   const skipped: Array<ReturnType<typeof businessRow> & { reason: SkipReason }> = [];
   for (const group of groups) {
-    const reason = skipReason(group.netMinor, minMinor);
+    const reason =
+      skipReason(group.netMinor, minMinor) ?? destinationSkip(destinations.get(group.ownerId));
     if (reason) skipped.push({ ...businessRow(group), reason });
     else rows.push(businessRow(group));
   }
@@ -495,6 +557,10 @@ const runPayoutBatch = async (
   const auditCtx = opts.ctx ?? systemAuditCtx("job");
   const { cutoff: periodEnd, minMinor } = await batchRules(input?.periodEnd);
   const groups = await payableBusinesses(periodEnd, input?.db, input?.ownerId);
+  const destinations = await payoutDestinations(
+    groups.map((group) => group.ownerId),
+    input?.db,
+  );
   const inTx = <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) =>
     input?.db ? fn(input.db) : prisma.$transaction(fn);
 
@@ -524,10 +590,21 @@ const runPayoutBatch = async (
       continue;
     }
 
-    // Phase 3: verified account - skip (reason "no verified account") until
-    // the business has a verified payout account past its cooldown.
+    // Only to a verified account past its cooldown, and never while frozen.
+    const destReason = destinationSkip(destinations.get(group.ownerId));
+    if (destReason) {
+      skipped.push({ ...pick(row), reason: destReason });
+      continue;
+    }
+    const account = destinations.get(group.ownerId)!.account!;
 
     const payout = await inTx(async (tx) => {
+      // Re-read under the transaction: Finance may have replaced it since.
+      const stillVerified = await tx.payoutAccount.count({
+        where: { id: account.id, status: PayoutAccountStatus.VERIFIED },
+      });
+      if (stillVerified === 0) return null;
+
       const entries = await tx.ledgerEntry.findMany({
         where: {
           ownerId: group.ownerId,
@@ -570,6 +647,8 @@ const runPayoutBatch = async (
           commissionMinor,
           netMinor: settledNet,
           status: PayoutStatus.PENDING,
+          payoutAccountId: account.id,
+          destinationSnapshot: destinationSnapshot(account),
         },
       });
 
