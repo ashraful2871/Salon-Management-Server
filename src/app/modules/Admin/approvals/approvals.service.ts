@@ -75,6 +75,27 @@ export const requireApprovalIf = async (
   const holds = typeof condition === "function" ? await condition() : condition;
   if (!holds) return false;
 
+  const approval = await requestApproval(req, action, request);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.ACCEPTED,
+    success: true,
+    message: "Sent for approval",
+    data: { status: "APPROVAL_REQUIRED", approvalId: approval.id },
+  });
+  return true;
+};
+
+/**
+ * Records a PENDING approval, audits the request and emails the approvers.
+ * `requireApprovalIf` for one action per request; bulk routes call it per item
+ * and report `APPROVAL_REQUIRED` in that item's result.
+ */
+export const requestApproval = async (
+  req: Request,
+  action: ApprovalAction,
+  request: { payload: Record<string, unknown>; summary: string; reason: string },
+) => {
   const requestedById = req.user!.userId;
   const reason = request.reason.trim();
   if (!reason) {
@@ -106,13 +127,7 @@ export const requireApprovalIf = async (
     requestedById,
   );
 
-  sendResponse(res, {
-    statusCode: StatusCodes.ACCEPTED,
-    success: true,
-    message: "Sent for approval",
-    data: { status: "APPROVAL_REQUIRED", approvalId: approval.id },
-  });
-  return true;
+  return approval;
 };
 
 /** The thresholds the direct routes compare against. */

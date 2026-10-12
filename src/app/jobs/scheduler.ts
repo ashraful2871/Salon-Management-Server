@@ -12,6 +12,7 @@ import {
 import { AdminUsersService } from "../modules/Admin/users/users.service";
 import { AdminApprovalsService } from "../modules/Admin/approvals/approvals.service";
 import { AdminSupportService } from "../modules/Admin/support/support.service";
+import { runWeeklyPayouts } from "../modules/Settlement/settlement.weekly";
 import {
   rollupBeforeTryOnPurge,
   runAnalyticsRetention,
@@ -270,6 +271,8 @@ export const JOBS: JobDef[] = [
   { name: "approvals.expire", everyMs: HOUR, safeToRunNow: true, run: AdminApprovalsService.expireStale },
   // Tickets RESOLVED more than 7 days ago → CLOSED.
   { name: "support.autoclose", everyMs: 24 * HOUR, safeToRunNow: false, run: AdminSupportService.autoClose },
+  // Monday 09:00 Dhaka (payouts.weekday): raise the week's payouts, once per ISO week.
+  { name: "payouts.weekly", everyMs: HOUR, safeToRunNow: false, run: () => runWeeklyPayouts() },
   // Daily metrics for D-1…D-3 (+ yesterday's closing balances once a day),
   // then the raw daily tables trimmed after their metrics are rolled up.
   { name: "analytics.rollup", everyMs: HOUR, safeToRunNow: true, run: runAnalyticsRollup },

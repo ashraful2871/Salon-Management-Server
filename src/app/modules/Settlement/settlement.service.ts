@@ -19,6 +19,7 @@ import { AccessUser, scopeSalonIds } from "../../utils/salonAccess";
 import { sendEmail } from "../../utils/emailSender";
 import { getPayoutUpdateTemplate } from "../../utils/emailTemplates";
 import { formatBDT } from "../../utils/money";
+import config from "../../../config";
 
 /**
  * Who is owed what, and why.
@@ -911,7 +912,7 @@ export const transitionPayout = async (
       if ((error as { code?: string }).code === "P2002") {
         throw new ApiError(
           StatusCodes.CONFLICT,
-          "This transfer reference is already recorded on another payout",
+          "This reference is already used",
         );
       }
       throw error;
@@ -976,6 +977,16 @@ const updatePayoutStatus = (
   return transitionPayout(id, status, rest, opts, tx);
 };
 
+const DESTINATION_LABEL: Record<string, string> = { BKASH: "bKash", NAGAD: "Nagad", BANK: "Bank" };
+
+/** "bKash ••• 4821" / "City Bank ••• 4821" from a payout's destinationSnapshot, or null. */
+export const destinationLabel = (snapshot: unknown) => {
+  const s = snapshot as { type?: string; last4?: string; bankName?: string | null } | null;
+  if (!s?.type || !s.last4) return null;
+  const name = s.type === "BANK" ? s.bankName || "Bank" : (DESTINATION_LABEL[s.type] ?? s.type);
+  return `${name} ••• ${s.last4}`;
+};
+
 /** PAID and FAILED both reach the business owner. Never throws. */
 const emailPayoutOwner = async (payout: {
   ownerId: string;
@@ -985,6 +996,7 @@ const emailPayoutOwner = async (payout: {
   method: string | null;
   reference: string | null;
   failureReason: string | null;
+  destinationSnapshot: Prisma.JsonValue | null;
 }) => {
   try {
     const owner = await prisma.salonOwner.findUnique({
@@ -1012,6 +1024,8 @@ const emailPayoutOwner = async (payout: {
         method: payout.method,
         reference: payout.reference,
         failureReason: payout.failureReason,
+        destination: destinationLabel(payout.destinationSnapshot),
+        settingsUrl: `${config.frontend_url}/dashboard/money/payout-settings`,
       }),
     );
     console.log(
