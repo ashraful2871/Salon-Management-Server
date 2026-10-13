@@ -4,6 +4,7 @@ import { payoutCodeLimiter } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { BUSINESS_ROLES } from "../../utils/salonAccess";
 import { OwnerController } from "./owner.controller";
+import { OwnerMoney } from "./owner.money";
 import { OwnerPayoutAccount } from "./owner.payoutAccount";
 import { OwnerValidation } from "./owner.validation";
 
@@ -31,5 +32,12 @@ router.patch(
   validateRequest(OwnerValidation.updateKyc, { replaceBody: true }),
   OwnerPayoutAccount.updateKyc,
 );
+
+// Money hub: the business owner only (assertOwnerOf in each).
+router.get("/money/summary", auth("SALON_OWNER"), OwnerMoney.summary);
+router.get("/money/transactions.csv", auth("SALON_OWNER"), OwnerMoney.transactionsCsv);
+router.get("/money/transactions", auth("SALON_OWNER"), OwnerMoney.transactions);
+router.get("/money/payouts", auth("SALON_OWNER"), OwnerMoney.payouts);
+router.get("/money/payouts/:id", auth("SALON_OWNER"), OwnerMoney.payout);
 
 export const OwnerRoutes = router;

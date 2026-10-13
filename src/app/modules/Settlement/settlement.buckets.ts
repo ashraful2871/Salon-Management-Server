@@ -35,7 +35,7 @@ export const nextPayoutDate = (weekday: number, now = new Date()) => {
   return new Date(todayAtNine + days * DAY_MS);
 };
 
-const IN_PAYOUT: PayoutStatus[] = [
+export const IN_PAYOUT: PayoutStatus[] = [
   PayoutStatus.PENDING,
   PayoutStatus.APPROVED,
   PayoutStatus.PROCESSING,
