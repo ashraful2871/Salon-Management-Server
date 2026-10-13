@@ -99,6 +99,22 @@ export const eventsLimiter = rateLimit({
  * a typo costs a request, but each code still locks after 5 wrong attempts and
  * issueOtp throttles sends on its own.
  */
+/**
+ * Payout-account codes: 5 emails an hour per account, on top of issueOtp's own
+ * resend throttle. auth() must run first.
+ */
+export const payoutCodeLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: userOrClientKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many codes requested. Try again in an hour.",
+  },
+});
+
 /** Review reports: 20 an hour per account. auth() must run first. */
 export const reviewReportLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,

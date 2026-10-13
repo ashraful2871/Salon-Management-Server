@@ -87,3 +87,33 @@ model Payout {
   @@index([status, createdAt])
   @@map("payouts")
 }
+
+/// Where a business is paid. A new account is PENDING_VERIFICATION until
+/// Finance verifies it; payouts only go to a VERIFIED account past its
+/// cooldownUntil. Bank numbers are AES-256-GCM (fieldCrypto); only last4 is
+/// ever shown without users.view_pii.
+model PayoutAccount {
+  id               String              @id @default(uuid())
+  ownerId          String
+  type             PayoutAccountType
+  accountName      String
+  walletNumber     String? // bKash / Nagad, 01XXXXXXXXX
+  bankName         String?
+  branchName       String?
+  routingNumber    String? // 9 digits
+  accountNumberEnc String? // fieldCrypto
+  last4            String
+  status           PayoutAccountStatus @default(PENDING_VERIFICATION)
+  verifiedById     String?
+  verifiedAt       DateTime?
+  rejectionReason  String?
+  cooldownUntil    DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  owner SalonOwner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, status])
+  @@index([status, createdAt])
+  @@map("payout_accounts")
+}

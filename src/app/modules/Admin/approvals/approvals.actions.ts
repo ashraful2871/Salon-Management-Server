@@ -37,7 +37,8 @@ export type PayoutMarkPaidPayload = {
   proofUrl?: string | null;
   reason?: string | null;
 };
-export type SettingUpdatePayload = { key: string; value: unknown; reason: string };
+export type PayoutApprovePayload = { payoutId: string; reason?: string | null };
+export type SettingUpdatePayload ={ key: string; value: unknown; reason: string };
 
 const define = <P>(def: ActionDef<P>) => def;
 
@@ -84,6 +85,20 @@ export const ACTIONS = {
           markedPaidById: run.requestedById,
         },
         { ctx: run.ctx, reason: p.reason, fourEyesCleared: true },
+        tx,
+      ),
+  }),
+  // The approver becomes the payout's approvedById, so whoever requested it
+  // can then mark it paid without a second request.
+  "payout.approve": define<PayoutApprovePayload>({
+    permission: () => "finance.payouts",
+    transactional: true,
+    execute: (p, run, tx) =>
+      SettlementService.transitionPayout(
+        p.payoutId,
+        PayoutStatus.APPROVED,
+        {},
+        { ctx: run.ctx, reason: p.reason ?? undefined },
         tx,
       ),
   }),

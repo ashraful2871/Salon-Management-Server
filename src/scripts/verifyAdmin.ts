@@ -38,7 +38,7 @@ const EXPECTED: Record<string, string> = {
   OPERATIONS:
     "users.view users.view_pii users.manage users.role users.impersonate salons.view salons.review salons.manage bookings.view bookings.manage appeals.resolve finance.view finance.reconcile reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage system.view system.operate audit.view agents.manage",
   FINANCE:
-    "users.view users.view_pii salons.view bookings.view finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export analytics.view analytics.export settings.view system.view audit.view",
+    "users.view users.view_pii salons.view bookings.view finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export finance.payout_accounts analytics.view analytics.export settings.view system.view audit.view",
   SUPPORT:
     "users.view users.view_pii users.manage users.impersonate salons.view bookings.view bookings.manage appeals.resolve support.view support.reply support.assign",
   MODERATOR: "users.view users.manage salons.view bookings.view reviews.moderate support.view",
@@ -47,7 +47,7 @@ const EXPECTED: Record<string, string> = {
 };
 
 const FULL_LIST =
-  "users.view users.view_pii users.manage users.role users.delete users.impersonate salons.view salons.review salons.manage salons.delete bookings.view bookings.manage appeals.resolve finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage settings.manage system.view system.operate audit.view agents.manage team.manage";
+  "users.view users.view_pii users.manage users.role users.delete users.impersonate salons.view salons.review salons.manage salons.delete bookings.view bookings.manage appeals.resolve finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export finance.payout_accounts reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage settings.manage system.view system.operate audit.view agents.manage team.manage";
 
 const sorted = (s: string | readonly string[]) =>
   [...(typeof s === "string" ? s.split(" ") : s)].sort().join(" ");

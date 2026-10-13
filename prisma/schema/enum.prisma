@@ -101,6 +101,27 @@ enum TokenType {
 enum OtpPurpose {
   EMAIL_VERIFY
   EMAIL_CHANGE
+  PAYOUT_ACCOUNT
+}
+
+enum PayoutAccountType {
+  BKASH
+  NAGAD
+  BANK
+}
+
+enum PayoutAccountStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  REJECTED
+  DISABLED
+}
+
+enum KycStatus {
+  NONE
+  SUBMITTED
+  VERIFIED
+  REJECTED
 }
 
 enum OtpChannel {

@@ -548,21 +548,133 @@ export const getAppealResolvedTemplate = (
 export const getPayoutUpdateTemplate = (
   ownerName: string,
   salonName: string,
-  payout: { paid: boolean; amount: string; method?: string | null; reference?: string | null; failureReason?: string | null }
+  payout: {
+    paid: boolean;
+    amount: string;
+    method?: string | null;
+    reference?: string | null;
+    failureReason?: string | null;
+    /** "bKash ••• 4821", from the payout's destination snapshot. */
+    destination?: string | null;
+    /** The owner's payout settings page, linked from a failure. */
+    settingsUrl?: string;
+  }
 ) =>
   moneyLayout(
     payout.paid ? "Payout sent" : "Payout failed",
     payout.paid
       ? `<p>Hi ${escapeHtml(ownerName)},</p>
-     <p>We sent <strong>${payout.amount}</strong> to ${escapeHtml(salonName)}${
-       payout.method ? ` by ${escapeHtml(payout.method === "BKASH" ? "bKash" : "bank transfer")}` : ""
-     }.</p>${payout.reference ? `<p>Transfer reference: <strong>${escapeHtml(payout.reference)}</strong></p>` : ""}
+     <p><strong>${payout.amount}</strong> sent to ${
+       payout.destination
+         ? escapeHtml(payout.destination)
+         : `${escapeHtml(salonName)}${payout.method ? ` by ${escapeHtml(payout.method === "BKASH" ? "bKash" : "bank transfer")}` : ""}`
+     }${payout.reference ? `, reference <strong>${escapeHtml(payout.reference)}</strong>` : ""}.</p>
      <p style="color:#7f8c8d;font-size:13px;">The bookings behind it are on your Earnings page.</p>`
       : `<p>Hi ${escapeHtml(ownerName)},</p>
-     <p>Our transfer of <strong>${payout.amount}</strong> to ${escapeHtml(salonName)} did not go through.${
+     <p>Our transfer of <strong>${payout.amount}</strong> to ${escapeHtml(payout.destination ?? salonName)} did not go through.${
        payout.failureReason ? ` Reason: ${escapeHtml(payout.failureReason)}.` : ""
      }</p>
-     <p>Nothing is lost: the money has gone back to your balance automatically and will be sent with your next payout. Please check your payout details, and reply to this email if they need changing.</p>`
+     <p>Nothing is lost: the money is back in your balance and will be sent with your next payout.</p>
+     <p>${
+       payout.settingsUrl
+         ? `<a href="${escapeHtml(payout.settingsUrl)}">Fix your payout account</a> if its details are wrong.`
+         : "Please check your payout details."
+     }</p>`
+  );
+
+/** The weekly batch raised a payout for this business. */
+export const getPayoutPreparedTemplate = (notice: {
+  ownerName: string;
+  amount: string;
+  destination: string | null;
+  expectedBy: string;
+}) =>
+  moneyLayout(
+    "Your payout is being prepared",
+    `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>A payout of <strong>${escapeHtml(notice.amount)}</strong> is being prepared${
+       notice.destination ? ` for ${escapeHtml(notice.destination)}` : ""
+     }, expected by <strong>${escapeHtml(notice.expectedBy)}</strong>.</p>
+     <p style="color:#7f8c8d;font-size:13px;">We email you again with the transfer reference once it is sent.</p>`
+  );
+
+/** The weekly batch's summary for Finance. */
+export const getPayoutBatchSummaryTemplate = (summary: {
+  week: string;
+  count: number;
+  total: string;
+  skipped: { reason: string; count: number }[];
+  url: string;
+}) =>
+  moneyLayout(
+    "Weekly payouts raised",
+    `<p>The payout batch for the week of <strong>${escapeHtml(summary.week)}</strong> ran.</p>
+     <p><strong>${summary.count}</strong> payout(s), <strong>${escapeHtml(summary.total)}</strong> in total, are waiting for approval.</p>${
+       summary.skipped.length
+         ? `<p>Skipped:</p><ul>${summary.skipped.map((s) => `<li>${escapeHtml(s.reason)}: ${s.count}</li>`).join("")}</ul>`
+         : ""
+     }
+     <p><a href="${escapeHtml(summary.url)}">Open payouts</a></p>`
+  );
+
+/**
+ * Sent to the owner's sign-in email and the business email when a payout
+ * account is added. A hijacked account redirecting payouts is the attack this
+ * warns about, so it goes to every address we have.
+ */
+export const getPayoutAccountAddedTemplate = (notice: {
+  ownerName: string;
+  account: string;
+  cooldownHours: number | null;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    "A payout account was added",
+    `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>A new payout account was added to your SalonKhuji business: <strong>${escapeHtml(notice.account)}</strong>.</p>
+     <p>Our finance team checks every new account before money is sent to it.${
+       notice.cooldownHours
+         ? ` Payouts keep going to your current account for at least ${notice.cooldownHours} hours.`
+         : ""
+     }</p>
+     <p style="color:#c0392b;font-size:13px;">If this wasn't you, <a href="${escapeHtml(notice.contactUrl)}">contact us</a> straight away and change your password - someone may be trying to redirect your payouts.</p>`
+  );
+
+/** Finance verified or rejected a payout account. */
+export const getPayoutAccountDecisionTemplate = (notice: {
+  ownerName: string;
+  account: string;
+  verified: boolean;
+  reason?: string | null;
+  settingsUrl: string;
+}) =>
+  moneyLayout(
+    notice.verified ? "Payout account verified" : "Payout account not approved",
+    notice.verified
+      ? `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>Your payout account <strong>${escapeHtml(notice.account)}</strong> is verified. Future payouts go to it.</p>`
+      : `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>We could not verify your payout account <strong>${escapeHtml(notice.account)}</strong>.</p>
+     ${notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : ""}
+     <p>You can <a href="${escapeHtml(notice.settingsUrl)}">add the account again</a> with the details corrected.</p>`
+  );
+
+/** Finance verified or rejected the business's KYC details. */
+export const getKycDecisionTemplate = (notice: {
+  ownerName: string;
+  verified: boolean;
+  reason?: string | null;
+  settingsUrl: string;
+}) =>
+  moneyLayout(
+    notice.verified ? "Business details verified" : "Business details need changes",
+    notice.verified
+      ? `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>Your business details (legal name, trade licence and tax numbers) are verified.</p>`
+      : `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p>We could not verify your business details.</p>
+     ${notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : ""}
+     <p>Please <a href="${escapeHtml(notice.settingsUrl)}">update them</a> and submit again.</p>`
   );
 
 /** Another admin asked for a second pair of eyes on a money move. */

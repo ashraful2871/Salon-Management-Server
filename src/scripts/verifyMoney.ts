@@ -209,8 +209,50 @@ const run = async (tx: Prisma.TransactionClient) => {
   await availableJournal(mirpur.id, 50000);
   await availableJournal(dhanmondi.id, -30000);
   const batch = () => SettlementService.runPayoutBatch({ ownerId: owner.id, db: tx }, ctx);
+
+  // ------------------------------------------------------------ destination
+  // Payable money, but nowhere verified to send it: skipped, nothing claimed.
+  const skippedFor = async () =>
+    (await batch()).skipped.find((row) => row.ownerId === owner.id)?.reason ?? "raised";
+  if (minMinor <= 50000) {
+    const noAccount = await skippedFor();
+    check("owner without verified account is skipped", noAccount === "no verified account", noAccount);
+
+    const account = await tx.payoutAccount.create({
+      data: {
+        ownerId: owner.id,
+        type: "BKASH",
+        accountName: "Verify Owner",
+        walletNumber: "01712345678",
+        last4: "5678",
+        status: "VERIFIED",
+        verifiedAt: new Date(),
+        cooldownUntil: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+    const cooling = await skippedFor();
+    check("verified account in cooldown is skipped", cooling === "account cooldown", cooling);
+
+    await tx.payoutAccount.update({ where: { id: account.id }, data: { cooldownUntil: null } });
+    await tx.salonOwner.update({ where: { id: owner.id }, data: { payoutsFrozen: true } });
+    const frozen = await skippedFor();
+    check("frozen business is skipped", frozen === "frozen", frozen);
+    await tx.salonOwner.update({ where: { id: owner.id }, data: { payoutsFrozen: false } });
+  } else {
+    skip("destination skips", `payouts.minMinor is ${minMinor}`);
+  }
+
   const first = await batch();
   const p1 = first.created[0];
+  if (p1) {
+    const row = await tx.payout.findUniqueOrThrow({ where: { id: p1.payoutId } });
+    const snap = row.destinationSnapshot as { type?: string; last4?: string } | null;
+    check(
+      "payout stores account id + destination snapshot",
+      !!row.payoutAccountId && snap?.type === "BKASH" && snap.last4 === "5678",
+      JSON.stringify(snap),
+    );
+  }
   if (minMinor <= 50000) {
     check(
       "Mirpur +800 / Dhanmondi −300 → one payout of ৳500",
