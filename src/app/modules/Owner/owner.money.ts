@@ -41,7 +41,7 @@ export const TRANSACTION_TYPES = [
 ] as const;
 type TransactionType = (typeof TRANSACTION_TYPES)[number];
 
-const TYPE_DESCRIPTIONS: Record<Exclude<TransactionType, "payout_adjustment">, string[]> = {
+export const TYPE_DESCRIPTIONS: Record<Exclude<TransactionType, "payout_adjustment">, string[]> = {
   booking: ["Deposit owed to salon"],
   no_show: ["Salon share of forfeited deposit", "Salon share reversed on appeal"],
   late_cancel: ["Late cancellation fee kept by salon"],
@@ -58,7 +58,7 @@ const TYPE_BY_DESCRIPTION = new Map<string, TransactionType>(
   ),
 );
 
-const typeOf = (description: string): TransactionType =>
+export const typeOf = (description: string): TransactionType =>
   TYPE_BY_DESCRIPTION.get(description) ?? "payout_adjustment";
 
 const typeWhere = (type?: TransactionType): Prisma.LedgerEntryWhereInput => {

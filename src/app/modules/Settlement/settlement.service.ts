@@ -934,6 +934,13 @@ export const transitionPayout = async (
 
     const updated = await db.payout.findUniqueOrThrow({ where: { id } });
 
+    // Being paid includes the owner's payout statement (owner Phase 7), in
+    // the same transaction. Imported lazily: owner.statements imports this file.
+    if (paid) {
+      const { writePayoutStatement } = await import("../Owner/owner.statements");
+      await writePayoutStatement(db, id);
+    }
+
     const fields = (row: typeof payout) => ({
       status: row.status,
       method: row.method,

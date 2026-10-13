@@ -36,6 +36,14 @@ import { getOwnerBuckets } from "../app/modules/Settlement/settlement.buckets";
 import { allocateDues, settleDuesPayment, waiveDues, watchOwner } from "../app/modules/Settlement/settlement.dues";
 import { assertTakingOnlineBookings } from "../app/modules/Appointment/appointment.service";
 import {
+  balanceAt,
+  buildInvoice,
+  buildMonthly,
+  computeMonthly,
+  monthBounds,
+  previousMonth,
+} from "../app/modules/Owner/owner.statements";
+import {
   SettlementService,
   transitionPayout,
   writeJournal,
@@ -451,6 +459,135 @@ const runDues = async (tx: Prisma.TransactionClient) => {
 
   throw new Rollback();
 };
+// ------------------------------------------------------------ statements (Phase 7)
+// Its own business, ledger rows back-dated into the last two Dhaka months,
+// and its own rolled-back transaction.
+
+/** The Dhaka month containing `at`, "YYYY-MM". */
+const dhakaMonth = (at: Date) => new Date(at.getTime() + 6 * 60 * 60 * 1000).toISOString().slice(0, 7);
+
+const runStatements = async (tx: Prisma.TransactionClient) => {
+  const tag = randomUUID().slice(0, 8);
+  const user = await tx.user.create({
+    data: { email: `verify-stmt-${tag}@seed.example.com`, name: "Verify Statements", role: UserRole.SALON_OWNER, isTest: true },
+  });
+  const owner = await tx.salonOwner.create({ data: { userId: user.id, businessName: `Verify Statements ${tag}` } });
+  const salon = await tx.salon.create({
+    data: { name: `Verify Stmt ${tag}`, address: "Test road", area: "Mirpur", city: "Dhaka", phone: "01700000000", images: [], ownerId: owner.id, isTest: true },
+  });
+
+  const month = previousMonth();
+  const { periodStart, periodEnd } = monthBounds(month);
+  const before = previousMonth(periodStart); // the month before `month`
+  const earlier = monthBounds(before).periodStart;
+  const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
+
+  // A balanced journal of [account, amount, description] legs at a back-dated instant.
+  const journal = async (createdAt: Date, legs: Array<[LedgerAccount, number, string]>) => {
+    const journalId = randomUUID();
+    await tx.ledgerEntry.createMany({
+      data: legs.map(([account, amountMinor, description]) => ({
+        id: randomUUID(), journalId, salonId: salon.id, ownerId: owner.id, account, amountMinor, description, createdAt,
+      })),
+    });
+    return journalId;
+  };
+  const W = LedgerAccount.CUSTOMER_WALLET;
+  const S = LedgerAccount.SALON_PAYABLE;
+  const R = LedgerAccount.PLATFORM_REVENUE;
+
+  // The month before: ৳200 deposit − ৳20 commission, paid out during `month`.
+  const old = await journal(at(earlier, 3), [
+    [W, -20000, "Deposit applied to the bill"],
+    [S, 20000, "Deposit owed to salon"],
+    [S, -2000, "Platform commission deducted"],
+    [R, 2000, "Platform commission"],
+  ]);
+  const paidPayout = await tx.payout.create({
+    data: {
+      ownerId: owner.id, salonId: salon.id, periodStart: earlier, periodEnd: periodStart,
+      grossMinor: 20000, commissionMinor: 2000, netMinor: 18000,
+      status: PayoutStatus.PAID, method: "BKASH", reference: `VS-${tag}-1`, paidAt: at(periodStart, 10),
+    },
+  });
+  await tx.ledgerEntry.updateMany({ where: { journalId: old, account: S }, data: { payoutId: paidPayout.id } });
+
+  // `month`: ৳500 deposit − ৳50 commission, then a ৳10 goodwill credit.
+  await journal(at(periodStart, 2), [
+    [W, -50000, "Deposit applied to the bill"],
+    [S, 50000, "Deposit owed to salon"],
+    [S, -5000, "Platform commission deducted"],
+    [R, 5000, "Platform commission"],
+  ]);
+  await journal(at(periodStart, 5), [
+    [W, 1000, "Goodwill credit - salon cancelled"],
+    [S, -1000, "Goodwill credit funded by salon"],
+  ]);
+
+  const built = await buildMonthly(owner.id, month, tx);
+  const t = built.statement.totals as Record<string, number>;
+  const ledgerClosing = await balanceAt(tx, owner.id, periodEnd);
+  check(
+    "statements: monthly closing = ledger",
+    built.created && t.closingMinor === 44000 && t.closingMinor === ledgerClosing && t.openingMinor === 18000,
+    `opening ${t.openingMinor}, closing ${t.closingMinor}, ledger ${ledgerClosing}`,
+  );
+  check(
+    "statements: movements add up",
+    t.depositsAppliedMinor === 50000 && t.commissionMinor === -5000 && t.goodwillMinor === -1000 && t.payoutsMinor === -18000,
+    `deposits ${t.depositsAppliedMinor}, commission ${t.commissionMinor}, goodwill ${t.goodwillMinor}, payouts ${t.payoutsMinor}`,
+  );
+  const rebuilt = await computeMonthly(owner.id, month, tx);
+  const again = await buildMonthly(owner.id, month, tx);
+  check(
+    "statements: rebuild gives the same ledgerHash",
+    rebuilt.ledgerHash === built.statement.ledgerHash && !again.created && again.statement.id === built.statement.id,
+    built.statement.ledgerHash.slice(0, 12),
+  );
+  const refused = await statusOf(() => buildMonthly(owner.id, dhakaMonth(new Date()), tx));
+  check("statements: refuses a month that has not ended", refused === 400, `status ${refused}`);
+
+  // Invoices: the older month is numbered after `month`, from one sequence.
+  const i1 = (await buildInvoice(owner.id, month, tx))?.statement;
+  const i2 = (await buildInvoice(owner.id, before, tx))?.statement;
+  const seq = (num?: string | null) => Number(num?.slice(-6) ?? NaN);
+  check(
+    "statements: invoice numbers increase",
+    !!i1 && !!i2 && /^SK-\d{4}-\d{6}$/.test(i1.number ?? "") && seq(i2.number) > seq(i1.number),
+    `${i1?.number} → ${i2?.number}`,
+  );
+  const invoiceTotal = (i1?.totals as Record<string, number> | undefined)?.totalMinor;
+  check("statements: invoice total = commission", invoiceTotal === 5000, `total ${invoiceTotal}`);
+
+  // Immutability trigger; a savepoint keeps the transaction usable.
+  await tx.$executeRawUnsafe("SAVEPOINT stmt_immutable");
+  let blocked = false;
+  try {
+    await tx.ownerStatement.update({ where: { id: built.statement.id }, data: { ledgerHash: "x" } });
+  } catch {
+    blocked = true;
+  }
+  await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT stmt_immutable");
+  check("statements: rows refuse UPDATE", blocked);
+
+  // PAID writes the payout statement in the same transaction.
+  const nowJournal = await journal(new Date(), [
+    [W, -30000, "Deposit applied to the bill"],
+    [S, 30000, "Deposit owed to salon"],
+  ]);
+  const pending = await tx.payout.create({
+    data: { ownerId: owner.id, salonId: salon.id, periodStart: at(new Date(), -1), periodEnd: new Date(), grossMinor: 30000, commissionMinor: 0, netMinor: 30000 },
+  });
+  await tx.ledgerEntry.updateMany({ where: { journalId: nowJournal, account: S }, data: { payoutId: pending.id } });
+  await transitionPayout(pending.id, PayoutStatus.APPROVED, {}, ctx, tx);
+  await transitionPayout(pending.id, PayoutStatus.PAID, { method: "BKASH", reference: `VS-${tag}-2` }, { ...ctx, fourEyesCleared: true }, tx);
+  const ps = await tx.ownerStatement.findUnique({ where: { payoutId: pending.id } });
+  const psNet = (ps?.totals as Record<string, number> | undefined)?.netMinor;
+  check("statements: PAID writes the payout statement", ps?.kind === "PAYOUT" && psNet === 30000, `net ${psNet ?? "none"}`);
+
+  throw new Rollback();
+};
+
 const main = async () => {
   try {
     await prisma.$transaction(run, { timeout: 180_000, maxWait: 15_000 });
@@ -465,6 +602,14 @@ const main = async () => {
   } catch (error) {
     if (!(error instanceof Rollback)) {
       check("dues scenario ran to the end", false, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  try {
+    await prisma.$transaction(runStatements, { timeout: 120_000, maxWait: 15_000 });
+  } catch (error) {
+    if (!(error instanceof Rollback)) {
+      check("statements scenario ran to the end", false, error instanceof Error ? error.message : String(error));
     }
   }
 

@@ -24,7 +24,7 @@ export type SettingGroup =
   | "system"
   | "content";
 
-export type SettingKind = "int" | "number" | "boolean" | "announcement" | "list";
+export type SettingKind = "int" | "number" | "boolean" | "announcement" | "list" | "text";
 
 type Entry<T> = {
   schema: z.ZodType<T>;
@@ -77,6 +77,8 @@ const int = (min: number, max = Number.MAX_SAFE_INTEGER) =>
 const num = (min: number, max: number) =>
   ({ schema: z.number().min(min).max(max), kind: "number" as const, min, max });
 const bool = () => ({ schema: z.boolean(), kind: "boolean" as const });
+const text = (max: number) => ({ schema: z.string().trim().max(max), kind: "text" as const });
+const envText = (name: string) => () => raw(name);
 
 const announcementSchema = z
   .object({
@@ -486,6 +488,36 @@ export const SETTINGS = {
     group: "money",
     label: "Dues age before pause (days)",
     help: "Dues outstanding longer than this start the pause warning, whatever the amount.",
+    tier: 3,
+  }),
+  // Owner statements and invoices (owner Phase 7): the seller block on every
+  // invoice, and the VAT shown inside the commission (0 = no VAT line).
+  "finance.legalName": def<string>({
+    ...text(120),
+    default: "SalonKhuji",
+    env: envText("PLATFORM_LEGAL_NAME"),
+    envName: "PLATFORM_LEGAL_NAME",
+    group: "money",
+    label: "Platform legal name",
+    help: "Printed as the seller on commission invoices and statements.",
+    tier: 3,
+  }),
+  "finance.bin": def<string>({
+    ...text(40),
+    default: "",
+    env: envText("PLATFORM_BIN"),
+    envName: "PLATFORM_BIN",
+    group: "money",
+    label: "Platform BIN",
+    help: "VAT Business Identification Number on invoices. Empty hides the line.",
+    tier: 3,
+  }),
+  "finance.vatPercent": def<number>({
+    ...num(0, 25),
+    default: 0,
+    group: "money",
+    label: "VAT on commission (%)",
+    help: "VAT included in the commission on new invoices. Issued invoices keep their rate.",
     tier: 3,
   }),
   "audit.retentionDays": def<number>({

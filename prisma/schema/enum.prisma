@@ -191,6 +191,14 @@ enum AppointmentSource {
   SALON_DIRECT // the salon's own customer - never commissioned
 }
 
+/// Owner statements (owner Phase 7): a month's movements, one payout, or the
+/// month's commission invoice.
+enum StatementKind {
+  MONTHLY
+  PAYOUT
+  INVOICE
+}
+
 enum LedgerAccount {
   SALON_PAYABLE
   PLATFORM_REVENUE

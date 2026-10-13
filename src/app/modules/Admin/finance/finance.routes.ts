@@ -13,6 +13,7 @@ import { approvePayout, approvePayouts, exportPayoutFile, markPaid } from "./fin
 import { PayoutAccountReview } from "./finance.payoutAccounts";
 import { AdminFinanceService, parseRange } from "./finance.service";
 import { adjustDues, listOwnerDues } from "../../Settlement/settlement.dues";
+import { adminListStatements } from "../../Owner/owner.statements";
 import { requireApprovalIf } from "../approvals/approvals.service";
 import { getSetting } from "../../../utils/settings";
 import { formatBDT } from "../../../utils/money";
@@ -423,6 +424,18 @@ router.post(
       return;
     }
     ok(res, "Dues adjusted", await adjustDues({ ownerId, amountMinor, reason }, req.auditCtx));
+  }),
+);
+
+// ---------------------------------------------------------------- statements
+
+// Read-only: owners' monthly statements, payout statements and invoices.
+router.get(
+  "/statements",
+  adminAuth("finance.view"),
+  adminOnly,
+  catchAsync(async (req: Request, res: Response) => {
+    ok(res, "Owner statements", await adminListStatements(req.query));
   }),
 );
 

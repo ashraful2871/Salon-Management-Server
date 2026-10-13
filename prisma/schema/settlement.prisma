@@ -117,3 +117,28 @@ model PayoutAccount {
   @@index([status, createdAt])
   @@map("payout_accounts")
 }
+
+/// An immutable snapshot an owner can hand to an accountant (owner Phase 7):
+/// MONTHLY (a Dhaka month's SALON_PAYABLE movements), PAYOUT (written in the
+/// PAID transition) or INVOICE (the month's commission, numbered from the
+/// Postgres sequence owner_invoice_seq). A trigger refuses UPDATE. periodEnd is
+/// exclusive. totals holds money as *Minor only; ledgerHash = sha256 of the
+/// "id:amountMinor" lines it covers, so a rebuild can prove nothing moved.
+model OwnerStatement {
+  id          String        @id @default(uuid())
+  ownerId     String
+  kind        StatementKind
+  number      String?       @unique // INVOICE only: SK-2026-000123
+  periodStart DateTime
+  periodEnd   DateTime
+  payoutId    String?       @unique
+  totals      Json
+  ledgerHash  String
+  createdAt   DateTime      @default(now())
+
+  owner SalonOwner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, kind, periodStart])
+  @@index([ownerId, createdAt])
+  @@map("owner_statements")
+}

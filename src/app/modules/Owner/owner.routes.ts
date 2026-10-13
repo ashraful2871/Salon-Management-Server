@@ -6,6 +6,7 @@ import { BUSINESS_ROLES } from "../../utils/salonAccess";
 import { OwnerController } from "./owner.controller";
 import { OwnerMoney } from "./owner.money";
 import { OwnerPayoutAccount } from "./owner.payoutAccount";
+import { OwnerStatements } from "./owner.statements";
 import { OwnerValidation } from "./owner.validation";
 
 const router = express.Router();
@@ -39,6 +40,10 @@ router.get("/money/transactions.csv", auth("SALON_OWNER"), OwnerMoney.transactio
 router.get("/money/transactions", auth("SALON_OWNER"), OwnerMoney.transactions);
 router.get("/money/payouts", auth("SALON_OWNER"), OwnerMoney.payouts);
 router.get("/money/payouts/:id", auth("SALON_OWNER"), OwnerMoney.payout);
+// Statements and invoices: the business owner only; another business's id is 404.
+router.get("/statements", auth("SALON_OWNER"), OwnerStatements.list);
+router.get("/statements/:id.csv", auth("SALON_OWNER"), OwnerStatements.csv);
+router.get("/statements/:id", auth("SALON_OWNER"), OwnerStatements.detail);
 router.post("/dues/pay", auth("SALON_OWNER"), paymentLimiter, OwnerMoney.payDues);
 
 export const OwnerRoutes = router;

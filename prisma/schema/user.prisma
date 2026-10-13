@@ -114,6 +114,7 @@ model SalonOwner {
   salons         Salon[]
   payouts        Payout[]
   payoutAccounts PayoutAccount[]
+  statements     OwnerStatement[]
 
   @@map("salon_owners")
 }
