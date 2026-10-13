@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { LedgerAccount, PayoutAccountStatus, PayoutStatus, Prisma } from "@prisma/client";
+import { BookingPause, LedgerAccount, PayoutAccountStatus, PayoutStatus, Prisma } from "@prisma/client";
 import { StatusCodes } from "http-status-codes";
 import { z } from "zod";
 import ApiError from "../../Error/error";
@@ -13,6 +13,8 @@ import { getOwnerBuckets, holdCutoff, IN_PAYOUT } from "../Settlement/settlement
 import { getSalonEarnings } from "../Settlement/settlement.earnings";
 import { destinationLabel } from "../Settlement/settlement.service";
 import { describeAccount } from "./owner.payoutAccount";
+import { DUES_PAID_DESCRIPTION, DUES_WAIVED_DESCRIPTION, MIN_DUES_PAYMENT_MINOR } from "../Settlement/settlement.dues";
+import { PaymentIntentService } from "../Payment/paymentIntent.service";
 
 /**
  * The owner's Money hub: where every taka of SALON_PAYABLE sits and why. All
@@ -45,7 +47,7 @@ const TYPE_DESCRIPTIONS: Record<Exclude<TransactionType, "payout_adjustment">, s
   late_cancel: ["Late cancellation fee kept by salon"],
   commission: ["Platform commission deducted"],
   goodwill: ["Goodwill credit funded by salon"],
-  dues: [],
+  dues: [DUES_PAID_DESCRIPTION, DUES_WAIVED_DESCRIPTION],
 };
 
 const KNOWN_DESCRIPTIONS = Object.values(TYPE_DESCRIPTIONS).flat();
@@ -199,7 +201,10 @@ const summary = catchAsync(async (req: Request, res: Response) => {
         orderBy: { createdAt: "desc" },
         take: 5,
       }),
-      prisma.salonOwner.findUnique({ where: { id: ownerId }, select: { payoutsFrozen: true } }),
+      prisma.salonOwner.findUnique({
+        where: { id: ownerId },
+        select: { payoutsFrozen: true, duesSince: true, duesWarnedAt: true },
+      }),
       getSetting("booking.commissionPercent"),
       getSetting("booking.commissionOnDirect"),
       getSalonEarnings(trendSalons),
@@ -208,6 +213,17 @@ const summary = catchAsync(async (req: Request, res: Response) => {
   // The verified account is the one paid; otherwise show what is in progress.
   const account =
     accounts.find((a) => a.status === PayoutAccountStatus.VERIFIED) ?? accounts[0] ?? null;
+
+  // Dues are paid business-wide, whatever branch the page is filtered to.
+  const [businessDues, pausedSalons, pauseEnabled] = await Promise.all([
+    salonId ? getOwnerBuckets(ownerId).then((b) => b.duesMinor) : Promise.resolve(buckets.duesMinor),
+    prisma.salon.findMany({
+      where: { ownerId, isDeleted: false, bookingPause: BookingPause.DUES },
+      select: { bookingPausedAt: true },
+    }),
+    getSetting("dues.pauseEnabled"),
+  ]);
+  const warnedAt = owner?.duesWarnedAt ?? null;
 
   ok(res, "Money summary", {
     ...buckets,
@@ -228,6 +244,16 @@ const summary = catchAsync(async (req: Request, res: Response) => {
       cooldownUntil: account.cooldownUntil,
     },
     payoutsFrozen: owner?.payoutsFrozen ?? false,
+    dues: {
+      amountMinor: businessDues,
+      since: owner?.duesSince ?? null,
+      minPayMinor: MIN_DUES_PAYMENT_MINOR,
+      pauseEnabled,
+      pauseAt: !pausedSalons.length && warnedAt ? new Date(warnedAt.getTime() + 3 * 24 * 60 * 60 * 1000) : null,
+      paused: pausedSalons.length > 0,
+      pausedSalons: pausedSalons.length,
+      pausedAt: pausedSalons[0]?.bookingPausedAt ?? null,
+    },
     commissionPercent,
     commissionOnDirect,
     monthly: earnings.monthly,
@@ -379,4 +405,19 @@ const payout = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
-export const OwnerMoney = { summary, transactions, transactionsCsv, payouts, payout };
+
+const payDuesBody = z.object({ provider: z.enum(["BKASH", "SSLCOMMERZ"]).default("BKASH") });
+
+/**
+ * POST /owner/dues/pay { provider } - the server decides the amount (current
+ * dues); returns the gateway URL. Success/fail/cancel land back on
+ * /dashboard/money?dues=…
+ */
+const payDues = catchAsync(async (req: Request, res: Response) => {
+  const { ownerId } = await ownerOf(req);
+  const { provider } = parse(payDuesBody, req.body ?? {});
+  const result = await PaymentIntentService.initiateDuesPayment(req.user!.userId, ownerId, provider);
+  ok(res, "Payment session created", result);
+});
+
+export const OwnerMoney = { summary, transactions, transactionsCsv, payouts, payout, payDues };

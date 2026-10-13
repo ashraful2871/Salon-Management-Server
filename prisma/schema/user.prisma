@@ -102,6 +102,10 @@ model SalonOwner {
   kycStatus      KycStatus @default(NONE)
   kycNote        String?
   payoutsFrozen  Boolean   @default(false)
+  /// Dues tracking (dues.watch): when dues first went above 0, and when the
+  /// "bookings pause in 3 days" warning went out. Both cleared at 0.
+  duesSince      DateTime?
+  duesWarnedAt   DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

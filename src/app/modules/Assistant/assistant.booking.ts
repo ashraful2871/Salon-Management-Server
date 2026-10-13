@@ -41,6 +41,8 @@ export const holdSlot = async (
         // Re-tapping your own held slot extends it rather than failing.
         { heldByUserId: userId },
       ],
+      // A paused salon (owner or dues) takes no new online holds.
+      salon: { bookingPause: "NONE" },
     },
     data: { heldUntil: holdsUntil(minutes, now), heldByUserId: userId },
   });

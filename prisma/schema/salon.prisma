@@ -49,6 +49,12 @@ model Salon {
   cancellationWindowMin Int  @default(120) // free cancellation up to 2h before
   noShowSalonSharePct   Int  @default(70) // salon's cut of a forfeited deposit
 
+  // Online-booking pause (walk-ins and existing bookings are unaffected).
+  bookingPause       BookingPause @default(NONE)
+  bookingPauseReason String?
+  bookingPauseUntil  DateTime?
+  bookingPausedAt    DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

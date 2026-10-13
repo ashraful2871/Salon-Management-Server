@@ -55,6 +55,8 @@ type CandidateRow = {
   images: string[];
   rating: number;
   totalReviews: number;
+  /** Not taking online bookings (owner or dues pause); still listed. */
+  bookingPaused: boolean;
   phone: string;
   operatingHours: unknown;
   latitude: number | null;
@@ -163,6 +165,7 @@ const fetchCandidates = (vector: number[] | null, origin: Origin | null) => {
     SELECT
       s.id, s.name, s.description, s.address, s.area, s.district, s.division,
       s.city, s.images, s.rating, s."totalReviews", s.phone, s."operatingHours",
+      (s."bookingPause" <> 'NONE') AS "bookingPaused",
       s.latitude, s.longitude, s."locationAccuracy"::text AS "locationAccuracy",
       ${similarity} AS similarity,
       ${distance} AS "distanceMeters",

@@ -6,6 +6,7 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import {
   AppointmentSource,
+  BookingPause,
   AppointmentStatus,
   BookingChannel,
   CancelledBy,
@@ -192,6 +193,20 @@ const timesOverlap = (
  * from two tabs are checked one after the other instead of both passing
  * against the same list. Must run inside the booking transaction.
  */
+/**
+ * New online bookings (web, assistant) stop while a salon is paused - by its
+ * owner or for unpaid dues. Walk-ins and existing bookings are not affected.
+ */
+export const assertTakingOnlineBookings = (salon: { bookingPause: BookingPause }) => {
+  if (salon.bookingPause !== BookingPause.NONE) {
+    throw ApiError.withCode(
+      StatusCodes.CONFLICT,
+      "This salon is not taking online bookings right now",
+      "SALON_PAUSED",
+    );
+  }
+};
+
 const assertWithinBookingLimits = async (
   tx: Prisma.TransactionClient,
   customerId: string,
@@ -491,6 +506,7 @@ const quoteBooking = async (
   if (!salon) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found or inactive");
   }
+  assertTakingOnlineBookings(salon);
 
   if (!service) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Service not found or inactive");

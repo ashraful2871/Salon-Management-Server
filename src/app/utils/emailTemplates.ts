@@ -1107,3 +1107,33 @@ export const getAdminDigestTemplate = (digest: {
      <p style="margin-top:22px;"><a href="${digest.url}" style="color:#2c3e50;font-weight:bold;">Open the back office</a></p>`,
   );
 };
+
+/** dues.watch and dues payments: reminder, pause warning, paused, resumed. */
+export const getDuesNoticeTemplate = (notice: {
+  ownerName: string;
+  kind: "reminder" | "warning" | "paused" | "resumed";
+  amount: string;
+  pauseDate?: string | null;
+  url: string;
+}) => {
+  const heading = {
+    reminder: "You have dues to pay",
+    warning: "Online bookings pause in 3 days",
+    paused: "Online bookings are paused",
+    resumed: "Online bookings resumed",
+  }[notice.kind];
+  const body = {
+    reminder: `<p>Your business owes <strong>${escapeHtml(notice.amount)}</strong> in fees. You can clear it with bKash in two taps.</p>`,
+    warning: `<p>Your business owes <strong>${escapeHtml(notice.amount)}</strong>. Unless it is paid${
+      notice.pauseDate ? ` by <strong>${escapeHtml(notice.pauseDate)}</strong>` : ""
+    }, your salons stop taking new online bookings. Walk-ins and existing bookings are not affected.</p>`,
+    paused: `<p>Your business owes <strong>${escapeHtml(notice.amount)}</strong>, so your salons are no longer taking new online bookings. Walk-ins and existing bookings are not affected. Bookings resume as soon as the dues are paid.</p>`,
+    resumed: `<p>Thank you - your dues are cleared and your salons are taking online bookings again.</p>`,
+  }[notice.kind];
+  return moneyLayout(
+    heading,
+    `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     ${body}
+     <p><a href="${escapeHtml(notice.url)}">${notice.kind === "resumed" ? "Open Money" : "Pay dues"}</a></p>`,
+  );
+};

@@ -17,6 +17,10 @@ import "../config"; // loads .env
 import { randomUUID } from "crypto";
 import {
   AppointmentSource,
+  BookingPause,
+  IntentPurpose,
+  IntentStatus,
+  SalonStatus,
   AppointmentStatus,
   DepositStatus,
   LedgerAccount,
@@ -29,6 +33,8 @@ import { getSetting } from "../app/utils/settings";
 import { systemAuditCtx } from "../app/utils/audit";
 import { AppointmentDeposit } from "../app/modules/Appointment/appointment.deposit";
 import { getOwnerBuckets } from "../app/modules/Settlement/settlement.buckets";
+import { allocateDues, settleDuesPayment, waiveDues, watchOwner } from "../app/modules/Settlement/settlement.dues";
+import { assertTakingOnlineBookings } from "../app/modules/Appointment/appointment.service";
 import {
   SettlementService,
   transitionPayout,
@@ -334,12 +340,131 @@ const run = async (tx: Prisma.TransactionClient) => {
   throw new Rollback();
 };
 
+
+// ------------------------------------------------------------ dues (Phase 6)
+// Its own business and its own rolled-back transaction.
+const runDues = async (tx: Prisma.TransactionClient) => {
+  const tag = randomUUID().slice(0, 8);
+  const user = await tx.user.create({
+    data: { email: `verify-dues-owner-${tag}@seed.example.com`, name: "Verify Dues Owner", role: UserRole.SALON_OWNER, isTest: true },
+  });
+  const owner = await tx.salonOwner.create({ data: { userId: user.id, businessName: `Verify Dues ${tag}` } });
+  const salon = (name: string, bookingPause: BookingPause = BookingPause.NONE) =>
+    tx.salon.create({
+      data: {
+        name, address: "test road", area: "Mirpur", city: "Dhaka", phone: "01700000000", images: [],
+        ownerId: owner.id, isTest: true, status: SalonStatus.ACTIVE, bookingPause,
+      },
+    });
+  const a = await salon(`Verify Dues A ${tag}`);
+  const b = await salon(`Verify Dues B ${tag}`);
+  const c = await salon(`Verify Dues C ${tag}`, BookingPause.OWNER);
+  const owe = (salonId: string, amountMinor: number) =>
+    writeJournal(tx, {
+      salonId, ownerId: owner.id, kind: "verify.commission",
+      drafts: [
+        { account: LedgerAccount.SALON_PAYABLE, amountMinor: -amountMinor, description: "Platform commission deducted" },
+        { account: LedgerAccount.PLATFORM_REVENUE, amountMinor, description: "Platform commission deducted" },
+      ],
+    });
+  await owe(a.id, 150000);
+  await owe(b.id, 100000);
+
+  const before = await getOwnerBuckets(owner.id, { db: tx });
+  check("dues: owner at −৳2,500", before.duesMinor === 250000, `dues ${before.duesMinor}`);
+
+  const alloc = allocateDues(
+    [{ salonId: "a", balanceMinor: -15000 }, { salonId: "b", balanceMinor: -10000 }],
+    20000,
+  );
+  check(
+    "dues: allocation most negative first",
+    alloc.length === 2 && alloc[0].salonId === "a" && alloc[0].amountMinor === 15000 && alloc[1].amountMinor === 5000,
+    JSON.stringify(alloc),
+  );
+
+  // Pause: warn first, then pause 3 days later; OWNER pause untouched.
+  const rules = { pauseEnabled: true, creditLimitMinor: 100000, maxAgeDays: 30 };
+  const now = new Date();
+  const warned = await watchOwner({ id: owner.id, duesSince: null, duesWarnedAt: null }, 250000, rules, now, { email: false, db: tx });
+  const paused = await watchOwner(
+    { id: owner.id, duesSince: now, duesWarnedAt: new Date(now.getTime() - 3 * DAY) },
+    250000, rules, now, { email: false, db: tx },
+  );
+  const pauses = async () =>
+    (await tx.salon.findMany({ where: { id: { in: [a.id, b.id, c.id] } }, select: { id: true, bookingPause: true } }))
+      .map((s) => `${s.id === a.id ? "A" : s.id === b.id ? "B" : "C"}:${s.bookingPause}`).sort().join(",");
+  const afterPause = await pauses();
+  check(
+    "dues: warn → pause (OWNER kept)",
+    warned === "warned" && paused === "paused" && afterPause === "A:DUES,B:DUES,C:OWNER",
+    `${warned}/${paused} ${afterPause}`,
+  );
+  let refused = 0;
+  try {
+    assertTakingOnlineBookings({ bookingPause: BookingPause.DUES });
+  } catch (error) {
+    refused = (error as { statusCode?: number; errorCode?: string }).errorCode === "SALON_PAUSED" ? 409 : -1;
+  }
+  check("dues: paused salon refuses online booking (409 SALON_PAUSED)", refused === 409, `status ${refused}`);
+
+  // Pay with the same claim creditSettledIntent uses, twice (IPN + return).
+  const intent = await tx.paymentIntent.create({
+    data: {
+      transactionId: `DUES-verify-${tag}`, userId: user.id, purpose: IntentPurpose.SALON_DUES,
+      referenceId: owner.id, amountMinor: 250000, status: IntentStatus.PENDING, provider: "BKASH",
+    },
+  });
+  const settle = async () => {
+    const claim = await tx.paymentIntent.updateMany({
+      where: { id: intent.id, status: { not: IntentStatus.SUCCESS } },
+      data: { status: IntentStatus.SUCCESS, completedAt: new Date() },
+    });
+    if (claim.count) await settleDuesPayment(tx, intent, "bKash");
+  };
+  await settle();
+  await settle();
+
+  const lines = await tx.ledgerEntry.findMany({ where: { journalId: intent.id } });
+  const sum = lines.reduce((t, l) => t + l.amountMinor, 0);
+  check("dues: journal balanced, one per replay", lines.length === 4 && sum === 0, `${lines.length} rows, Σ ${sum}`);
+  const toSalon = (id: string) =>
+    lines.filter((l) => l.salonId === id && l.account === LedgerAccount.SALON_PAYABLE).reduce((t, l) => t + l.amountMinor, 0);
+  check(
+    "dues: allocated across two salons",
+    toSalon(a.id) === 150000 && toSalon(b.id) === 100000 && lines.every((l) => l.account !== LedgerAccount.CUSTOMER_WALLET),
+    `A ${toSalon(a.id)}, B ${toSalon(b.id)}`,
+  );
+  const after = await getOwnerBuckets(owner.id, { db: tx });
+  check("dues: buckets 0 after paying", after.duesMinor === 0, `dues ${after.duesMinor}`);
+
+  const resumed = await watchOwner({ id: owner.id, duesSince: now, duesWarnedAt: now }, after.duesMinor, rules, now, { email: false, db: tx });
+  const afterResume = await pauses();
+  check("dues: resume clears DUES only", resumed === "resumed" && afterResume === "A:NONE,B:NONE,C:OWNER", `${resumed} ${afterResume}`);
+
+  // Waiver: SALON_PAYABLE + / PLATFORM_REVENUE −, balanced.
+  await owe(a.id, 5000);
+  const waived = await waiveDues(tx, { ownerId: owner.id, amountMinor: 5000, reason: "verify" });
+  const w = await tx.ledgerEntry.aggregate({ where: { journalId: waived.journalId! }, _sum: { amountMinor: true } });
+  const final = await getOwnerBuckets(owner.id, { db: tx });
+  check("dues: waiver balanced and clears dues", w._sum.amountMinor === 0 && final.duesMinor === 0 && waived.salonId === a.id, `Σ ${w._sum.amountMinor}, dues ${final.duesMinor}`);
+
+  throw new Rollback();
+};
 const main = async () => {
   try {
     await prisma.$transaction(run, { timeout: 180_000, maxWait: 15_000 });
   } catch (error) {
     if (!(error instanceof Rollback)) {
       check("scenario ran to the end", false, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  try {
+    await prisma.$transaction(runDues, { timeout: 120_000, maxWait: 15_000 });
+  } catch (error) {
+    if (!(error instanceof Rollback)) {
+      check("dues scenario ran to the end", false, error instanceof Error ? error.message : String(error));
     }
   }
 

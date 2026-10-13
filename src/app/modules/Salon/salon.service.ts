@@ -79,6 +79,19 @@ const createSalon = async (user: AccessUser, payload: any) => {
   return salon;
 };
 
+/**
+ * Public salon payloads say only whether online booking is paused, never why
+ * (a DUES pause would tell the world the business owes us money).
+ */
+export const withPauseFlag = <
+  T extends { bookingPause: string; bookingPauseReason: string | null; bookingPauseUntil: Date | null },
+>({
+  bookingPause,
+  bookingPauseReason: _reason,
+  bookingPauseUntil: _until,
+  ...salon
+}: T) => ({ ...salon, bookingPaused: bookingPause !== "NONE" });
+
 const getAllSalons = async (query: SalonListQuery, user?: any) => {
   const {
     page,
@@ -196,7 +209,7 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
     const byId = new Map(salons.map((s) => [s.id, s]));
     const data = rows.flatMap((r) => {
       const s = byId.get(r.id);
-      return s ? [{ ...s, distanceMeters: Math.round(r.distance_m) }] : [];
+      return s ? [{ ...withPauseFlag(s), distanceMeters: Math.round(r.distance_m) }] : [];
     });
 
     return { meta: { page, limit, total }, data };
@@ -276,7 +289,7 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
       limit,
       total,
     },
-    data: salons,
+    data: salons.map(withPauseFlag),
   };
 };
 
@@ -457,7 +470,7 @@ const getSalonById = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
-  return salon;
+  return withPauseFlag(salon);
 };
 
 const updateSalon = async (user: AccessUser, salonId: string, payload: any) => {

@@ -456,6 +456,38 @@ export const SETTINGS = {
     help: "When approvals are on, only payouts larger than this need a second admin to mark paid. None = every payout does.",
     tier: 3,
   }),
+  "approvals.duesAdjustOverMinor": def<number>({
+    ...int(0),
+    default: 100000,
+    group: "approvals",
+    label: "Dues waivers over (poisha)",
+    help: "Larger dues adjustments need a second admin when approvals are on.",
+    tier: 3,
+  }),
+  "dues.pauseEnabled": def<boolean>({
+    ...bool(),
+    default: false,
+    group: "money",
+    label: "Pause online bookings for unpaid dues",
+    help: "On: an owner over the dues limit or age is warned, then 3 days later every branch stops taking online bookings until paid.",
+    tier: 3,
+  }),
+  "dues.creditLimitMinor": def<number>({
+    ...int(0, 10000000),
+    default: 200000, // ৳2,000 (owner decision D5)
+    group: "money",
+    label: "Dues limit before pause (poisha)",
+    help: "Dues above this start the pause warning.",
+    tier: 3,
+  }),
+  "dues.maxAgeDays": def<number>({
+    ...int(1, 365),
+    default: 30,
+    group: "money",
+    label: "Dues age before pause (days)",
+    help: "Dues outstanding longer than this start the pause warning, whatever the amount.",
+    tier: 3,
+  }),
   "audit.retentionDays": def<number>({
     ...int(90, 3650),
     default: 365,

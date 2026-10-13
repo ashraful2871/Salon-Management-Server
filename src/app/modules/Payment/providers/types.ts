@@ -33,7 +33,7 @@ export interface PaymentProvider {
     transactionId: string;
     amountMinor: number;
     customer: { name: string; email: string; phone: string | null };
-    purpose: "WALLET_TOPUP" | "BOOKING";
+    purpose: "WALLET_TOPUP" | "BOOKING" | "SALON_DUES";
   }): Promise<{ redirectUrl: string; sessionKey: string }>;
   /** Independent re-query. Never trusts anything the browser carried. */
   lookup(intent: IntentRef): Promise<GatewayLookup>;

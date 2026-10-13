@@ -1,6 +1,6 @@
 import express from "express";
 import auth from "../../middlewares/auth";
-import { payoutCodeLimiter } from "../../middlewares/rateLimiter";
+import { paymentLimiter, payoutCodeLimiter } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { BUSINESS_ROLES } from "../../utils/salonAccess";
 import { OwnerController } from "./owner.controller";
@@ -39,5 +39,6 @@ router.get("/money/transactions.csv", auth("SALON_OWNER"), OwnerMoney.transactio
 router.get("/money/transactions", auth("SALON_OWNER"), OwnerMoney.transactions);
 router.get("/money/payouts", auth("SALON_OWNER"), OwnerMoney.payouts);
 router.get("/money/payouts/:id", auth("SALON_OWNER"), OwnerMoney.payout);
+router.post("/dues/pay", auth("SALON_OWNER"), paymentLimiter, OwnerMoney.payDues);
 
 export const OwnerRoutes = router;

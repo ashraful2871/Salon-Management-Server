@@ -91,6 +91,8 @@ type EntryDraft = {
 
 type JournalInput = {
   appointmentId?: string | null;
+  /** Groups several sets under one id (a dues payment's sets share its intent id). */
+  journalId?: string;
   salonId: string | null;
   /** The business; read from the salon when not given. */
   ownerId?: string | null;
@@ -123,7 +125,7 @@ export const writeJournal = async (
     );
   }
 
-  const journalId = input.appointmentId ?? randomUUID();
+  const journalId = input.journalId ?? input.appointmentId ?? randomUUID();
   let ownerId = input.ownerId ?? null;
   if (!ownerId && input.salonId) {
     const salon = await db.salon.findUnique({

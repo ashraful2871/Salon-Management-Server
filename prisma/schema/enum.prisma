@@ -277,3 +277,11 @@ enum TicketPriority {
   HIGH
   URGENT
 }
+
+/// Why a salon is not taking new online bookings. DUES is set and cleared only
+/// by the dues.watch job / a dues payment; it never touches OWNER.
+enum BookingPause {
+  NONE
+  OWNER
+  DUES
+}
