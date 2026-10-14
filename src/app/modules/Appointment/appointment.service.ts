@@ -37,6 +37,7 @@ import {
 } from "./appointment.checkout";
 import { AppointmentDeposit } from "./appointment.deposit";
 import { AppointmentIdentity } from "./appointment.identity";
+import { attentionWhere, isAttentionKind } from "./appointment.attention";
 
 /**
  * Which status each status may move to. Terminal states go nowhere.
@@ -303,20 +304,21 @@ type ClaimSlotInput = {
 };
 
 /**
- * The part every booking shares, online or walk-in: win the slot, give the
- * booking its queue identity, and write it. Runs in the caller's transaction,
- * so whatever the caller does next (a deposit hold) rolls the slot back with
- * it if it fails.
+ * Wins one AVAILABLE slot, or throws 409. The conditional update is the lock:
+ * two requests for the same slot cannot both see count 1. `holderId` is the one
+ * user whose own chat hold does not block the claim (null: any live hold
+ * does). Every booking path and the reschedule race on this one predicate.
  */
-const claimSlotAndCreate = async (
+export const claimSlot = async (
   tx: Prisma.TransactionClient,
-  input: ClaimSlotInput,
+  slot: Pick<Slot, "id">,
+  holderId: string | null,
 ) => {
   const now = new Date();
 
   const updatedSlot = await tx.slot.updateMany({
     where: {
-      id: input.slot.id,
+      id: slot.id,
       status: "AVAILABLE",
       isBooked: false,
       // A hold taken in the chat blocks the website too, otherwise "held" would
@@ -325,7 +327,7 @@ const claimSlotAndCreate = async (
       OR: [
         { heldUntil: null },
         { heldUntil: { lt: now } },
-        { heldByUserId: input.customerId },
+        ...(holderId ? [{ heldByUserId: holderId }] : []),
       ],
     },
     data: {
@@ -346,7 +348,7 @@ const claimSlotAndCreate = async (
     // when it may come straight back.
     const heldByAnother = await tx.slot.findFirst({
       where: {
-        id: input.slot.id,
+        id: slot.id,
         status: "AVAILABLE",
         isBooked: false,
         heldUntil: { gt: now },
@@ -361,6 +363,19 @@ const claimSlotAndCreate = async (
         : "Sorry, this slot has just been booked by another customer. Please select another available slot.",
     );
   }
+};
+
+/**
+ * The part every booking shares, online or walk-in: win the slot, give the
+ * booking its queue identity, and write it. Runs in the caller's transaction,
+ * so whatever the caller does next (a deposit hold) rolls the slot back with
+ * it if it fails.
+ */
+const claimSlotAndCreate = async (
+  tx: Prisma.TransactionClient,
+  input: ClaimSlotInput,
+) => {
+  await claimSlot(tx, input.slot, input.customerId);
 
   // The commission rate in force now, kept on the booking so a later change
   // to the setting never reprices it.
@@ -986,6 +1001,14 @@ const getAllAppointments = async (
     } else {
       whereConditions.salonId = salonId;
     }
+  }
+
+  // The owner home's "Needs attention" rows link here; same filter as the count.
+  if (query.attention !== undefined) {
+    if (!isAttentionKind(query.attention)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, `Unknown attention filter "${query.attention}".`);
+    }
+    whereConditions.AND = [attentionWhere(query.attention)];
   }
 
   // Status goes on last: the chip counts need every other filter but this one.

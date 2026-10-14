@@ -546,6 +546,8 @@ export type MoneyFilter = {
   includeTest: boolean;
   area?: string;
   channel?: string;
+  /** Only these salons (the owner home); an empty list matches nothing. */
+  salonIds?: string[];
 };
 
 export type DailyMoney = {
@@ -563,7 +565,8 @@ const COMPLETED_AT = `COALESCE(a."completedAt", a."appointmentDate")`;
 
 const narrow = (f: MoneyFilter) =>
   Prisma.sql`${f.area ? Prisma.sql`AND lower(trim(s.area)) = ${f.area.trim().toLowerCase()}` : Prisma.empty}
-    ${f.channel ? Prisma.sql`AND a."bookedVia"::text = ${f.channel}` : Prisma.empty}`;
+    ${f.channel ? Prisma.sql`AND a."bookedVia"::text = ${f.channel}` : Prisma.empty}
+    ${f.salonIds ? (f.salonIds.length ? Prisma.sql`AND s.id IN (${Prisma.join(f.salonIds)})` : Prisma.sql`AND false`) : Prisma.empty}`;
 
 const completedIn = (f: MoneyFilter) => Prisma.sql`
   a.status = 'COMPLETED'
@@ -595,7 +598,7 @@ export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
         ${f.includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false AND COALESCE(u."isTest", false) = false`}
         ${narrow(f)}
       GROUP BY 1`,
-    f.area || f.channel
+    f.area || f.channel || f.salonIds
       ? Promise.resolve([] as Array<{ day: string; v: number }>)
       : prisma.$queryRaw<Array<{ day: string; v: number }>>`
       SELECT ${dhakaDay(`t."createdAt"`)} AS day, COALESCE(SUM(t.amount), 0)::float AS v

@@ -4,6 +4,9 @@ import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { AppointmentCheckout } from "./appointment.checkout";
 import { AppointmentService } from "./appointment.service";
+import { AppointmentCalendar } from "./appointment.calendar";
+import { buildAuditCtx } from "../Admin/admin.middleware";
+import { withAccessCache } from "../../utils/salonAccess";
 import { audit } from "../../utils/audit";
 import { assertAdminPermission } from "../Admin/admin.middleware";
 import type { Permission } from "../Admin/admin.permissions";
@@ -324,7 +327,36 @@ const cashSummary = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const getCalendar = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentCalendar.getCalendar(withAccessCache(req), req.query);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Calendar retrieved successfully",
+    data: result,
+  });
+});
+
+const reschedule = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentCalendar.rescheduleAppointment(
+    withAccessCache(req),
+    buildAuditCtx(req, req.user!.role),
+    req.params.id,
+    req.body.slotId,
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Booking moved",
+    data: result,
+  });
+});
+
 export const AppointmentController = {
+  getCalendar,
+  reschedule,
   bookAppointment,
   bookWalkIn,
   getAllAppointments,

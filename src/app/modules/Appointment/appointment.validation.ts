@@ -90,6 +90,12 @@ const checkoutValidation = z.object({
   }),
 });
 
+const rescheduleValidation = z.object({
+  body: z.object({
+    slotId: z.string().uuid({ message: "Pick a time to move the booking to" }),
+  }),
+});
+
 export const AppointmentValidation = {
   bookAppointmentValidation,
   walkInValidation,
@@ -99,4 +105,5 @@ export const AppointmentValidation = {
   lookupByTokenValidation,
   cashSummaryValidation,
   checkoutValidation,
+  rescheduleValidation,
 };

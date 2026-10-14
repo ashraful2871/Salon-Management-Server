@@ -51,6 +51,20 @@ router.get(
   AppointmentController.cashSummary,
 );
 
+// The owner's day planner (staff: their own column, read-only).
+router.get(
+  "/calendar",
+  auth(UserRole.SALON_OWNER, UserRole.STAFF),
+  AppointmentController.getCalendar,
+);
+
+router.patch(
+  "/:id/reschedule",
+  auth(UserRole.SALON_OWNER),
+  validateRequest(AppointmentValidation.rescheduleValidation),
+  AppointmentController.reschedule,
+);
+
 router.get(
   "/:id",
   auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF, UserRole.CUSTOMER),

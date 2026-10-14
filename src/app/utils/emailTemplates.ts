@@ -1137,3 +1137,24 @@ export const getDuesNoticeTemplate = (notice: {
      <p><a href="${escapeHtml(notice.url)}">${notice.kind === "resumed" ? "Open Money" : "Pay dues"}</a></p>`,
   );
 };
+
+/** The salon moved a customer's booking to another time. Deposit and price stay. */
+export const getBookingRescheduledTemplate = (notice: {
+  name: string;
+  salonName: string;
+  serviceName: string;
+  token: string | null;
+  from: string;
+  to: string;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    `Your booking moved to ${escapeHtml(notice.to)}`,
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>${escapeHtml(notice.salonName)} moved your booking${
+       notice.token ? ` <strong>${escapeHtml(notice.token)}</strong>` : ""
+     } for ${escapeHtml(notice.serviceName)}.</p>
+     <p><strong>Was:</strong> ${escapeHtml(notice.from)}<br/><strong>Now:</strong> ${escapeHtml(notice.to)}</p>
+     <p>Your deposit and price are unchanged. If the new time does not suit you, contact the salon or cancel from your bookings.</p>
+     ${contactLine(notice.contactUrl)}`
+  );
