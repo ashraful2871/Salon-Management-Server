@@ -8,4 +8,10 @@ const report = z.object({
   }),
 });
 
-export const ReviewValidation = { report };
+const reply = z.object({
+  body: z.object({
+    text: z.string().trim().min(1, "Write a reply").max(1000),
+  }),
+});
+
+export const ReviewValidation = { report, reply };

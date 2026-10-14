@@ -4,9 +4,11 @@ import { paymentLimiter, payoutCodeLimiter } from "../../middlewares/rateLimiter
 import validateRequest from "../../middlewares/validateRequest";
 import { BUSINESS_ROLES } from "../../utils/salonAccess";
 import { OwnerController } from "./owner.controller";
+import { customerNoteBody, OwnerCustomers } from "./owner.customers";
 import { OwnerHome } from "./owner.home";
 import { OwnerMoney } from "./owner.money";
 import { OwnerPayoutAccount } from "./owner.payoutAccount";
+import { OwnerReviews } from "./owner.reviews";
 import { OwnerStatements } from "./owner.statements";
 import { OwnerValidation } from "./owner.validation";
 
@@ -15,6 +17,18 @@ const router = express.Router();
 router.get("/access", auth(...BUSINESS_ROLES), OwnerController.getAccess);
 // Today v2: needs attention, today, setup, week, branches (reports.view scope).
 router.get("/home", auth("SALON_OWNER"), OwnerHome.home);
+
+// Customers (customers.view scope); notes and tags are per business.
+router.get("/customers", auth(...BUSINESS_ROLES), OwnerCustomers.list);
+router.get("/customers/:customerId", auth(...BUSINESS_ROLES), OwnerCustomers.detail);
+router.put(
+  "/customers/:customerId/note",
+  auth(...BUSINESS_ROLES),
+  validateRequest(customerNoteBody, { replaceBody: true }),
+  OwnerCustomers.note,
+);
+// Reviews of the branches in reviews.reply scope; replies go through /reviews/:id/reply.
+router.get("/reviews", auth(...BUSINESS_ROLES), OwnerReviews.list);
 
 // Payout accounts and KYC: the business owner only (assertOwnerOf in each).
 router.get("/payout-accounts", auth("SALON_OWNER"), OwnerPayoutAccount.list);

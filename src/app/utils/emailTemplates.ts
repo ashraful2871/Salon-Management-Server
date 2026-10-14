@@ -1046,6 +1046,21 @@ export const getReviewHiddenTemplate = (notice: {
      ${contactLine(notice.contactUrl)}`
   );
 
+/** The salon answered a customer's review in public. */
+export const getReviewReplyTemplate = (notice: {
+  name: string;
+  salonName: string;
+  reply: string;
+  salonUrl: string;
+}) =>
+  moneyLayout(
+    "The salon replied to your review",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>${escapeHtml(notice.salonName)} replied to your review:</p>
+     <blockquote style="margin:12px 0;padding:8px 12px;border-left:3px solid #c8a24a;color:#34495e;">${escapeHtml(notice.reply).replace(/\r?\n/g, "<br>")}</blockquote>
+     <p><a href="${escapeHtml(notice.salonUrl)}">See it on the salon's page</a></p>`
+  );
+
 /** An admin's reply on a support ticket. The subject carries `[#<number>]`. */
 export const getSupportReplyTemplate = (reply: {
   name: string;

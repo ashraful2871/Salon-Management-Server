@@ -4,6 +4,7 @@ import auth from "../../middlewares/auth";
 import validateRequest from "../../middlewares/validateRequest";
 import { reviewReportLimiter } from "../../middlewares/rateLimiter";
 import { ReviewValidation } from "./review.validation";
+import { BUSINESS_ROLES } from "../../utils/salonAccess";
 
 const router = express.Router();
 
@@ -18,6 +19,20 @@ router.post(
   reviewReportLimiter,
   validateRequest(ReviewValidation.report, { replaceBody: true }),
   ReviewController.reportReview,
+);
+
+// The business's one public reply (reviews.reply scope); editable for 24 h.
+router.post(
+  "/:id/reply",
+  auth(...BUSINESS_ROLES),
+  validateRequest(ReviewValidation.reply, { replaceBody: true }),
+  ReviewController.replyToReview,
+);
+router.patch(
+  "/:id/reply",
+  auth(...BUSINESS_ROLES),
+  validateRequest(ReviewValidation.reply, { replaceBody: true }),
+  ReviewController.editReply,
 );
 
 router.get("/salon/:salonId", ReviewController.getReviewsBySalonId);

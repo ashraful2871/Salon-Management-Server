@@ -59,6 +59,7 @@ const getOwnerHome = async (user: AccessUser, query: { salonId?: unknown }) => {
     checkedInOver2h,
     unrecordedPayment,
     appealsOpen,
+    unrepliedReviews,
     duesMinor,
     payoutFailed,
     verifiedAccounts,
@@ -81,6 +82,7 @@ const getOwnerHome = async (user: AccessUser, query: { salonId?: unknown }) => {
     prisma.appointment.count({ where: { ...inIds, ...attentionWhere("stale", now) } }),
     prisma.appointment.count({ where: { ...inIds, ...attentionWhere("unrecorded", now) } }),
     prisma.appointment.count({ where: { ...inIds, ...attentionWhere("appeal", now) } }),
+    prisma.review.count({ where: { ...inIds, status: ReviewStatus.PUBLISHED, ownerReply: null } }),
     isOwner ? getOwnerBuckets(ownerId).then((b) => b.duesMinor) : Promise.resolve(0),
     // FAILED since the last PAID payout: an older failure was already fixed.
     isOwner
@@ -286,7 +288,7 @@ const getOwnerHome = async (user: AccessUser, query: { salonId?: unknown }) => {
       pendingConfirm,
       checkedInOver2h,
       unrecordedPayment,
-      unrepliedReviews: 0, // owner Phase 9
+      unrepliedReviews,
       appealsOpen,
       ...(isOwner && {
         duesMinor,

@@ -2,10 +2,20 @@ import { StatusCodes } from "http-status-codes";
 import { Prisma } from "@prisma/client";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
-import { assertSalonPermission } from "../../utils/salonAccess";
+import { Request } from "express";
+import config from "../../../config";
+import { audit, diff } from "../../utils/audit";
+import { sendEmail } from "../../utils/emailSender";
+import { getReviewReplyTemplate } from "../../utils/emailTemplates";
+import { assertSalonPermission, withAccessCache } from "../../utils/salonAccess";
+import { buildAuditCtx } from "../Admin/admin.middleware";
+import { REPLY_EDIT_WINDOW_MS } from "../Owner/owner.reviews";
 
 /** Only PUBLISHED reviews are shown, and only they count toward a rating. */
 const PUBLISHED = { status: "PUBLISHED" } as const;
+
+/** Public reads show the reply but not who on the business wrote it. */
+const PUBLIC_OMIT = { ownerReplyById: true } as const;
 
 const ratingOf = async (tx: Prisma.TransactionClient, where: Prisma.ReviewWhereInput) => {
   const agg = await tx.review.aggregate({
@@ -135,6 +145,7 @@ const getAllReviews = async (query: any) => {
       where: whereConditions,
       skip,
       take: Number(limit),
+      omit: PUBLIC_OMIT,
       include: {
         customer: {
           select: {
@@ -178,6 +189,7 @@ const getAllReviews = async (query: any) => {
 const getReviewById = async (id: string) => {
   const review = await prisma.review.findFirst({
     where: { id, ...PUBLISHED },
+    omit: PUBLIC_OMIT,
     include: {
       customer: {
         select: {
@@ -232,6 +244,7 @@ const getReviewsBySalonId = async (salonId: string, query: any) => {
       where: whereConditions,
       skip,
       take: Number(limit),
+      omit: PUBLIC_OMIT,
       include: {
         customer: {
           select: {
@@ -283,6 +296,7 @@ const getReviewsByStaffId = async (staffId: string, query: any) => {
       where: whereConditions,
       skip,
       take: Number(limit),
+      omit: PUBLIC_OMIT,
       include: {
         customer: {
           select: {
@@ -364,7 +378,85 @@ const reportReview = async (
   }
 };
 
+/**
+ * POST (edit = false) or PATCH (edit = true) /reviews/:id/reply. One public
+ * reply per review, from a business user holding reviews.reply at its salon;
+ * only PUBLISHED reviews can be answered, and an edit is allowed for 24 h
+ * after the first post (editing does not restart the clock).
+ */
+const replyToReview = async (req: Request, reviewId: string, text: string, edit: boolean) => {
+  const user = withAccessCache(req);
+  const review = await prisma.review.findUnique({
+    where: { id: reviewId },
+    select: {
+      id: true,
+      salonId: true,
+      status: true,
+      ownerReply: true,
+      ownerRepliedAt: true,
+      customer: { select: { name: true, email: true } },
+      salon: { select: { name: true } },
+    },
+  });
+  if (!review) throw new ApiError(StatusCodes.NOT_FOUND, "Review not found");
+  await assertSalonPermission(user, review.salonId, "reviews.reply");
+  if (review.status !== "PUBLISHED") {
+    throw new ApiError(StatusCodes.CONFLICT, "This review is hidden, so it can't be answered");
+  }
+
+  const now = new Date();
+  const editableSince = new Date(now.getTime() - REPLY_EDIT_WINDOW_MS);
+  // Conditional writes: two people answering at once cannot both win.
+  const { count } = await prisma.review.updateMany({
+    where: edit
+      ? { id: reviewId, ...PUBLISHED, ownerReply: { not: null }, ownerRepliedAt: { gte: editableSince } }
+      : { id: reviewId, ...PUBLISHED, ownerReply: null },
+    data: edit
+      ? { ownerReply: text, ownerReplyById: user.userId }
+      : { ownerReply: text, ownerRepliedAt: now, ownerReplyById: user.userId },
+  });
+  if (count === 0) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      edit
+        ? review.ownerReply
+          ? "A reply can only be edited for 24 hours after it is posted"
+          : "There is no reply to edit yet"
+        : "This review already has a reply - edit it instead",
+    );
+  }
+
+  await audit(buildAuditCtx(req, user.role), {
+    action: edit ? "review.reply_edit" : "review.reply",
+    entityType: "review",
+    entityId: reviewId,
+    salonId: review.salonId,
+    ...diff({ ownerReply: review.ownerReply }, { ownerReply: text }),
+  });
+
+  if (!edit && review.customer.email && !review.customer.email.endsWith("@walk-in.invalid")) {
+    void sendEmail(
+      review.customer.email,
+      "The salon replied to your review",
+      getReviewReplyTemplate({
+        name: review.customer.name,
+        salonName: review.salon.name,
+        reply: text,
+        salonUrl: `${config.frontend_url}/salons/${review.salonId}`,
+      }),
+    );
+  }
+
+  return {
+    id: reviewId,
+    salonId: review.salonId,
+    ownerReply: text,
+    ownerRepliedAt: edit ? review.ownerRepliedAt : now,
+  };
+};
+
 export const ReviewService = {
+  replyToReview,
   createReview,
   reportReview,
   getAllReviews,

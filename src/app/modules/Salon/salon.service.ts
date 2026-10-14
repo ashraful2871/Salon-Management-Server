@@ -445,6 +445,7 @@ const getSalonById = async (
       },
       reviews: {
         where: { status: "PUBLISHED" },
+        omit: { ownerReplyById: true },
         include: {
           customer: {
             select: {

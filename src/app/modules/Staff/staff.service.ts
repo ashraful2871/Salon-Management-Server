@@ -178,6 +178,7 @@ const getStaffById = async (id: string) => {
       },
       reviews: {
         where: { status: "PUBLISHED" },
+        omit: { ownerReplyById: true },
         include: {
           customer: {
             select: {
