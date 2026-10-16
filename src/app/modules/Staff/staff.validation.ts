@@ -22,7 +22,36 @@ const updateStaffValidation = z.object({
   }),
 });
 
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$|^24:00$/;
+
+const shift = z
+  .object({
+    weekday: z.number().int().min(0).max(6),
+    startTime: z.string().regex(HHMM, "Use HH:mm"),
+    endTime: z.string().regex(HHMM, "Use HH:mm"),
+  })
+  .refine((s) => s.startTime < s.endTime, { message: "A shift must end after it starts" });
+
+const putShiftsValidation = z.object({
+  body: z.object({ shifts: z.array(shift).max(21) }),
+});
+
+const addTimeOffValidation = z.object({
+  body: z.object({
+    startsAt: z.string().datetime({ offset: true }),
+    endsAt: z.string().datetime({ offset: true }),
+    reason: z.string().trim().max(200).optional(),
+  }),
+});
+
+const availabilityValidation = z.object({
+  query: z.object({ appointmentId: z.string().uuid() }),
+});
+
 export const StaffValidation = {
   addStaffValidation,
   updateStaffValidation,
+  putShiftsValidation,
+  addTimeOffValidation,
+  availabilityValidation,
 };

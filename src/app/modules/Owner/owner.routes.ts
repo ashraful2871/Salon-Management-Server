@@ -10,6 +10,7 @@ import { OwnerMoney } from "./owner.money";
 import { OwnerPayoutAccount } from "./owner.payoutAccount";
 import { OwnerReviews } from "./owner.reviews";
 import { OwnerStatements } from "./owner.statements";
+import { OwnerTeam } from "./owner.team";
 import { OwnerValidation } from "./owner.validation";
 
 const router = express.Router();
@@ -29,6 +30,10 @@ router.put(
 );
 // Reviews of the branches in reviews.reply scope; replies go through /reviews/:id/reply.
 router.get("/reviews", auth(...BUSINESS_ROLES), OwnerReviews.list);
+
+// Per-stylist figures (reports.view scope) + the payroll CSV.
+router.get("/team/performance.csv", auth(...BUSINESS_ROLES), OwnerTeam.performanceCsv);
+router.get("/team/performance", auth(...BUSINESS_ROLES), OwnerTeam.performance);
 
 // Payout accounts and KYC: the business owner only (assertOwnerOf in each).
 router.get("/payout-accounts", auth("SALON_OWNER"), OwnerPayoutAccount.list);

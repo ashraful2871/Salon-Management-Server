@@ -31,6 +31,7 @@ const walkInValidation = z.object({
         { message: "Enter a valid phone number" },
       ),
     notes: z.string().max(1000).optional(),
+    staffId: z.string().uuid().optional(),
   }),
 });
 

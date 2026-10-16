@@ -167,8 +167,15 @@ const listMembers = async (actor: AccessUser, salonId: string, query: { includeR
         : 0,
     ),
   );
+  // A stylist's Staff row at this branch: hours and time off hang off it.
+  const staffRows = await prisma.staff.findMany({
+    where: { salonId, isDeleted: false, userId: { in: rows.map((r) => r.user.id) } },
+    select: { id: true, userId: true },
+  });
+  const staffIdOf = new Map(staffRows.map((s) => [s.userId, s.id]));
   return rows.map(({ createdAt, user, ...row }, i) => ({
     ...row,
+    staffId: row.role === BranchRole.STYLIST ? (staffIdOf.get(user.id) ?? null) : null,
     userId: user.id,
     name: user.name,
     email: user.email,

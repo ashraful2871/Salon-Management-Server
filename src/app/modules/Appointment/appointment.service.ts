@@ -41,6 +41,7 @@ import {
 import { AppointmentDeposit } from "./appointment.deposit";
 import { AppointmentIdentity } from "./appointment.identity";
 import { attentionWhere, isAttentionKind } from "./appointment.attention";
+import { assertStaffWorking } from "../Staff/staff.schedule";
 
 /**
  * Which status each status may move to. Terminal states go nowhere.
@@ -551,6 +552,11 @@ const quoteBooking = async (
     );
   }
 
+  // A chosen stylist must be on shift and not on leave for the whole slot.
+  if (staff) {
+    await assertStaffWorking({ id: staff.id }, slot.date, slot.startTime, slot.endTime);
+  }
+
   // What this booking costs, and what it costs to not turn up. Both are frozen
   // onto the appointment now, so a later price or policy change cannot rewrite
   // a deal the customer already agreed to.
@@ -744,6 +750,7 @@ const bookWalkIn = async (
     customerName: string;
     customerPhone: string;
     notes?: string;
+    staffId?: string;
   },
 ) => {
   const slot = await prisma.slot.findUnique({
@@ -810,6 +817,18 @@ const bookWalkIn = async (
     );
   }
 
+  // An optional stylist: theirs to serve, so on shift and at this branch.
+  if (payload.staffId) {
+    const staff = await prisma.staff.findFirst({
+      where: { id: payload.staffId, salonId: salon.id, isDeleted: false },
+      select: { id: true, user: { select: { name: true } } },
+    });
+    if (!staff) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Selected staff does not belong to this salon");
+    }
+    await assertStaffWorking({ id: staff.id, name: staff.user.name }, slot.date, slot.startTime, slot.endTime);
+  }
+
   const customerName = payload.customerName.trim();
   const customerPhone = normalizePhone(payload.customerPhone);
   const email = walkInEmail(customerName, customerPhone);
@@ -840,6 +859,7 @@ const bookWalkIn = async (
         salonId: salon.id,
         serviceId: service.id,
         counterId: counter.id,
+        staffId: payload.staffId,
         notes: payload.notes,
         totalMinor: service.priceMinor,
         depositMinor: 0,
@@ -1291,13 +1311,23 @@ const updateAppointmentStatus = async (
         salonId: appointment.salonId,
         isDeleted: false,
       },
-      select: { id: true },
+      select: { id: true, user: { select: { name: true } } },
     });
 
     if (!staff) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
         "Selected staff does not belong to this salon",
+      );
+    }
+
+    // Re-sending the stylist already on the booking is not an assignment.
+    if (staff.id !== appointment.staffId) {
+      await assertStaffWorking(
+        { id: staff.id, name: staff.user.name },
+        appointment.appointmentDate,
+        appointment.startTime,
+        appointment.endTime,
       );
     }
   }

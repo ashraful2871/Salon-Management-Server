@@ -21,6 +21,7 @@ export type OwnerPermission =
   | "services.toggle"
   | "services.edit"
   | "team.invite"
+  | "staff.manage"
   | "team.invite_manager"
   | "reviews.reply"
   | "reports.view"
@@ -42,6 +43,7 @@ export const OWNER_PERMISSIONS: OwnerPermission[] = [
   "services.toggle",
   "services.edit",
   "team.invite",
+  "staff.manage",
   "team.invite_manager",
   "reviews.reply",
   "reports.view",
@@ -65,6 +67,7 @@ export const ROLE_PERMISSIONS: Record<BranchRole, OwnerPermission[]> = {
     "counters.manage",
     "services.toggle",
     "team.invite",
+    "staff.manage",
     "reviews.reply",
     "reports.view",
     "branch.profile",

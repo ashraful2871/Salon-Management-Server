@@ -12,6 +12,7 @@ import { addDays, dateOnly, daysBetween, DAY_MS, isDay } from "../Analytics/anal
 import { paymentSummary } from "./appointment.billing";
 import { AppointmentIdentity } from "./appointment.identity";
 import { claimSlot } from "./appointment.service";
+import { assertStaffWorking, offRanges } from "../Staff/staff.schedule";
 
 /**
  * The owner's day planner. Times go out as wall-clock "YYYY-MM-DDTHH:mm"
@@ -39,7 +40,7 @@ const hhmm = (v: unknown) => {
 };
 
 /** One entry per day of the range, from the salon's published weekly hours. */
-const hoursFor = (hours: unknown, days: string[]) =>
+export const hoursFor = (hours: unknown, days: string[]) =>
   days.map((day) => {
     const weekday = WEEKDAYS[new Date(`${day}T00:00:00Z`).getUTCDay()];
     const raw = hours && typeof hours === "object" ? (hours as Record<string, unknown>)[weekday] : undefined;
@@ -141,6 +142,8 @@ const getCalendar = async (user: AccessUser, query: CalendarQuery) => {
     resources.push({ id: "unassigned", kind: "STAFF", name: "Unassigned" });
   }
 
+  const off = byStaff ? await offRanges(staff.map((s) => s.id), days) : new Map();
+
   const now = new Date();
   const free = slots.filter((s) => s.status === SlotStatus.AVAILABLE && !(s.heldUntil && s.heldUntil > now));
 
@@ -151,7 +154,8 @@ const getCalendar = async (user: AccessUser, query: CalendarQuery) => {
     to,
     mode: byStaff ? ("STAFF" as const) : ("COUNTER" as const),
     readOnly: !!ownStaff,
-    resources,
+    // Stylists carry `off`: outside their shifts ("OFF") and time off ("LEAVE").
+    resources: resources.map((r) => (r.kind === "STAFF" && r.id !== "unassigned" ? { ...r, off: off.get(r.id) ?? [] } : r)),
     bookings: bookings.map((b) => ({
       id: b.id,
       resourceId: byStaff ? (b.staffId ?? "unassigned") : b.counterId,
@@ -216,6 +220,8 @@ const rescheduleAppointment = async (user: AccessUser, ctx: AuditCtx, id: string
   }
   if (!slot.counterId) throw new ApiError(StatusCodes.BAD_REQUEST, "That slot has no counter, so it cannot be booked.");
   if (hasSlotStarted(slot)) throw new ApiError(StatusCodes.CONFLICT, "That time has already passed. Please pick a later slot.");
+  // The stylist moves with the booking, so they must work the new time.
+  if (appt.staffId) await assertStaffWorking({ id: appt.staffId }, slot.date, slot.startTime, slot.endTime);
 
   const before = {
     slotId: appt.slotId,
