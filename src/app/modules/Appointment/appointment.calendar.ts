@@ -1,4 +1,5 @@
 import { AppointmentStatus, Prisma, SlotStatus, UserRole } from "@prisma/client";
+import { withoutClosed } from "../Salon/salon.closure";
 import { StatusCodes } from "http-status-codes";
 import config from "../../../config";
 import ApiError from "../../Error/error";
@@ -145,7 +146,12 @@ const getCalendar = async (user: AccessUser, query: CalendarQuery) => {
   const off = byStaff ? await offRanges(staff.map((s) => s.id), days) : new Map();
 
   const now = new Date();
-  const free = slots.filter((s) => s.status === SlotStatus.AVAILABLE && !(s.heldUntil && s.heldUntil > now));
+  // Closed times (holidays, special hours) are never offered as a gap to fill.
+  const free = await withoutClosed(
+    slots
+      .filter((s) => s.status === SlotStatus.AVAILABLE && !(s.heldUntil && s.heldUntil > now))
+      .map((s) => ({ ...s, salonId })),
+  );
 
   return {
     salon: { id: salon.id, name: salon.name },

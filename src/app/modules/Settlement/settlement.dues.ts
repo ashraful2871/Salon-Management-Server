@@ -151,6 +151,23 @@ export const pauseForDues = (ownerId: string, db: Prisma.TransactionClient = pri
     },
   });
 
+/**
+ * Whether this business is under a dues pause, or past the point where
+ * `dues.watch` would put it there (warned ≥ 3 days ago). The owner's own
+ * resume and the end of an owner pause ask this, so neither reopens bookings
+ * that dues would have closed.
+ */
+export const duesPauseDue = async (ownerId: string, now = new Date()) => {
+  const paused = await prisma.salon.count({
+    where: { ownerId, isDeleted: false, bookingPause: BookingPause.DUES },
+  });
+  if (paused > 0) return true;
+  if (!(await getSetting("dues.pauseEnabled"))) return false;
+  const owner = await prisma.salonOwner.findUnique({ where: { id: ownerId }, select: { duesWarnedAt: true } });
+  if (!owner?.duesWarnedAt) return false;
+  return now.getTime() - owner.duesWarnedAt.getTime() >= WARNING_DAYS * DAY_MS - 60 * 60 * 1000;
+};
+
 /** Clears DUES pauses only. */
 export const resumeDuesPause = (ownerId: string, db: Prisma.TransactionClient = prisma) =>
   db.salon.updateMany({

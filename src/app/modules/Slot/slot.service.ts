@@ -3,6 +3,7 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { SlotStatus } from "@prisma/client";
 import { hasSlotStarted } from "../../utils/slotTime";
+import { withoutClosed } from "../Salon/salon.closure";
 import { accessibleSalonIds, assertSalonPermission, isBusinessRole } from "../../utils/salonAccess";
 
 const MAX_RANGE_DAYS = 90;
@@ -378,7 +379,9 @@ const getSlots = async (query: any) => {
   // because the owner's slot manager still needs to see the whole day.
   if (upcomingOnly === true || upcomingOnly === "true") {
     const now = new Date();
-    return slots.filter((slot) => !hasSlotStarted(slot, now));
+    // A booking screen also never offers a time inside a closure; the owner's
+    // manager sees those slots (they were BLOCKED when the closure was set).
+    return withoutClosed(slots.filter((slot) => !hasSlotStarted(slot, now)));
   }
 
   return slots;

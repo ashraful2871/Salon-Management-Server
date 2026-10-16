@@ -53,6 +53,26 @@ router.patch(
   AdminSalonsController.updateStatus,
 );
 
+// Holidays and special hours (slots.manage, checked in the service).
+router.get("/:id/closures", auth(...BUSINESS_ROLES), SalonController.listClosures);
+router.post(
+  "/:id/closures",
+  auth(...BUSINESS_ROLES),
+  validateRequest(SalonValidation.createClosureValidation),
+  SalonController.createClosure,
+);
+router.delete("/:id/closures/:closureId", auth(...BUSINESS_ROLES), SalonController.deleteClosure);
+
+// The owner's own pause on online bookings; a DUES pause answers 409.
+router.get("/:id/pause", auth("SALON_OWNER"), SalonController.getPause);
+router.post(
+  "/:id/pause",
+  auth("SALON_OWNER"),
+  validateRequest(SalonValidation.pauseValidation),
+  SalonController.pauseSalon,
+);
+router.delete("/:id/pause", auth("SALON_OWNER"), SalonController.resumeSalon);
+
 // Owners only; admins delete through DELETE /admin/salons/:id.
 router.delete("/:id", auth("SALON_OWNER"), SalonController.deleteSalon);
 

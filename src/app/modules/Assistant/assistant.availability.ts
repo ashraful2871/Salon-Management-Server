@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import prisma from "../../shared/prisma";
 import { hasSlotStarted } from "../../utils/slotTime";
 import { SALON_TIME_ZONE } from "../AI-Suggestion/ai.constants";
+import { withoutClosed } from "../Salon/salon.closure";
 
 /**
  * Availability is the filter at every step of the funnel: a date with no free
@@ -118,6 +119,7 @@ export const loadOpenSlots = async (args: {
     },
     select: {
       id: true,
+      salonId: true,
       date: true,
       startTime: true,
       endTime: true,
@@ -131,7 +133,8 @@ export const loadOpenSlots = async (args: {
   const now = args.now ?? new Date();
 
   return (
-    rows
+    // Holidays and special hours (salon.closure.ts).
+    (await withoutClosed(rows))
       // A retired chair's slots are not bookable; a slot with no chair still is.
       .filter(
         (row) => !row.counter || (row.counter.isActive && !row.counter.isDeleted),

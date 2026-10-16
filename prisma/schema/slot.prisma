@@ -1,19 +1,19 @@
 model Slot {
-  id        String          @id @default(uuid())
-  salonId   String
-  serviceId String?
-  counterId String?
-  date      DateTime
-  startTime String
-  endTime   String
-  status    SlotStatus      @default(AVAILABLE)
-  isBooked  Boolean         @default(false)
+  id         String     @id @default(uuid())
+  salonId    String
+  serviceId  String?
+  counterId  String?
+  date       DateTime
+  startTime  String
+  endTime    String
+  status     SlotStatus @default(AVAILABLE)
+  isBooked   Boolean    @default(false)
   /// The slot's place in its day for this salon + service + counter, in start
   /// time order: the 1st slot is #1 whoever books it first. Copied onto the
   /// appointment as its serial. Null only on slots made before numbering.
   sequenceNo Int?
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
 
   /// A soft reservation taken while a customer finishes choosing in the chat.
   /// Expiry is part of the claim predicate rather than a cleanup job's job, so

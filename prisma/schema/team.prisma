@@ -27,7 +27,7 @@ model SalonMember {
 model SalonInvitation {
   id               String           @id @default(uuid())
   salonId          String
-  email            String           // normalised
+  email            String // normalised
   name             String?
   role             BranchRole
   tokenHash        String           @unique

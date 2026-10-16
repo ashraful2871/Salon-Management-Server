@@ -41,6 +41,7 @@ import {
 import { AppointmentDeposit } from "./appointment.deposit";
 import { AppointmentIdentity } from "./appointment.identity";
 import { attentionWhere, isAttentionKind } from "./appointment.attention";
+import { assertNotClosed } from "../Salon/salon.closure";
 import { assertStaffWorking } from "../Staff/staff.schedule";
 
 /**
@@ -320,6 +321,15 @@ export const claimSlot = async (
 ) => {
   const now = new Date();
 
+  // A holiday or special hours set after the slot was made (or a slot
+  // unblocked by hand inside one) still cannot be booked: one check for web,
+  // assistant, walk-in and reschedule alike.
+  const target = await tx.slot.findUnique({
+    where: { id: slot.id },
+    select: { salonId: true, date: true, startTime: true, endTime: true },
+  });
+  if (target) await assertNotClosed(target.salonId, target.date, target.startTime, target.endTime, tx);
+
   const updatedSlot = await tx.slot.updateMany({
     where: {
       id: slot.id,
@@ -551,6 +561,10 @@ const quoteBooking = async (
       "Selected staff does not belong to this salon",
     );
   }
+
+  // Early and friendly for the review page and the assistant summary; the
+  // claim checks again inside the booking transaction.
+  await assertNotClosed(salon.id, slot.date, slot.startTime, slot.endTime);
 
   // A chosen stylist must be on shift and not on leave for the whole slot.
   if (staff) {

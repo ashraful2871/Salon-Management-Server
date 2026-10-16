@@ -4,6 +4,7 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { scheduleReindex } from "../AI-Suggestion/ai.indexer";
 import { countNearbySalons, findNearbySalonIds } from "./salon.geo";
+import { upcomingClosures } from "./salon.closure";
 import { SalonListQuery } from "./salon.validation";
 import {
   AccessUser,
@@ -480,7 +481,8 @@ const getSalonById = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
-  return withPauseFlag(salon);
+  // Holidays and special hours in the next 60 days, for the public page.
+  return { ...withPauseFlag(salon), upcomingClosures: await upcomingClosures(salon.id) };
 };
 
 const updateSalon = async (user: AccessUser, salonId: string, payload: any) => {

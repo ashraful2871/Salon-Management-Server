@@ -1,9 +1,11 @@
 import express from "express";
+import { z } from "zod";
 import auth from "../../middlewares/auth";
 import { paymentLimiter, payoutCodeLimiter } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { BUSINESS_ROLES } from "../../utils/salonAccess";
 import { OwnerController } from "./owner.controller";
+import { bulkPriceBody, copyHoursBody, copyServicesBody, OwnerCatalogue } from "./owner.catalogue";
 import { customerNoteBody, OwnerCustomers } from "./owner.customers";
 import { OwnerHome } from "./owner.home";
 import { OwnerMoney } from "./owner.money";
@@ -67,5 +69,14 @@ router.get("/statements", auth("SALON_OWNER"), OwnerStatements.list);
 router.get("/statements/:id.csv", auth("SALON_OWNER"), OwnerStatements.csv);
 router.get("/statements/:id", auth("SALON_OWNER"), OwnerStatements.detail);
 router.post("/dues/pay", auth("SALON_OWNER"), paymentLimiter, OwnerMoney.payDues);
+
+// Multi-branch catalogue (owner only; every branch named must be the owner's).
+router.post("/services/copy", auth("SALON_OWNER"), validateRequest(z.object({ body: copyServicesBody }), { replaceBody: true }), OwnerCatalogue.copyServices);
+// ?dryRun=1 previews before/after per branch without writing.
+router.patch("/services/bulk-price", auth("SALON_OWNER"), validateRequest(z.object({ body: bulkPriceBody }), { replaceBody: true }), OwnerCatalogue.bulkPrice);
+router.post("/salons/copy-hours", auth("SALON_OWNER"), validateRequest(z.object({ body: copyHoursBody }), { replaceBody: true }), OwnerCatalogue.copyHours);
+// Profile completeness (branch.profile scope). "completeness" stays above ":id".
+router.get("/salons/completeness", auth(...BUSINESS_ROLES), OwnerCatalogue.completenessList);
+router.get("/salons/:id/completeness", auth(...BUSINESS_ROLES), OwnerCatalogue.completeness);
 
 export const OwnerRoutes = router;

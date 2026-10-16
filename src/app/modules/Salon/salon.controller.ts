@@ -7,6 +7,66 @@ import { withAccessCache } from "../../utils/salonAccess";
 import { findSalonMarkers } from "./salon.geo";
 import { NEARBY_MAX_RADIUS_KM, SalonValidation } from "./salon.validation";
 import { recordSearchTerm } from "../Analytics/analytics.capture";
+import { buildAuditCtx } from "../Admin/admin.middleware";
+import { SalonClosureService } from "./salon.closure";
+import { SalonPauseService } from "./salon.pause";
+
+const idParam = (req: Request, key: string) => String(req.params[key]);
+
+const listClosures = catchAsync(async (req: Request, res: Response) => {
+  const from = typeof req.query.from === "string" ? req.query.from : undefined;
+  const data = await SalonClosureService.listClosures(withAccessCache(req), idParam(req, "id"), { from });
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Closures", data });
+});
+
+const createClosure = catchAsync(async (req: Request, res: Response) => {
+  const data = await SalonClosureService.createClosure(
+    withAccessCache(req),
+    buildAuditCtx(req, req.user!.role),
+    idParam(req, "id"),
+    req.body,
+  );
+  sendResponse(res, {
+    statusCode: StatusCodes.CREATED,
+    success: true,
+    message: data.notice ?? "Closure added",
+    data,
+  });
+});
+
+const deleteClosure = catchAsync(async (req: Request, res: Response) => {
+  const data = await SalonClosureService.deleteClosure(
+    withAccessCache(req),
+    buildAuditCtx(req, req.user!.role),
+    idParam(req, "id"),
+    idParam(req, "closureId"),
+  );
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Closure removed", data });
+});
+
+const getPause = catchAsync(async (req: Request, res: Response) => {
+  const data = await SalonPauseService.getPause(withAccessCache(req), idParam(req, "id"));
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Booking status", data });
+});
+
+const pauseSalon = catchAsync(async (req: Request, res: Response) => {
+  const data = await SalonPauseService.pauseSalon(
+    withAccessCache(req),
+    buildAuditCtx(req, req.user!.role),
+    idParam(req, "id"),
+    req.body,
+  );
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Online bookings paused", data });
+});
+
+const resumeSalon = catchAsync(async (req: Request, res: Response) => {
+  const data = await SalonPauseService.resumeSalon(
+    withAccessCache(req),
+    buildAuditCtx(req, req.user!.role),
+    idParam(req, "id"),
+  );
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Online bookings resumed", data });
+});
 
 const createSalon = catchAsync(async (req: Request, res: Response) => {
 
@@ -141,6 +201,12 @@ export const SalonController = {
   getSalonMarkers,
   getMySalons,
   getSalonById,
+  listClosures,
+  createClosure,
+  deleteClosure,
+  getPause,
+  pauseSalon,
+  resumeSalon,
   updateSalon,
   updateSalonLocation,
   deleteSalon,

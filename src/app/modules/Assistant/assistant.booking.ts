@@ -1,5 +1,6 @@
 import prisma from "../../shared/prisma";
 import { HOLD_MINUTES, MAX_ACTIVE_HOLDS } from "./assistant.constants";
+import { isClosed } from "../Salon/salon.closure";
 
 /**
  * Holds, not locks.
@@ -27,6 +28,13 @@ export const holdSlot = async (
   minutes: number = HOLD_MINUTES,
 ): Promise<boolean> => {
   const now = new Date();
+
+  // No hold inside a holiday or special hours.
+  const slot = await prisma.slot.findUnique({
+    where: { id: slotId },
+    select: { salonId: true, date: true, startTime: true, endTime: true },
+  });
+  if (!slot || (await isClosed(slot.salonId, slot.date, slot.startTime, slot.endTime))) return false;
 
   await releaseOldestOverLimit(userId, slotId, now);
 

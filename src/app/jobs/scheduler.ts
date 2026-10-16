@@ -14,6 +14,7 @@ import { AdminApprovalsService } from "../modules/Admin/approvals/approvals.serv
 import { AdminSupportService } from "../modules/Admin/support/support.service";
 import { runWeeklyPayouts } from "../modules/Settlement/settlement.weekly";
 import { runDuesWatch } from "../modules/Settlement/settlement.dues";
+import { clearExpiredOwnerPauses } from "../modules/Salon/salon.pause";
 import { runMonthlyStatements } from "../modules/Owner/owner.statements";
 import {
   rollupBeforeTryOnPurge,
@@ -276,7 +277,13 @@ export const JOBS: JobDef[] = [
   // Monday 09:00 Dhaka (payouts.weekday): raise the week's payouts, once per ISO week.
   { name: "payouts.weekly", everyMs: HOUR, safeToRunNow: false, run: () => runWeeklyPayouts() },
   // 10:00 Dhaka daily: dues reminders, the pause warning, pause and resume.
-  { name: "dues.watch", everyMs: HOUR, safeToRunNow: false, run: () => runDuesWatch() },
+  // Hourly part first: owner pauses whose end time has passed (salon.pause.ts).
+  {
+    name: "dues.watch",
+    everyMs: HOUR,
+    safeToRunNow: false,
+    run: async () => ({ ownerPausesCleared: await clearExpiredOwnerPauses(), ...(await runDuesWatch()) }),
+  },
   // From 03:00 Dhaka on the 1st: last month's statements and commission
   // invoices; idempotent per (owner, kind, month), later runs fill gaps.
   { name: "statements.monthly", everyMs: HOUR, safeToRunNow: true, run: () => runMonthlyStatements() },
