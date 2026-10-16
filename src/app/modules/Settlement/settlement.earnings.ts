@@ -651,7 +651,47 @@ export const getMoneyBySalon = (f: MoneyFilter, limit = 20) =>
     ORDER BY 4 DESC
     LIMIT ${limit}`;
 
+/**
+ * One business's money over [from, to) for the given branches (owner Reports,
+ * owner Phase 12), on the same bases as the monthly statement: counter takings
+ * = COMPLETED payments by `completedAt`; platform = SALON_PAYABLE entries by
+ * `createdAt`, per description (the caller maps descriptions to types);
+ * payouts = PAID lines by `paidAt`. Owner data, so test rows are kept.
+ */
+export const getSalonMoneyRange = async (f: { salonIds: string[]; from: Date; to: Date }) => {
+  if (!f.salonIds.length) return { counter: [], platform: [], byMethod: [], payouts: [] };
+  const ids = Prisma.join(f.salonIds);
+  const [counter, platform, byMethod, payouts] = await Promise.all([
+    prisma.$queryRaw<Array<{ day: string; v: number; n: number }>>`
+      SELECT ${dhakaDay(`a."completedAt"`)} AS day, COALESCE(SUM(p."amountMinor"), 0)::float AS v, COUNT(*)::int AS n
+      FROM payments p JOIN appointments a ON a.id = p."appointmentId"
+      WHERE p.status = 'COMPLETED' AND a."salonId" IN (${ids})
+        AND a."completedAt" >= ${utcTs(f.from)} AND a."completedAt" < ${utcTs(f.to)}
+      GROUP BY 1`,
+    prisma.$queryRaw<Array<{ day: string; description: string; v: number }>>`
+      SELECT ${dhakaDay(`l."createdAt"`)} AS day, l.description, COALESCE(SUM(l."amountMinor"), 0)::float AS v
+      FROM ledger_entries l
+      WHERE l.account = 'SALON_PAYABLE' AND l."salonId" IN (${ids})
+        AND l."createdAt" >= ${utcTs(f.from)} AND l."createdAt" < ${utcTs(f.to)}
+      GROUP BY 1, 2`,
+    prisma.$queryRaw<Array<{ method: string; v: number; n: number }>>`
+      SELECT p."paymentMethod"::text AS method, COALESCE(SUM(p."amountMinor"), 0)::float AS v, COUNT(*)::int AS n
+      FROM payments p JOIN appointments a ON a.id = p."appointmentId"
+      WHERE p.status = 'COMPLETED' AND a."salonId" IN (${ids})
+        AND a."completedAt" >= ${utcTs(f.from)} AND a."completedAt" < ${utcTs(f.to)}
+      GROUP BY 1`,
+    prisma.$queryRaw<Array<{ payoutId: string; paidAt: Date; v: number }>>`
+      SELECT po.id AS "payoutId", po."paidAt", COALESCE(SUM(l."amountMinor"), 0)::float AS v
+      FROM ledger_entries l JOIN payouts po ON po.id = l."payoutId"
+      WHERE l.account = 'SALON_PAYABLE' AND l."salonId" IN (${ids}) AND po.status = 'PAID'
+        AND po."paidAt" >= ${utcTs(f.from)} AND po."paidAt" < ${utcTs(f.to)}
+      GROUP BY 1, 2 ORDER BY 2 DESC`,
+  ]);
+  return { counter, platform, byMethod, payouts };
+};
+
 export const SettlementEarnings = {
+  getSalonMoneyRange,
   getCommissionRates,
   getSalonEarnings,
   getPlatformEarnings,
