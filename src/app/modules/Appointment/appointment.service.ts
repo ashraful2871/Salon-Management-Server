@@ -24,9 +24,12 @@ import {
 import { formatBDT } from "../../utils/money";
 import { getSetting } from "../../utils/settings";
 import {
-  accessibleSalonIds,
+  assertBookingPermission,
   assertSalonPermission,
-  scopeSalonIds,
+  bookingScopeWhere,
+  canSeeBooking,
+  grantAt,
+  isBusinessRole,
 } from "../../utils/salonAccess";
 import { hasSlotStarted } from "../../utils/slotTime";
 import { WalletService } from "../Wallet/wallet.service";
@@ -905,32 +908,19 @@ const getAllAppointments = async (
   if (userRole === UserRole.CUSTOMER) {
     // Customer sees only own appointments
     whereConditions.customerId = userId;
-  } else if (userRole === UserRole.STAFF) {
-    // Staff userId -> find staff profile -> filter by staffId
-    const staff = await prisma.staff.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
-
-    // If staff profile doesn't exist, return no data
-    if (!staff) {
-      return emptyResult;
-    }
-
-    whereConditions.staffId = staff.id;
-  } else if (userRole === UserRole.SALON_OWNER) {
-    const salonIds = await scopeSalonIds(
+  } else if (isBusinessRole(userRole)) {
+    // Owners, managers and receptionists see their branches; a stylist only
+    // their own bookings. A salon outside the set: an empty page.
+    const scope = await bookingScopeWhere(
       { userId, role: userRole },
       "bookings.view",
       salonId,
     );
-
-    // No salons, or a salon that is not theirs: an empty page
-    if (!salonIds?.length) {
+    if (!scope) {
       return emptyResult;
     }
 
-    whereConditions.salonId = { in: salonIds };
+    whereConditions.AND = [scope];
   }
 
   // Admin can see all (no extra role filter)
@@ -1008,7 +998,7 @@ const getAllAppointments = async (
     if (!isAttentionKind(query.attention)) {
       throw new ApiError(StatusCodes.BAD_REQUEST, `Unknown attention filter "${query.attention}".`);
     }
-    whereConditions.AND = [attentionWhere(query.attention)];
+    whereConditions.AND = [...(whereConditions.AND ?? []), attentionWhere(query.attention)];
   }
 
   // Status goes on last: the chip counts need every other filter but this one.
@@ -1206,27 +1196,16 @@ const canViewAppointment = async (
   appointment: {
     customerId: string;
     salonId: string;
+    staffId: string | null;
     salon: { ownerId: string };
   },
   userId: string,
   userRole: string,
 ) => {
-  switch (userRole) {
-    case UserRole.ADMIN:
-      return true;
-    case UserRole.CUSTOMER:
-      return appointment.customerId === userId;
-    case UserRole.SALON_OWNER:
-    case UserRole.STAFF: {
-      const salonIds = await accessibleSalonIds(
-        { userId, role: userRole },
-        "bookings.view",
-      );
-      return salonIds === null || salonIds.includes(appointment.salonId);
-    }
-    default:
-      return false;
-  }
+  if (userRole === UserRole.ADMIN) return true;
+  if (userRole === UserRole.CUSTOMER) return appointment.customerId === userId;
+  if (!isBusinessRole(userRole)) return false;
+  return canSeeBooking({ userId, role: userRole }, appointment);
 };
 
 const getAppointmentById = async (
@@ -1284,29 +1263,24 @@ const updateAppointmentStatus = async (
         "Customers can only cancel appointments",
       );
     }
-  } else if (userRole === UserRole.STAFF) {
-    if (appointment?.staff?.userId !== userId) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "You can only update appointments assigned to you",
-      );
-    }
-  } else if (userRole === UserRole.SALON_OWNER) {
-    await assertSalonPermission(
+  } else if (isBusinessRole(userRole)) {
+    // A stylist only their own bookings; owner, manager, receptionist the branch.
+    await assertBookingPermission(
       { userId, role: userRole },
-      appointment.salonId,
+      appointment,
       "bookings.manage",
     );
   }
 
   if (
     payload.staffId &&
-    userRole !== UserRole.SALON_OWNER &&
-    userRole !== UserRole.ADMIN
+    userRole !== UserRole.ADMIN &&
+    (!isBusinessRole(userRole) ||
+      (await grantAt({ userId, role: userRole }, appointment.salonId))?.ownBookingsOnly !== false)
   ) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can assign staff to appointments",
+      "Only the salon desk can assign staff to appointments",
     );
   }
 
@@ -1494,12 +1468,12 @@ const cancelAppointment = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
-  const bySalon = userRole === UserRole.SALON_OWNER;
+  const bySalon = isBusinessRole(userRole) && appointment.customerId !== userId;
 
   if (bySalon) {
-    await assertSalonPermission(
+    await assertBookingPermission(
       { userId, role: userRole },
-      appointment.salonId,
+      appointment,
       "bookings.manage",
     );
   } else if (appointment.customerId !== userId) {

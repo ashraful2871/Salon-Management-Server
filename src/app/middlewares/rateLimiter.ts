@@ -115,6 +115,19 @@ export const payoutCodeLimiter = rateLimit({
   },
 });
 
+/** Team invitations (new and resent): 20 an hour per account. auth() must run first. */
+export const teamInviteLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  keyGenerator: userOrClientKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many invitations. Try again in an hour.",
+  },
+});
+
 /** Review reports: 20 an hour per account. auth() must run first. */
 export const reviewReportLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,

@@ -40,10 +40,11 @@ const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 const dhakaClock = (now = new Date()) => new Date(now.getTime() + 6 * 60 * 60 * 1000).toISOString().slice(11, 16);
 
 const getOwnerHome = async (user: AccessUser, query: { salonId?: unknown }) => {
-  const { ownerId } = await assertOwnerOf(user);
+  // Managers get the same page for their branches, without the money rows.
+  const ownerId = user.role === UserRole.SALON_OWNER ? (await assertOwnerOf(user)).ownerId : null;
   const requested = typeof query.salonId === "string" && query.salonId && query.salonId !== "all" ? query.salonId : undefined;
   const ids = (await scopeSalonIds(user, "reports.view", requested)) ?? [];
-  const isOwner = user.role === UserRole.SALON_OWNER;
+  const isOwner = ownerId !== null;
   const inIds = { salonId: { in: ids } };
 
   const now = new Date();
@@ -83,9 +84,9 @@ const getOwnerHome = async (user: AccessUser, query: { salonId?: unknown }) => {
     prisma.appointment.count({ where: { ...inIds, ...attentionWhere("unrecorded", now) } }),
     prisma.appointment.count({ where: { ...inIds, ...attentionWhere("appeal", now) } }),
     prisma.review.count({ where: { ...inIds, status: ReviewStatus.PUBLISHED, ownerReply: null } }),
-    isOwner ? getOwnerBuckets(ownerId).then((b) => b.duesMinor) : Promise.resolve(0),
+    ownerId ? getOwnerBuckets(ownerId).then((b) => b.duesMinor) : Promise.resolve(0),
     // FAILED since the last PAID payout: an older failure was already fixed.
-    isOwner
+    ownerId
       ? prisma.payout
           .findFirst({ where: { ownerId, status: PayoutStatus.PAID }, orderBy: { createdAt: "desc" }, select: { createdAt: true } })
           .then((last) =>
@@ -94,8 +95,8 @@ const getOwnerHome = async (user: AccessUser, query: { salonId?: unknown }) => {
             }),
           )
       : Promise.resolve(0),
-    prisma.payoutAccount.count({ where: { ownerId, status: PayoutAccountStatus.VERIFIED } }),
-    prisma.salonOwner.findUnique({ where: { id: ownerId }, select: { kycStatus: true } }),
+    ownerId ? prisma.payoutAccount.count({ where: { ownerId, status: PayoutAccountStatus.VERIFIED } }) : 0,
+    ownerId ? prisma.salonOwner.findUnique({ where: { id: ownerId }, select: { kycStatus: true } }) : null,
     prisma.salon.findMany({
       where: { id: { in: ids } },
       select: { id: true, name: true, status: true, operatingHours: true, locationAccuracy: true, images: true, rating: true, totalReviews: true },

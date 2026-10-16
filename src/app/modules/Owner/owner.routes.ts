@@ -16,7 +16,7 @@ const router = express.Router();
 
 router.get("/access", auth(...BUSINESS_ROLES), OwnerController.getAccess);
 // Today v2: needs attention, today, setup, week, branches (reports.view scope).
-router.get("/home", auth("SALON_OWNER"), OwnerHome.home);
+router.get("/home", auth(...BUSINESS_ROLES), OwnerHome.home);
 
 // Customers (customers.view scope); notes and tags are per business.
 router.get("/customers", auth(...BUSINESS_ROLES), OwnerCustomers.list);

@@ -73,6 +73,7 @@ const updateSalonValidation = z.object({
     email: z.string().email().optional(),
     images: z.array(z.string()).optional(),
     operatingHours: z.any().optional(),
+    managerCanEditServices: z.boolean().optional(),
     latitude: latitude.optional(),
     longitude: longitude.optional(),
   }).refine(coordsPair, coordsPairError),

@@ -9,6 +9,7 @@ import { SalonValidation } from "./salon.validation";
 
 import optionalAuth from "../../middlewares/optionalAuth";
 import { mapLimiter } from "../../middlewares/rateLimiter";
+import { BUSINESS_ROLES } from "../../utils/salonAccess";
 
 const router = express.Router();
 
@@ -31,7 +32,7 @@ router.get("/:id", optionalAuth(), SalonController.getSalonById);
 
 router.patch(
   "/:id",
-  auth("SALON_OWNER"),
+  auth(...BUSINESS_ROLES),
   validateRequest(SalonValidation.updateSalonValidation),
   SalonController.updateSalon,
 );

@@ -709,7 +709,11 @@ export const assertCanMarkNoShow = (
   userRole: string,
   appointment: Pick<Appointment, "appointmentDate" | "startTime">,
 ) => {
-  if (userRole !== UserRole.SALON_OWNER && userRole !== UserRole.ADMIN) {
+  if (
+    userRole !== UserRole.SALON_OWNER &&
+    userRole !== UserRole.BRANCH_MANAGER &&
+    userRole !== UserRole.ADMIN
+  ) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
       "Only the salon or an admin can mark a booking as a no-show",

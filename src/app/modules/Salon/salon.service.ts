@@ -35,13 +35,16 @@ const OWNER_EDITABLE_FIELDS = [
   "depositMinor",
   "depositPercent",
   "cancellationWindowMin",
+  "managerCanEditServices",
 ] as const;
 
-// The booking policy part of the above: needs policy.manage, not branch.profile.
+// Owner-only part of the above (booking policy, and what managers may edit):
+// needs policy.manage, not branch.profile.
 const POLICY_FIELDS = [
   "depositMinor",
   "depositPercent",
   "cancellationWindowMin",
+  "managerCanEditServices",
 ] as const;
 
 const createSalon = async (user: AccessUser, payload: any) => {

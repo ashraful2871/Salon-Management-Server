@@ -6,7 +6,7 @@ import prisma from "../../shared/prisma";
 import { AuditCtx, auditTx } from "../../utils/audit";
 import { sendEmail } from "../../utils/emailSender";
 import { getBookingRescheduledTemplate } from "../../utils/emailTemplates";
-import { AccessUser, assertSalonPermission } from "../../utils/salonAccess";
+import { AccessUser, assertBookingPermission, assertSalonPermission, grantAt } from "../../utils/salonAccess";
 import { hasSlotStarted } from "../../utils/slotTime";
 import { addDays, dateOnly, daysBetween, DAY_MS, isDay } from "../Analytics/analytics.days";
 import { paymentSummary } from "./appointment.billing";
@@ -65,12 +65,10 @@ const getCalendar = async (user: AccessUser, query: CalendarQuery) => {
 
   await assertSalonPermission(user, salonId, "bookings.view");
 
-  // Staff see their own column only, read-only.
-  const ownStaff =
-    user.role === UserRole.STAFF
-      ? await prisma.staff.findUnique({ where: { userId: user.userId }, select: { id: true } })
-      : null;
-  if (user.role === UserRole.STAFF && !ownStaff) throw new ApiError(StatusCodes.NOT_FOUND, "Not found");
+  // A stylist sees their own column only, read-only.
+  const grant = user.role === UserRole.ADMIN ? null : await grantAt(user, salonId);
+  const ownStaff = grant?.ownBookingsOnly ? (grant.staffId ? { id: grant.staffId } : null) : null;
+  if (grant?.ownBookingsOnly && !ownStaff) throw new ApiError(StatusCodes.NOT_FOUND, "Not found");
 
   const range = { gte: dateOnly(from), lt: new Date(dateOnly(to).getTime() + DAY_MS) };
 
@@ -204,7 +202,7 @@ const rescheduleAppointment = async (user: AccessUser, ctx: AuditCtx, id: string
     },
   });
   if (!appt) throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
-  await assertSalonPermission(user, appt.salonId, "bookings.manage");
+  await assertBookingPermission(user, appt, "bookings.manage");
 
   if (!RESCHEDULABLE.includes(appt.status)) {
     throw new ApiError(StatusCodes.CONFLICT, "Only pending or confirmed bookings can be moved.");

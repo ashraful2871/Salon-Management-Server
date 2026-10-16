@@ -11,7 +11,7 @@ import { IMPERSONATION_MINUTES, impersonationOf } from "../../../utils/impersona
 import { getSetting } from "../../../utils/settings";
 import type { AdminContext } from "../admin.middleware";
 
-const VIEWABLE_ROLES = new Set(["CUSTOMER", "STAFF", "SALON_OWNER"]);
+const VIEWABLE_ROLES = new Set(["CUSTOMER", "STAFF", "BRANCH_MANAGER", "SALON_OWNER"]);
 
 /**
  * A read-only access token for the target: 15 minutes, `imp` claim, no

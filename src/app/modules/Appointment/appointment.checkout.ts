@@ -8,7 +8,7 @@ import {
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
-import { assertSalonPermission, scopeSalonIds } from "../../utils/salonAccess";
+import { assertBookingPermission, scopeSalonIds } from "../../utils/salonAccess";
 import { paymentSummary, withPaymentSummary } from "./appointment.billing";
 import { getSetting } from "../../utils/settings";
 import { AppointmentDeposit } from "./appointment.deposit";
@@ -119,7 +119,7 @@ const loadForCounter = async (user: Actor, appointmentId: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
-  await assertSalonPermission(user, appointment.salonId, "bookings.manage");
+  await assertBookingPermission(user, appointment, "bookings.manage");
 
   return appointment;
 };
@@ -179,7 +179,7 @@ const lookupByToken = async (user: Actor, rawToken: string) => {
 
   // Another salon's booking reads as missing, so tokens cannot be probed
   // across salons.
-  await assertSalonPermission(user, appointment.salonId, "bookings.view").catch(() => {
+  await assertBookingPermission(user, appointment, "bookings.view").catch(() => {
     throw notFound;
   });
 
@@ -290,7 +290,7 @@ const checkout = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
-  await assertSalonPermission(user, appointment.salonId, "bookings.manage");
+  await assertBookingPermission(user, appointment, "bookings.manage");
 
   if (appointment.status === AppointmentStatus.COMPLETED) {
     return toReceipt(appointment);

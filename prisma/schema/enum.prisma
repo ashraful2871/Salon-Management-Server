@@ -4,6 +4,22 @@ enum UserRole {
   SALON_OWNER
   ADMIN
   AGENT
+  /// Works at a branch as MANAGER or RECEPTIONIST (derived from salon_members).
+  BRANCH_MANAGER
+}
+
+/// What a team member does at one branch (salon_members.role).
+enum BranchRole {
+  MANAGER
+  RECEPTIONIST
+  STYLIST
+}
+
+/// REMOVED is a soft delete: the row stays for the record.
+enum MemberStatus {
+  ACTIVE
+  SUSPENDED
+  REMOVED
 }
 
 enum UserStatus {

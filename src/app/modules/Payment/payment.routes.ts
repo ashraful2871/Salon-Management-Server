@@ -72,6 +72,7 @@ router.get(
     UserRole.CUSTOMER,
     UserRole.STAFF,
     UserRole.SALON_OWNER,
+    UserRole.BRANCH_MANAGER,
     UserRole.ADMIN,
     UserRole.AGENT,
   ),

@@ -29,6 +29,7 @@ model User {
   admin        Admin?
   salonOwner   SalonOwner?
   staff        Staff?
+  salonMemberships SalonMember[]
   agent        Agent?
   appointments Appointment[]
   reviews      Review[]

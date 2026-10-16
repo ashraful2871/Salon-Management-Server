@@ -5,6 +5,7 @@ import { adminAuth, requireStepUp } from "../Admin/admin.middleware";
 import { adminSensitiveLimiter } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { UserValidation } from "./user.validation";
+import { BUSINESS_ROLES } from "../../utils/salonAccess";
 
 const router = express.Router();
 
@@ -12,19 +13,19 @@ router.get("/", adminAuth("users.view"), UserController.getAllUsers);
 
 router.get(
   "/my-customers",
-  auth("SALON_OWNER"),
+  auth(...BUSINESS_ROLES),
   UserController.getMyCustomers,
 );
 
 router.get(
   "/:id",
-  auth("ADMIN", "SALON_OWNER", "CUSTOMER", "STAFF"),
+  auth("ADMIN", "SALON_OWNER", "BRANCH_MANAGER", "CUSTOMER", "STAFF"),
   UserController.getUserById,
 );
 
 router.patch(
   "/:id",
-  auth("ADMIN", "SALON_OWNER", "CUSTOMER", "STAFF"),
+  auth("ADMIN", "SALON_OWNER", "BRANCH_MANAGER", "CUSTOMER", "STAFF"),
   validateRequest(UserValidation.updateUserValidation),
   UserController.updateUser,
 );

@@ -55,6 +55,9 @@ model Salon {
   bookingPauseUntil  DateTime?
   bookingPausedAt    DateTime?
 
+  /// Lets this branch's MANAGER members edit services, not just switch them on and off.
+  managerCanEditServices Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -69,6 +72,8 @@ model Salon {
   commissionRules CommissionRule[]
   ledgerEntries   LedgerEntry[]
   payouts         Payout[]
+  members         SalonMember[]
+  invitations     SalonInvitation[]
 
   @@index([latitude, longitude])
   @@index([status, isDeleted], map: "salons_status_is_deleted_idx") // already exists in DB; declaring it stops Prisma from dropping it

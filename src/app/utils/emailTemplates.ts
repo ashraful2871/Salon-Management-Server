@@ -1173,3 +1173,42 @@ export const getBookingRescheduledTemplate = (notice: {
      <p>Your deposit and price are unchanged. If the new time does not suit you, contact the salon or cancel from your bookings.</p>
      ${contactLine(notice.contactUrl)}`
   );
+
+const BRANCH_ROLE_LABEL: Record<string, string> = {
+  MANAGER: "a branch manager",
+  RECEPTIONIST: "a receptionist",
+  STYLIST: "a stylist",
+};
+
+export const branchRoleLabel = (role: string) => BRANCH_ROLE_LABEL[role] ?? role.toLowerCase();
+
+export const getTeamInvitationTemplate = (invite: {
+  name?: string | null;
+  inviterName: string;
+  salonName: string;
+  role: string;
+  link: string;
+  expiresAt: Date;
+}) =>
+  moneyLayout(
+    `Join ${escapeHtml(invite.salonName)} on SalonKhuji`,
+    `<p>Hi ${escapeHtml(invite.name || "there")},</p>
+     <p>${escapeHtml(invite.inviterName)} invited you to work at <strong>${escapeHtml(invite.salonName)}</strong> as <strong>${escapeHtml(branchRoleLabel(invite.role))}</strong>.</p>
+     <p><a href="${escapeHtml(invite.link)}" style="display:inline-block;padding:10px 20px;background:#1f2937;color:#fff;border-radius:999px;text-decoration:none;">Accept the invitation</a></p>
+     <p>Sign in (or create an account) with this email address, then accept. You will only see this branch's work.</p>
+     <p style="color:#7f8c8d;font-size:12px;">This link expires on ${invite.expiresAt.toUTCString()}. If you did not expect it, ignore this email.</p>`,
+  );
+
+export const getTeamJoinedTemplate = (notice: {
+  ownerName: string;
+  memberName: string;
+  memberEmail: string;
+  salonName: string;
+  role: string;
+}) =>
+  moneyLayout(
+    `${escapeHtml(notice.memberName)} joined ${escapeHtml(notice.salonName)}`,
+    `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p><strong>${escapeHtml(notice.memberName)}</strong> (${escapeHtml(notice.memberEmail)}) accepted the invitation and now works at <strong>${escapeHtml(notice.salonName)}</strong> as ${escapeHtml(branchRoleLabel(notice.role))}.</p>
+     <p>You can change their role or remove them from the Team page at any time.</p>`,
+  );

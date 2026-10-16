@@ -15,7 +15,7 @@ router.get("/", ReviewController.getAllReviews);
 // A customer, or the owner of the reviewed salon, flags a review for moderation.
 router.post(
   "/:id/report",
-  auth("CUSTOMER", "SALON_OWNER"),
+  auth("CUSTOMER", ...BUSINESS_ROLES),
   reviewReportLimiter,
   validateRequest(ReviewValidation.report, { replaceBody: true }),
   ReviewController.reportReview,

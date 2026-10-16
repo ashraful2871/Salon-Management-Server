@@ -20,6 +20,7 @@
     "verify:auth": "ts-node-dev --transpile-only ./src/scripts/verifyAuth.ts",
     "verify:admin": "ts-node-dev --transpile-only ./src/scripts/verifyAdmin.ts",
     "verify:money": "ts-node-dev --transpile-only ./src/scripts/verifyMoney.ts",
+    "verify:owner": "ts-node-dev --transpile-only ./src/scripts/verifyOwner.ts",
     "test:email": "ts-node-dev --transpile-only ./src/scripts/testEmail.ts",
     "check:email": "ts-node-dev --transpile-only ./src/scripts/checkEmailKey.ts",
     "assistant:check": "ts-node-dev --transpile-only ./src/scripts/assistantReadiness.ts",

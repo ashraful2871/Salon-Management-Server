@@ -5,6 +5,7 @@ import { adminAuth } from "../Admin/admin.middleware";
 import validateRequest from "../../middlewares/validateRequest";
 import { AppointmentValidation } from "./appointment.validation";
 import { UserRole } from "@prisma/client";
+import { BUSINESS_ROLES } from "../../utils/salonAccess";
 
 const router = express.Router();
 
@@ -18,14 +19,14 @@ router.post(
 // A walk-in or phone customer, entered at the counter. No deposit.
 router.post(
   "/walk-in",
-  auth(UserRole.SALON_OWNER, UserRole.STAFF),
+  auth(UserRole.SALON_OWNER, UserRole.BRANCH_MANAGER, UserRole.STAFF),
   validateRequest(AppointmentValidation.walkInValidation),
   AppointmentController.bookWalkIn,
 );
 
 router.get(
   "/",
-  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF, UserRole.CUSTOMER),
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.BRANCH_MANAGER, UserRole.STAFF, UserRole.CUSTOMER),
   AppointmentController.getAllAppointments,
 );
 
@@ -39,7 +40,7 @@ router.get(
 // "cash-summary" as appointment ids.
 router.get(
   "/lookup",
-  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF),
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.BRANCH_MANAGER, UserRole.STAFF),
   validateRequest(AppointmentValidation.lookupByTokenValidation),
   AppointmentController.lookupByToken,
 );
@@ -54,45 +55,45 @@ router.get(
 // The owner's day planner (staff: their own column, read-only).
 router.get(
   "/calendar",
-  auth(UserRole.SALON_OWNER, UserRole.STAFF),
+  auth(UserRole.SALON_OWNER, UserRole.BRANCH_MANAGER, UserRole.STAFF),
   AppointmentController.getCalendar,
 );
 
 router.patch(
   "/:id/reschedule",
-  auth(UserRole.SALON_OWNER),
+  auth(...BUSINESS_ROLES),
   validateRequest(AppointmentValidation.rescheduleValidation),
   AppointmentController.reschedule,
 );
 
 router.get(
   "/:id",
-  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF, UserRole.CUSTOMER),
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.BRANCH_MANAGER, UserRole.STAFF, UserRole.CUSTOMER),
   AppointmentController.getAppointmentById,
 );
 
 router.patch(
   "/:id/check-in",
-  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF),
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.BRANCH_MANAGER, UserRole.STAFF),
   AppointmentController.checkIn,
 );
 
 router.patch(
   "/:id/start",
-  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF),
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.BRANCH_MANAGER, UserRole.STAFF),
   AppointmentController.startAppointment,
 );
 
 router.post(
   "/:id/checkout",
-  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF),
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.BRANCH_MANAGER, UserRole.STAFF),
   validateRequest(AppointmentValidation.checkoutValidation),
   AppointmentController.checkout,
 );
 
 router.patch(
   "/:id/status",
-  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.STAFF, UserRole.CUSTOMER),
+  auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.BRANCH_MANAGER, UserRole.STAFF, UserRole.CUSTOMER),
   validateRequest(AppointmentValidation.updateAppointmentStatusValidation),
   AppointmentController.updateAppointmentStatus,
 );
@@ -121,7 +122,7 @@ router.patch(
 
 router.delete(
   "/:id",
-  auth(UserRole.CUSTOMER, UserRole.SALON_OWNER),
+  auth(UserRole.CUSTOMER, ...BUSINESS_ROLES),
   AppointmentController.cancelAppointment,
 );
 

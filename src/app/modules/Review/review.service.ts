@@ -7,7 +7,7 @@ import config from "../../../config";
 import { audit, diff } from "../../utils/audit";
 import { sendEmail } from "../../utils/emailSender";
 import { getReviewReplyTemplate } from "../../utils/emailTemplates";
-import { assertSalonPermission, withAccessCache } from "../../utils/salonAccess";
+import { assertSalonPermission, isBusinessRole, withAccessCache } from "../../utils/salonAccess";
 import { buildAuditCtx } from "../Admin/admin.middleware";
 import { REPLY_EDIT_WINDOW_MS } from "../Owner/owner.reviews";
 
@@ -355,7 +355,7 @@ const reportReview = async (
   });
   if (!review) throw new ApiError(StatusCodes.NOT_FOUND, "Review not found");
 
-  if (user.role === "SALON_OWNER") {
+  if (isBusinessRole(user.role)) {
     await assertSalonPermission(user, review.salonId, "reviews.reply");
   }
   if (review.customerId === user.userId) {
