@@ -10,6 +10,7 @@ import { getTeamInvitationTemplate, getTeamJoinedTemplate } from "../../utils/em
 import { normalizeEmail } from "../../utils/normalizeEmail";
 import { AccessUser, assertSalonPermission, grantAt } from "../../utils/salonAccess";
 import { maskEmail } from "../Admin/admin.service";
+import { issueSession } from "../Auth/auth.session";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -158,7 +159,15 @@ const listMembers = async (actor: AccessUser, salonId: string, query: { includeR
       user: { select: { id: true, name: true, email: true, phone: true, profilePhoto: true } },
     },
   });
-  return rows.map(({ createdAt, user, ...row }) => ({
+  // The remove dialog shows what a stylist leaves behind (never cancelled).
+  const upcoming = await Promise.all(
+    rows.map((row) =>
+      row.role === BranchRole.STYLIST && row.status !== MemberStatus.REMOVED
+        ? futureBookingsOf(row.user.id, salonId)
+        : 0,
+    ),
+  );
+  return rows.map(({ createdAt, user, ...row }, i) => ({
     ...row,
     userId: user.id,
     name: user.name,
@@ -166,6 +175,7 @@ const listMembers = async (actor: AccessUser, salonId: string, query: { includeR
     phone: user.phone,
     profilePhoto: user.profilePhoto,
     joinedAt: createdAt,
+    upcomingBookings: upcoming[i],
   }));
 };
 
@@ -323,7 +333,8 @@ const sendInvitationEmail = async (
     prisma.salon.findUnique({ where: { id: invitation.salonId }, select: { name: true } }),
     prisma.user.findUnique({ where: { id: invitation.invitedById }, select: { name: true } }),
   ]);
-  const link = `${config.frontend_url}/invite?token=${encodeURIComponent(token)}`;
+  // The address rides along so the sign-in / sign-up forms can prefill it.
+  const link = `${config.frontend_url}/invite?token=${encodeURIComponent(token)}&email=${encodeURIComponent(invitation.email)}`;
   const sent = await sendEmail(
     invitation.email,
     `Join ${salon?.name ?? "a salon"} on SalonKhuji`,
@@ -660,11 +671,20 @@ const accept = async (token: string, callerId: string, ctx: AuditCtx) => {
     );
   }
 
+  // syncAccountRole bumped sessionVersion, which ended the caller's session; a
+  // fresh pair carrying the new role lets the accept page go straight to the
+  // dashboard instead of through the sign-in form.
+  const fresh = await prisma.user.findUniqueOrThrow({
+    where: { id: user.id },
+    select: { id: true, email: true, name: true, role: true, sessionVersion: true },
+  });
+
   return {
     salonId: invitation.salonId,
     salonName: invitation.salon.name,
     role: invitation.role,
     accountRole,
+    ...issueSession(fresh),
   };
 };
 

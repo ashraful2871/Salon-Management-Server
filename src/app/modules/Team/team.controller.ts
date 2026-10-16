@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
+import { setAuthCookies } from "../../utils/authCookies";
 import { withAccessCache } from "../../utils/salonAccess";
 import { buildAuditCtx } from "../Admin/admin.middleware";
 import { TeamService } from "./team.service";
@@ -72,10 +73,13 @@ const preview = catchAsync(async (req: Request, res: Response) => {
 
 const accept = catchAsync(async (req: Request, res: Response) => {
   const data = await TeamService.accept(req.body.token, req.user!.userId, ctxOf(req));
+  // The accept bumped sessionVersion; this pair (also in the body, like login)
+  // replaces the session it ended.
+  setAuthCookies(res, data);
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: "Invitation accepted. Sign in again to continue.",
+    message: "Invitation accepted.",
     data,
   });
 });

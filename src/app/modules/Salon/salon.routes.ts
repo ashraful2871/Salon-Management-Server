@@ -22,7 +22,7 @@ router.post(
 
 router.get("/", optionalAuth(), SalonController.getAllSalons);
 
-router.get("/my-salons", auth("SALON_OWNER"), SalonController.getMySalons);
+router.get("/my-salons", auth("SALON_OWNER", "BRANCH_MANAGER"), SalonController.getMySalons);
 
 // Must stay above "/:id", or "map" is read as a salon id.
 router.get("/map", mapLimiter, SalonController.getSalonMarkers);

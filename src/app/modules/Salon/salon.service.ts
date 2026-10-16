@@ -8,6 +8,7 @@ import { SalonListQuery } from "./salon.validation";
 import {
   AccessUser,
   OwnerPermission,
+  accessibleSalonIds,
   assertOwnerOf,
   assertSalonPermission,
 } from "../../utils/salonAccess";
@@ -296,16 +297,21 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
   };
 };
 
+// The owner's salons; a branch manager's are the branches they hold
+// `branch.profile` at (Services and Slots pick from this list).
 const getMySalons = async (user: AccessUser, query: any) => {
   const { page = 1, limit = 10 } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  const { ownerId } = await assertOwnerOf(user);
+  const scope: Prisma.SalonWhereInput =
+    user.role === "SALON_OWNER"
+      ? { ownerId: (await assertOwnerOf(user)).ownerId }
+      : { id: { in: (await accessibleSalonIds(user, "branch.profile")) ?? [] } };
 
   const [salons, total] = await Promise.all([
     prisma.salon.findMany({
       where: {
-        ownerId,
+        ...scope,
         isDeleted: false,
       },
       skip,
@@ -389,7 +395,7 @@ const getMySalons = async (user: AccessUser, query: any) => {
 
     prisma.salon.count({
       where: {
-        ownerId,
+        ...scope,
         isDeleted: false,
       },
     }),
