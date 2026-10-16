@@ -4,7 +4,7 @@ import config from "../../../config";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { audit, AuditCtx, auditTx, systemAuditCtx } from "../../utils/audit";
-import { sendEmail } from "../../utils/emailSender";
+import { notifyOwner } from "../../utils/notify";
 import { getDuesNoticeTemplate } from "../../utils/emailTemplates";
 import { formatBDT } from "../../utils/money";
 import { getSetting } from "../../utils/settings";
@@ -175,11 +175,12 @@ export const resumeDuesPause = (ownerId: string, db: Prisma.TransactionClient = 
     data: { bookingPause: BookingPause.NONE, bookingPauseReason: null, bookingPausedAt: null, bookingPauseUntil: null },
   });
 
-const ownerContact = (ownerId: string) =>
-  prisma.salonOwner.findUnique({
-    where: { id: ownerId },
-    select: { id: true, businessName: true, user: { select: { name: true, email: true } } },
-  });
+const DUES_EVENT = {
+  reminder: "dues.reminder",
+  warning: "dues.pause_warning",
+  paused: "dues.paused",
+  resumed: "dues.resumed",
+} as const;
 
 const notify = async (
   ownerId: string,
@@ -187,25 +188,37 @@ const notify = async (
   duesMinor: number,
   pauseDate?: string,
 ) => {
-  const owner = await ownerContact(ownerId);
-  if (!owner?.user.email) return;
   const subject = {
     reminder: `You owe ${formatBDT(duesMinor)} - pay with bKash`,
     warning: "Online bookings pause in 3 days",
     paused: "Online bookings are paused",
     resumed: "Online bookings resumed",
   }[kind];
-  await sendEmail(
-    owner.user.email,
-    subject,
-    getDuesNoticeTemplate({
-      ownerName: owner.user.name,
-      kind,
-      amount: formatBDT(duesMinor),
-      pauseDate: pauseDate ?? null,
-      url: duesUrl(),
-    }),
-  );
+  const body = {
+    reminder: `Your business owes ${formatBDT(duesMinor)}. Pay from Money to keep taking online bookings.`,
+    warning: `Online bookings pause on ${pauseDate ?? "soon"} unless ${formatBDT(duesMinor)} is paid.`,
+    paused: `Online bookings are paused until ${formatBDT(duesMinor)} in dues is paid.`,
+    resumed: "Dues are cleared and online bookings are back on.",
+  }[kind];
+  await notifyOwner(ownerId, DUES_EVENT[kind], {
+    title: subject,
+    body,
+    link: "/dashboard/money",
+    // One per owner per Dhaka day: a retried job run does not repeat it
+    // (resumed can rightly happen twice in a day).
+    dedupeKey: kind === "resumed" ? null : `${DUES_EVENT[kind]}:${ownerId}:${dhakaDay()}`,
+    email: {
+      subject,
+      html: (name) =>
+        getDuesNoticeTemplate({
+          ownerName: name,
+          kind,
+          amount: formatBDT(duesMinor),
+          pauseDate: pauseDate ?? null,
+          url: duesUrl(),
+        }),
+    },
+  });
 };
 
 /**

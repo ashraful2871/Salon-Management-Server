@@ -4,7 +4,7 @@ import config from "../../../../config";
 import ApiError from "../../../Error/error";
 import prisma from "../../../shared/prisma";
 import { AuditCtx, auditTx } from "../../../utils/audit";
-import { sendEmail } from "../../../utils/emailSender";
+import { notifyOwner } from "../../../utils/notify";
 import {
   getKycDecisionTemplate,
   getPayoutAccountDecisionTemplate,
@@ -229,17 +229,26 @@ const decideAccount = async (
   });
 
   const { row } = result;
-  await sendEmail(
-    row.owner.user.email,
-    decision.verified ? "Your payout account is verified" : "Your payout account was not approved",
-    getPayoutAccountDecisionTemplate({
-      ownerName: row.owner.user.name,
-      account: describeAccount(row),
-      verified: decision.verified,
-      reason: decision.verified ? null : decision.reason,
-      settingsUrl: settingsUrl(),
-    }),
-  );
+  const accountSubject = decision.verified ? "Your payout account is verified" : "Your payout account was not approved";
+  await notifyOwner(row.ownerId, decision.verified ? "payout_account.verified" : "payout_account.rejected", {
+    title: accountSubject,
+    body: decision.verified
+      ? `${describeAccount(row)} will receive your payouts.`
+      : `${describeAccount(row)}: ${decision.reason}`,
+    link: "/dashboard/money/payout-settings",
+    dedupeKey: `${decision.verified ? "payout_account.verified" : "payout_account.rejected"}:${row.id}`,
+    email: {
+      subject: accountSubject,
+      html: (ownerName) =>
+        getPayoutAccountDecisionTemplate({
+          ownerName,
+          account: describeAccount(row),
+          verified: decision.verified,
+          reason: decision.verified ? null : decision.reason,
+          settingsUrl: settingsUrl(),
+        }),
+    },
+  });
 
   const fresh = await prisma.payoutAccount.findUniqueOrThrow({ where: { id } });
   return { ...maskAccount(fresh), disabled: result.retired.length };
@@ -274,16 +283,23 @@ const decideKyc = async (
     return tx.salonOwner.findUniqueOrThrow({ where: { id: ownerId }, select: OWNER_SELECT });
   });
 
-  await sendEmail(
-    owner.user.email,
-    decision.verified ? "Your business details are verified" : "Your business details need changes",
-    getKycDecisionTemplate({
-      ownerName: owner.user.name,
-      verified: decision.verified,
-      reason: decision.verified ? null : decision.reason,
-      settingsUrl: settingsUrl(),
-    }),
-  );
+  // KYC rides on the payout-account events: it is part of getting paid.
+  const kycSubject = decision.verified ? "Your business details are verified" : "Your business details need changes";
+  await notifyOwner(ownerId, decision.verified ? "payout_account.verified" : "payout_account.rejected", {
+    title: kycSubject,
+    body: decision.verified ? "Finance verified your business details." : `Finance asked for changes: ${decision.reason}`,
+    link: "/dashboard/money/payout-settings",
+    email: {
+      subject: kycSubject,
+      html: (ownerName) =>
+        getKycDecisionTemplate({
+          ownerName,
+          verified: decision.verified,
+          reason: decision.verified ? null : decision.reason,
+          settingsUrl: settingsUrl(),
+        }),
+    },
+  });
 
   return ownerView(owner);
 };

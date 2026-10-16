@@ -9,6 +9,8 @@ import { bulkPriceBody, copyHoursBody, copyServicesBody, OwnerCatalogue } from "
 import { customerNoteBody, OwnerCustomers } from "./owner.customers";
 import { OwnerHome } from "./owner.home";
 import { OwnerMoney } from "./owner.money";
+import { bookingEmailModeBody, markReadBody, OwnerNotifications, prefsBody } from "./owner.notifications";
+import { OwnerActivity } from "./owner.activity";
 import { OwnerPayoutAccount } from "./owner.payoutAccount";
 import { OwnerReports } from "./owner.reports";
 import { OwnerReviews } from "./owner.reviews";
@@ -82,5 +84,14 @@ router.post("/salons/copy-hours", auth("SALON_OWNER"), validateRequest(z.object(
 // Profile completeness (branch.profile scope). "completeness" stays above ":id".
 router.get("/salons/completeness", auth(...BUSINESS_ROLES), OwnerCatalogue.completenessList);
 router.get("/salons/:id/completeness", auth(...BUSINESS_ROLES), OwnerCatalogue.completeness);
+
+// The bell (every business account, own rows only) and its preferences.
+router.get("/notifications", auth(...BUSINESS_ROLES), OwnerNotifications.list);
+router.patch("/notifications/read", auth(...BUSINESS_ROLES), validateRequest(z.object({ body: markReadBody }), { replaceBody: true }), OwnerNotifications.markRead);
+router.get("/notification-prefs", auth(...BUSINESS_ROLES), OwnerNotifications.getPrefs);
+router.put("/notification-prefs", auth(...BUSINESS_ROLES), validateRequest(z.object({ body: prefsBody }), { replaceBody: true }), OwnerNotifications.putPrefs);
+router.patch("/booking-email-mode", auth("SALON_OWNER"), validateRequest(z.object({ body: bookingEmailModeBody }), { replaceBody: true }), OwnerNotifications.setBookingEmailMode);
+// Activity over the audit log (activity.view scope: owner all branches, manager theirs).
+router.get("/activity", auth(...BUSINESS_ROLES), OwnerActivity.list);
 
 export const OwnerRoutes = router;

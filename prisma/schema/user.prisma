@@ -40,6 +40,8 @@ model User {
   otpChallenges          OtpChallenge[]
   authIdentities         AuthIdentity[]
   mfa                    UserMfa?
+  notifications          Notification[]
+  notificationPrefs      NotificationPref[]
 
   @@index([status, suspendedUntil])
   @@index([createdAt])
@@ -107,6 +109,9 @@ model SalonOwner {
   /// "bookings pause in 3 days" warning went out. Both cleared at 0.
   duesSince      DateTime?
   duesWarnedAt   DateTime?
+  /// New-booking emails: EVERY (one per booking), DIGEST (owner.digest, 08:00
+  /// Dhaka, yesterday per branch) or NONE. In-app is unaffected.
+  bookingEmailMode String @default("DIGEST")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

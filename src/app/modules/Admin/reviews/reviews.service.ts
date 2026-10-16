@@ -10,6 +10,7 @@ import { recomputeSalonRating, recomputeStaffRating } from "../../Review/review.
 import { parseListQuery } from "../admin.query";
 import { maskEmail } from "../admin.service";
 import { REVIEW_REASON_LABELS, ReviewModeration } from "./reviews.validation";
+import { notifyBranch } from "../../../utils/notify";
 
 type Query = Record<string, string | undefined>;
 
@@ -152,6 +153,16 @@ const moderate = async (ctx: AuditCtx | undefined, adminUserId: string, id: stri
 
     return { id, status: body.status, moderatedAt: now, salon };
   });
+
+  if (hide) {
+    // The branch hears too: the rating moved. Reason code only, never the note.
+    void notifyBranch(review.salonId, "review.hidden", {
+      title: `A review of ${review.salon.name} was hidden`,
+      body: `Reason: ${REVIEW_REASON_LABELS[body.reasonCode] ?? "Other"}. It no longer counts toward your rating.`,
+      link: "/dashboard/reviews?show=all",
+      dedupeKey: `review.hidden:${id}:${result.moderatedAt.getTime()}`,
+    });
+  }
 
   if (hide && body.notify) {
     // Reason code only: never the moderator's note, never who reported it.

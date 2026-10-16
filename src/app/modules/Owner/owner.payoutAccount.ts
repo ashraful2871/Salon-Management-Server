@@ -8,6 +8,7 @@ import prisma from "../../shared/prisma";
 import sendResponse from "../../shared/sendResponse";
 import { auditTx, audit, diff } from "../../utils/audit";
 import { sendEmail } from "../../utils/emailSender";
+import { notifyOwner } from "../../utils/notify";
 import { getOtpEmailTemplate, getPayoutAccountAddedTemplate } from "../../utils/emailTemplates";
 import { decryptField, encryptField } from "../../utils/fieldCrypto";
 import { enabledMfaStep, verifyCode } from "../../utils/mfa";
@@ -282,15 +283,19 @@ const add = catchAsync(async (req: Request, res: Response) => {
     cooldownHours: created.cooldownUntil ? cooldownHours : null,
     contactUrl: `${config.frontend_url}/contact`,
   });
-  const recipients = [
-    ...new Set(
-      [owner.user.email, owner.businessEmail]
-        .filter((e): e is string => !!e)
-        .map((e) => e.trim().toLowerCase()),
-    ),
-  ];
-  for (const to of recipients) {
-    await sendEmail(to, "A payout account was added to your SalonKhuji business", notice);
+  const subject = "A payout account was added to your SalonKhuji business";
+  // The owner through notify (email locked on); the business email, when it is
+  // a different address, still gets its own copy - it is the security notice.
+  await notifyOwner(owner.id, "payout_account.changed", {
+    title: subject,
+    body: `${describeAccount(created)} was added and waits for verification. Not you? Contact support now.`,
+    link: "/dashboard/money/payout-settings",
+    dedupeKey: `payout_account.changed:${created.id}`,
+    email: { subject, html: notice },
+  });
+  const businessEmail = owner.businessEmail?.trim().toLowerCase();
+  if (businessEmail && businessEmail !== owner.user.email.trim().toLowerCase()) {
+    await sendEmail(businessEmail, subject, notice);
   }
 
   ok(res, "Account added. Our finance team will verify it shortly.", maskAccount(created), StatusCodes.CREATED);

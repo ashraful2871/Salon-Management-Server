@@ -17,6 +17,8 @@ import {
   UserRole,
 } from "@prisma/client";
 import { sendEmail } from "../../utils/emailSender";
+import { notifyBranch } from "../../utils/notify";
+import { notifyBookingEvent } from "./appointment.notify";
 import {
   getBookingConfirmationTemplate,
   getNewBookingOwnerTemplate,
@@ -684,33 +686,40 @@ const bookAppointment = async (
     sendEmail(user.email, "Booking Confirmation - Salon Management", emailHtml);
   }
 
-  // Tell the owner, so a booking made overnight is not first seen when the
-  // customer walks in. Also not awaited.
-  const owner = salon.owner.user;
-  if (owner.email) {
-    const serial = appointment.serialNumber
-      ? ` #${appointment.serialNumber}`
-      : "";
-
-    sendEmail(
-      owner.email,
-      `New booking${serial} - ${appointment.service.name}`,
-      getNewBookingOwnerTemplate({
-        ownerName: owner.name || "there",
-        salonName: appointment.salon.name,
-        customerName: user.name || "A customer",
-        serviceName: appointment.service.name,
-        counterName: appointment.counter?.name,
-        serialNumber: appointment.serialNumber,
-        token: appointment.token,
-        date: formattedDate,
-        time: appointment.endTime
-          ? `${appointment.startTime} - ${appointment.endTime}`
-          : appointment.startTime,
-        dueAtCounter: formatBDT(totalMinor - depositMinor),
-      }),
-    );
-  }
+  // Tell the branch (owner + team, per their preferences; the owner's email
+  // follows bookingEmailMode), so a booking made overnight is not first seen
+  // when the customer walks in. Not awaited; notify never throws.
+  const serial = appointment.serialNumber ? ` #${appointment.serialNumber}` : "";
+  const bookingTime = appointment.endTime
+    ? `${appointment.startTime} - ${appointment.endTime}`
+    : appointment.startTime;
+  void notifyBranch(
+    appointment.salonId,
+    "booking.new",
+    {
+      title: `New booking${serial} - ${appointment.service.name}`,
+      body: `${user.name || "A customer"} · ${formattedDate}, ${bookingTime} at ${appointment.salon.name}`,
+      link: `/dashboard/appointments?date=all&searchTerm=${appointment.token}`,
+      dedupeKey: `booking.new:${appointment.id}`,
+      email: {
+        subject: `New booking${serial} - ${appointment.service.name}`,
+        html: (name) =>
+          getNewBookingOwnerTemplate({
+            ownerName: name,
+            salonName: appointment.salon.name,
+            customerName: user.name || "A customer",
+            serviceName: appointment.service.name,
+            counterName: appointment.counter?.name,
+            serialNumber: appointment.serialNumber,
+            token: appointment.token,
+            date: formattedDate,
+            time: bookingTime,
+            dueAtCounter: formatBDT(totalMinor - depositMinor),
+          }),
+      },
+    },
+    { staffId: appointment.staffId },
+  );
 
   return appointment;
 };
@@ -1493,6 +1502,7 @@ const updateAppointmentStatus = async (
   );
 
   AppointmentDeposit.notifyForfeited(forfeited);
+  if (to === AppointmentStatus.NO_SHOW) void notifyBookingEvent(appointmentId, "booking.no_show");
 
   return result;
 };
@@ -1590,6 +1600,7 @@ const cancelAppointment = async (
     freeCancellation: quote.freeCancellation,
     reason,
   });
+  void notifyBookingEvent(appointmentId, "booking.cancelled");
 
   return {
     ...result,

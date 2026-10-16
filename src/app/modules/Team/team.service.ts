@@ -6,6 +6,7 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { audit, auditTx, AuditCtx } from "../../utils/audit";
 import { sendEmail } from "../../utils/emailSender";
+import { notify } from "../../utils/notify";
 import { getTeamInvitationTemplate, getTeamJoinedTemplate } from "../../utils/emailTemplates";
 import { normalizeEmail } from "../../utils/normalizeEmail";
 import { AccessUser, assertSalonPermission, grantAt } from "../../utils/salonAccess";
@@ -271,6 +272,23 @@ const finishRemoval = async (
   });
   const futureBookings =
     member.role === BranchRole.STYLIST ? await futureBookingsOf(member.userId, salonId) : 0;
+
+  // The owner hears when someone else removed a member or a member left.
+  const [salon, person] = await Promise.all([
+    prisma.salon.findUnique({ where: { id: salonId }, select: { name: true, owner: { select: { userId: true } } } }),
+    prisma.user.findUnique({ where: { id: member.userId }, select: { name: true } }),
+  ]);
+  if (salon && salon.owner.userId !== removedById) {
+    const who = person?.name ?? "A team member";
+    await notify([salon.owner.userId], "team.removed", {
+      title: action === "team.member_leave" ? `${who} left ${salon.name}` : `${who} was removed from ${salon.name}`,
+      body: futureBookings
+        ? `${futureBookings} upcoming booking${futureBookings === 1 ? "" : "s"} still name them - reassign or contact the customers.`
+        : `${who} no longer has access to ${salon.name}.`,
+      link: "/dashboard/team",
+      salonId,
+    });
+  }
   return { id: member.id, status: MemberStatus.REMOVED, futureBookings };
 };
 
@@ -660,23 +678,25 @@ const accept = async (token: string, callerId: string, ctx: AuditCtx) => {
     return role;
   });
 
-  const owner = await prisma.user.findUnique({
-    where: { id: invitation.salon.owner.userId },
-    select: { name: true, email: true },
+  const joinedSubject = `${user.name} joined ${invitation.salon.name}`;
+  await notify([invitation.salon.owner.userId], "team.joined", {
+    title: joinedSubject,
+    body: `${user.name} is now ${invitation.role.toLowerCase()} at ${invitation.salon.name}.`,
+    link: "/dashboard/team",
+    salonId: invitation.salonId,
+    dedupeKey: `team.joined:${invitation.id}`,
+    email: {
+      subject: joinedSubject,
+      html: (ownerName) =>
+        getTeamJoinedTemplate({
+          ownerName,
+          memberName: user.name,
+          memberEmail: user.email,
+          salonName: invitation.salon.name,
+          role: invitation.role,
+        }),
+    },
   });
-  if (owner) {
-    await sendEmail(
-      owner.email,
-      `${user.name} joined ${invitation.salon.name}`,
-      getTeamJoinedTemplate({
-        ownerName: owner.name,
-        memberName: user.name,
-        memberEmail: user.email,
-        salonName: invitation.salon.name,
-        role: invitation.role,
-      }),
-    );
-  }
 
   // syncAccountRole bumped sessionVersion, which ended the caller's session; a
   // fresh pair carrying the new role lets the accept page go straight to the

@@ -15,6 +15,7 @@ import { formatBDT } from "../../utils/money";
 import { getSetting, getSettingSync } from "../../utils/settings";
 import { atWallClock } from "../../utils/slotTime";
 import { sendEmail } from "../../utils/emailSender";
+import { notifyBookingEvent } from "./appointment.notify";
 import {
   getDepositForfeitedTemplate,
   getDepositReleasedTemplate,
@@ -580,7 +581,7 @@ export const appealNoShow = async (
     );
   }
 
-  return prisma.appointment.update({
+  const appealed = await prisma.appointment.update({
     where: { id: appointmentId },
     data: {
       appealStatus: AppealStatus.PENDING,
@@ -588,6 +589,8 @@ export const appealNoShow = async (
       appealReason: reason,
     },
   });
+  void notifyBookingEvent(appointmentId, "appeal.filed");
+  return appealed;
 };
 
 /**
@@ -801,6 +804,7 @@ export const autoMarkNoShows = async () => {
       if (forfeited === undefined) continue;
 
       notifyForfeited(forfeited);
+      void notifyBookingEvent(appointment.id, "booking.no_show");
       marked += 1;
     } catch (error) {
       console.error(

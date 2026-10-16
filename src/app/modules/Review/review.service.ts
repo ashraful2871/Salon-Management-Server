@@ -6,6 +6,7 @@ import { Request } from "express";
 import config from "../../../config";
 import { audit, diff } from "../../utils/audit";
 import { sendEmail } from "../../utils/emailSender";
+import { notifyBranch } from "../../utils/notify";
 import { getReviewReplyTemplate } from "../../utils/emailTemplates";
 import { assertSalonPermission, isBusinessRole, withAccessCache } from "../../utils/salonAccess";
 import { buildAuditCtx } from "../Admin/admin.middleware";
@@ -120,6 +121,14 @@ const createReview = async (userId: string, payload: any) => {
       return review;
     },
   );
+
+  const stars = "★".repeat(result.rating);
+  void notifyBranch(result.salonId, "review.new", {
+    title: `${stars} review for ${result.salon.name}`,
+    body: `${result.customer.name || "A customer"}: ${result.comment ? `"${result.comment.slice(0, 160)}"` : `rated ${result.rating}/5`}`,
+    link: "/dashboard/reviews",
+    dedupeKey: `review.new:${result.id}`,
+  });
 
   return result;
 };
