@@ -134,7 +134,7 @@ const loadDetail = async (appointmentId: string) =>
   );
 
 const toReceipt = (appointment: ReceiptSource, discountApplied = false) => {
-  const { billableMinor, depositPaidMinor, paidAtCounterMinor } =
+  const { billableMinor, depositPaidMinor, prepaidPaidMinor, paidAtCounterMinor } =
     paymentSummary(appointment);
 
   return {
@@ -150,6 +150,7 @@ const toReceipt = (appointment: ReceiptSource, discountApplied = false) => {
     billableMinor,
     tipMinor: appointment.tipMinor,
     depositPaidMinor,
+    prepaidPaidMinor,
     collectedMinor: paidAtCounterMinor,
     /** True only on the call that wrote the discount (an idempotent replay is false). */
     discountApplied,
@@ -316,11 +317,12 @@ const checkout = async (
   if (discountMinor > 0 && !discountReason) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Give a reason for the discount");
   }
-  // A deposit already left the customer's wallet, so it can't be discounted
-  // away; neither can money the counter has already taken.
-  const { depositPaidMinor, paidAtCounterMinor } = paymentSummary(appointment);
+  // A deposit (or a bill prepaid in the app) already left the customer's
+  // wallet, so it can't be discounted away - a salon refunds that instead;
+  // neither can money the counter has already taken.
+  const { depositPaidMinor, prepaidPaidMinor, paidAtCounterMinor } = paymentSummary(appointment);
   const maxDiscountMinor = Math.max(
-    appointment.totalMinor - depositPaidMinor - paidAtCounterMinor,
+    appointment.totalMinor - depositPaidMinor - prepaidPaidMinor - paidAtCounterMinor,
     0,
   );
   if (discountMinor > maxDiscountMinor) {
@@ -458,6 +460,7 @@ const cashSummary = async (
       status: true,
       totalMinor: true,
       depositMinor: true,
+      prepaidMinor: true,
       depositStatus: true,
       payment: {
         select: { amountMinor: true, status: true, paymentMethod: true },
@@ -500,8 +503,9 @@ const cashSummary = async (
 
     if (summary.paymentState === "UNRECORDED") unrecordedCount += 1;
 
+    // Paid in the app: the deposit plus any prepaid bill.
     if (appointment.depositStatus === DepositStatus.APPLIED) {
-      depositsAppliedMinor += appointment.depositMinor;
+      depositsAppliedMinor += appointment.depositMinor + appointment.prepaidMinor;
     }
   }
 

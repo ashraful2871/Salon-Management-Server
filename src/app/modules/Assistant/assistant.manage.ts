@@ -125,7 +125,7 @@ const toItem = (row: ListRow, scope: Scope): BookingListItem => {
     counterName: row.counter?.name ?? null,
     totalMinor: row.totalMinor,
     depositMinor: row.depositMinor,
-    dueAtSalonMinor: Math.max(row.totalMinor - row.depositMinor, 0),
+    dueAtSalonMinor: Math.max(row.totalMinor - row.depositMinor - row.prepaidMinor, 0),
     canCancel,
     canReschedule: canCancel,
     actions,

@@ -101,6 +101,15 @@ export type Block =
        *  reads "Move booking", and what cancelling the old one costs is on the
        *  card before the tap. */
       reschedule?: RescheduleInfo;
+      /** Present when the salon takes full payment in the app (owner Phase
+       *  15): the card offers "Pay all now" next to "Deposit only", each
+       *  with its own signed token and shortfall. */
+      prepay?: {
+        prepaidMinor: number;
+        payNowMinor: number;
+        shortfallMinor: number;
+        confirmToken?: string;
+      };
     }
   | {
       type: "booking_list";
@@ -149,6 +158,8 @@ export type Block =
       staffName: string | null;
       totalMinor: number;
       depositMinor: number;
+      /** Paid in full in the app when > 0 (owner Phase 15). */
+      prepaidMinor: number;
       dueAtSalonMinor: number;
       /** ISO instant, or null when the window has already closed. */
       freeCancellationUntil: string | null;

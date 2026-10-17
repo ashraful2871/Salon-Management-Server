@@ -30,6 +30,8 @@ export type ConfirmPayload = {
   /** priceMinor and depositMinor exactly as quoted. */
   pm: number;
   dm: number;
+  /** Prepaid part when the customer chose to pay in full (owner Phase 15). */
+  pp?: number;
   /** Epoch ms. Matches the slot hold, so a token outlives its hold by nothing. */
   exp: number;
 };
@@ -105,6 +107,7 @@ export const peekConfirm = (token: unknown): ConfirmPayload | null => {
     (payload.stf === undefined || typeof payload.stf === "string") &&
     Number.isInteger(payload.pm) &&
     Number.isInteger(payload.dm) &&
+    (payload.pp === undefined || Number.isInteger(payload.pp)) &&
     Number.isFinite(payload.exp);
 
   return wellFormed ? payload : null;

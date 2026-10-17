@@ -3,6 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { AppointmentCheckout } from "./appointment.checkout";
+import { AppointmentRefund } from "./appointment.refund";
 import { AppointmentService } from "./appointment.service";
 import { AppointmentCalendar } from "./appointment.calendar";
 import { buildAuditCtx } from "../Admin/admin.middleware";
@@ -296,6 +297,33 @@ const startAppointment = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+/** Owner refunds a completed booking's in-app payment to the wallet (Phase 15). */
+const refund = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentRefund.refundCompleted(
+    actor(req),
+    idFromParams(req),
+    { amountMinor: req.body.amountMinor, reason: req.body.reason },
+  );
+  await auditBookingWrite(
+    req,
+    "booking.refund",
+    idFromParams(req),
+    {
+      refundedMinor: result.refundedMinor,
+      totalRefundedMinor: result.totalRefundedMinor,
+      commissionReturnedMinor: result.commissionReturnedMinor,
+    },
+    req.body.reason,
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Refunded to the customer's wallet",
+    data: result,
+  });
+});
+
 const checkout = catchAsync(async (req: Request, res: Response) => {
   await asAdmin(req, "bookings.manage");
   const result = await AppointmentCheckout.checkout(
@@ -404,5 +432,6 @@ export const AppointmentController = {
   checkIn,
   startAppointment,
   checkout,
+  refund,
   cashSummary,
 };

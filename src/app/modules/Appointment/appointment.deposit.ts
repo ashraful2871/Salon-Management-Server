@@ -160,13 +160,15 @@ export const cancellationQuote = (
   appointment: Pick<
     Appointment,
     "appointmentDate" | "startTime" | "depositMinor"
-  >,
+  > & { prepaidMinor?: number },
   salon: Pick<Salon, "cancellationWindowMin">,
   now = new Date(),
 ) => {
   const startsAt = appointmentStartsAt(appointment);
   const free = isWithinFreeCancellation(appointment, salon, now);
   const deposit = Math.max(appointment.depositMinor, 0);
+  // A prepaid bill always comes back whole; the fee is on the deposit only.
+  const prepaid = Math.max(appointment.prepaidMinor ?? 0, 0);
   const penaltyMinor = free ? 0 : latePenaltyMinor(deposit);
 
   return {
@@ -176,12 +178,17 @@ export const cancellationQuote = (
     cancellationWindowMin: salon.cancellationWindowMin,
     penaltyPercent: free ? 0 : latePenaltyPercent(),
     depositMinor: deposit,
+    prepaidMinor: prepaid,
     penaltyMinor,
-    refundMinor: deposit - penaltyMinor,
+    refundMinor: deposit + prepaid - penaltyMinor,
   };
 };
 
 type AppointmentWithSalon = Appointment & { salon: Salon };
+
+/** What the wallet holds for a booking: the deposit plus any prepaid bill (owner Phase 15). */
+export const heldMinor = (appointment: Pick<Appointment, "depositMinor" | "prepaidMinor">) =>
+  Math.max(appointment.depositMinor, 0) + Math.max(appointment.prepaidMinor, 0);
 
 const loadForSettlement = async (
   tx: Prisma.TransactionClient,
@@ -237,13 +244,14 @@ export const settleCompletedTx = async (
 
   if (
     appointment.depositStatus === DepositStatus.HELD &&
-    appointment.depositMinor > 0
+    heldMinor(appointment) > 0
   ) {
     await WalletService.applyDeposit(
       appointment.customerId,
-      appointment.depositMinor,
+      heldMinor(appointment),
       appointment.id,
       tx,
+      appointment.prepaidMinor > 0 ? "Paid in app - applied to your bill" : undefined,
     );
 
     await tx.appointment.update({
@@ -300,13 +308,14 @@ export const settleReleasedTx = async (
 
   if (
     appointment.depositStatus === DepositStatus.HELD &&
-    appointment.depositMinor > 0
+    heldMinor(appointment) > 0
   ) {
     await WalletService.releaseDeposit(
       appointment.customerId,
-      appointment.depositMinor,
+      heldMinor(appointment),
       appointment.id,
       tx,
+      appointment.prepaidMinor > 0 ? "Payment returned - booking cancelled" : undefined,
     );
 
     await tx.appointment.update({
@@ -341,11 +350,11 @@ export const settleReleasedTx = async (
 };
 
 export const notifyReleased = (released: AppointmentWithSalon | null) => {
-  if (released && released.depositMinor > 0) {
+  if (released && heldMinor(released) > 0) {
     notify(released.customerId, "Your deposit has been returned", (name) =>
       getDepositReleasedTemplate(
         name,
-        formatBDT(released.depositMinor),
+        formatBDT(heldMinor(released)),
         released.salon.name,
       ),
     );
@@ -382,13 +391,14 @@ export const settleLateCancelledTx = async (
 
   if (
     appointment.depositStatus !== DepositStatus.HELD ||
-    appointment.depositMinor <= 0
+    heldMinor(appointment) <= 0
   ) {
     return null;
   }
 
+  // The fee comes off the deposit only; a prepaid bill is returned whole.
   const penaltyMinor = latePenaltyMinor(appointment.depositMinor);
-  const refundMinor = appointment.depositMinor - penaltyMinor;
+  const refundMinor = heldMinor(appointment) - penaltyMinor;
 
   if (penaltyMinor > 0) {
     await WalletService.mutate(
@@ -486,16 +496,19 @@ export const settleForfeitedTx = async (
 
   if (
     appointment.depositStatus !== DepositStatus.HELD ||
-    appointment.depositMinor <= 0
+    heldMinor(appointment) <= 0
   ) {
     return null;
   }
 
+  // Owner Phase 0: a no-show forfeits a prepaid bill too, split like a
+  // completed booking (salon owed it, less the booking's commission).
   await WalletService.forfeitDeposit(
     appointment.customerId,
-    appointment.depositMinor,
+    heldMinor(appointment),
     appointment.id,
     tx,
+    appointment.prepaidMinor > 0 ? "Booking payment forfeited - marked as no-show" : undefined,
   );
 
   await tx.appointment.update({
@@ -510,6 +523,13 @@ export const settleForfeitedTx = async (
     tx,
     appointment,
     appointment.salon.noShowSalonSharePct,
+    appointment.prepaidMinor > 0
+      ? SettlementService.resolveCommissionMinor(
+          appointment.prepaidMinor,
+          appointment.commissionBps ??
+            (await SettlementService.currentCommissionBps()),
+        )
+      : 0,
   );
 
   return appointment;
@@ -520,7 +540,7 @@ export const notifyForfeited = (forfeited: AppointmentWithSalon | null) => {
     notify(forfeited.customerId, "Your deposit was forfeited", (name) =>
       getDepositForfeitedTemplate(
         name,
-        formatBDT(forfeited.depositMinor),
+        formatBDT(heldMinor(forfeited)),
         forfeited.salon.name,
       ),
     );
@@ -623,7 +643,7 @@ export const resolveAppeal = async (
         if (
           appointment.status !== "NO_SHOW" ||
           appointment.appealStatus === AppealStatus.APPROVED ||
-          (appointment.depositMinor > 0 &&
+          (heldMinor(appointment) > 0 &&
             appointment.depositStatus !== DepositStatus.FORFEITED)
         ) {
           throw new ApiError(
@@ -648,12 +668,12 @@ export const resolveAppeal = async (
 
       // A no-show without a deposit has nothing to return; the decision
       // still clears the appeal.
-      if (appointment.depositMinor > 0) await WalletService.mutate(
+      if (heldMinor(appointment) > 0) await WalletService.mutate(
         {
           userId: appointment.customerId,
           type: WalletTxType.ADJUSTMENT,
-          amount: appointment.depositMinor,
-          description: `Deposit returned - no-show appeal upheld${
+          amount: heldMinor(appointment),
+          description: `${appointment.prepaidMinor > 0 ? "Payment" : "Deposit"} returned - no-show appeal upheld${
             payload.note ? `: ${payload.note}` : ""
           }`,
           referenceType: "APPOINTMENT",
@@ -675,7 +695,7 @@ export const resolveAppeal = async (
         data: {
           appealStatus: AppealStatus.APPROVED,
           depositStatus:
-            appointment.depositMinor > 0
+            heldMinor(appointment) > 0
               ? DepositStatus.RELEASED
               : appointment.depositStatus,
         },
@@ -693,8 +713,8 @@ export const resolveAppeal = async (
     (name) =>
       getAppealResolvedTemplate(name, salonName, {
         approve: payload.approve,
-        amount: formatBDT(updated.depositMinor),
-        refunded: payload.approve && updated.depositMinor > 0,
+        amount: formatBDT(heldMinor(updated)),
+        refunded: payload.approve && heldMinor(updated) > 0,
         note: payload.note,
       }),
   );
@@ -826,6 +846,7 @@ export const autoMarkNoShows = async () => {
 
 export const AppointmentDeposit = {
   resolveDepositMinor,
+  heldMinor,
   appointmentStartsAt,
   appointmentEndsAt,
   isWithinFreeCancellation,

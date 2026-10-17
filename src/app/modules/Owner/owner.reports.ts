@@ -88,7 +88,7 @@ const dayKey = (col: string) => Prisma.raw(`to_char(${col}, 'YYYY-MM-DD')`);
 const VALID_TIME = Prisma.raw(`a."startTime" ~ '^[0-2][0-9]:[0-5][0-9]$'`);
 
 /** Ledger descriptions that are money the salon earned from customers. */
-const REVENUE_TYPES = new Set(["booking", "no_show", "late_cancel"]);
+const REVENUE_TYPES = new Set(["booking", "prepaid", "refund", "no_show", "late_cancel"]);
 
 // ---------------------------------------------------------------------------
 // Shared figures

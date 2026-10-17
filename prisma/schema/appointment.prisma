@@ -29,6 +29,9 @@ model Appointment {
   totalMinor     Int           @default(0)
   depositMinor   Int           @default(0)
   depositStatus  DepositStatus @default(NONE)
+  /// The rest of the bill, paid from the wallet at booking (owner Phase 15).
+  /// Held with the deposit in one hold, applied at completion. deposit + prepaid <= total.
+  prepaidMinor   Int           @default(0)
   /// The platform commission rate (basis points) in force when this booking
   /// was made. Null on bookings from before the snapshot: they use today's rate.
   commissionBps  Int?

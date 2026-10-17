@@ -37,6 +37,7 @@ const OWNER_EDITABLE_FIELDS = [
   "depositMinor",
   "depositPercent",
   "cancellationWindowMin",
+  "acceptsPrepay",
   "managerCanEditServices",
 ] as const;
 
@@ -46,6 +47,7 @@ const POLICY_FIELDS = [
   "depositMinor",
   "depositPercent",
   "cancellationWindowMin",
+  "acceptsPrepay",
   "managerCanEditServices",
 ] as const;
 

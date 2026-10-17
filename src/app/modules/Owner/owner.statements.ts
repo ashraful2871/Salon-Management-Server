@@ -86,9 +86,11 @@ export const balanceAt = async (db: Db, ownerId: string, before: Date) => {
   return (all._sum.amountMinor ?? 0) - (paid._sum.amountMinor ?? 0);
 };
 
-/** Ledger type → monthly total field. `prepaidMinor` has no writer yet. */
+/** Ledger type → monthly total field. A salon refund (Phase 15) is an adjustment. */
 const FIELD_BY_TYPE = {
   booking: "depositsAppliedMinor",
+  prepaid: "prepaidMinor",
+  refund: "adjustmentsMinor",
   no_show: "noShowShareMinor",
   late_cancel: "lateCancelMinor",
   commission: "commissionMinor",

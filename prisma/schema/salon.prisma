@@ -48,6 +48,8 @@ model Salon {
   depositPercent        Int? // of the service price, when a flat fee is too blunt
   cancellationWindowMin Int  @default(120) // free cancellation up to 2h before
   noShowSalonSharePct   Int  @default(70) // salon's cut of a forfeited deposit
+  /// Lets customers pay the whole bill in the app (needs booking.prepayEnabled too).
+  acceptsPrepay         Boolean @default(false)
 
   // Online-booking pause (walk-ins and existing bookings are unaffected).
   bookingPause       BookingPause @default(NONE)

@@ -91,6 +91,14 @@ router.post(
   AppointmentController.checkout,
 );
 
+// Owner Phase 15: money back to the customer's wallet, carried by the salon.
+router.post(
+  "/:id/refund",
+  auth(UserRole.SALON_OWNER),
+  validateRequest(AppointmentValidation.refundValidation),
+  AppointmentController.refund,
+);
+
 router.patch(
   "/:id/status",
   auth(UserRole.ADMIN, UserRole.SALON_OWNER, UserRole.BRANCH_MANAGER, UserRole.STAFF, UserRole.CUSTOMER),
