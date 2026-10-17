@@ -75,6 +75,7 @@ model Salon {
   members         SalonMember[]
   invitations     SalonInvitation[]
   closures        SalonClosure[]
+  dailyCloses     DailyClose[]
 
   @@index([latitude, longitude])
   @@index([status, isDeleted], map: "salons_status_is_deleted_idx") // already exists in DB; declaring it stops Prisma from dropping it
@@ -103,4 +104,27 @@ model SalonClosure {
   @@unique([salonId, date, startTime])
   @@index([salonId, date])
   @@map("salon_closures")
+}
+
+/// The till count at closing time (owner Phase 14): one per branch per Dhaka
+/// day. Expected figures are counter payments taken that day (bill + tip).
+/// The owner can reopen a day (delete, audited) and the desk submits again.
+model DailyClose {
+  id                String   @id @default(uuid())
+  salonId           String
+  date              DateTime @db.Date
+  expectedCashMinor Int
+  countedCashMinor  Int
+  cardMinor         Int
+  mobileMinor       Int
+  /// counted - expected: negative = short, positive = over.
+  differenceMinor   Int
+  note              String?
+  closedById        String
+  createdAt         DateTime @default(now())
+
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@unique([salonId, date])
+  @@map("daily_closes")
 }

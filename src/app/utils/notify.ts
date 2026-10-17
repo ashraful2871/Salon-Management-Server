@@ -30,6 +30,7 @@ export const NOTIFY_EVENTS = [
   "team.joined",
   "team.removed",
   "salon.status",
+  "close.difference",
 ] as const;
 
 export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
@@ -70,6 +71,7 @@ export const EVENT_INFO: Record<NotifyEvent, EventInfo> = {
   "team.joined": { label: "Someone joined your team", group: "Business", email: true, inApp: true, ownerOnly: true },
   "team.removed": { label: "Someone left your team", group: "Business", email: false, inApp: true, ownerOnly: true },
   "salon.status": { label: "Branch approved, suspended or reactivated", group: "Business", email: true, inApp: true, ownerOnly: true },
+  "close.difference": { label: "Till short or over by ৳100 or more at closing", group: "Money", email: true, inApp: true, ownerOnly: true },
 };
 
 export const BOOKING_EMAIL_MODES = ["EVERY", "DIGEST", "NONE"] as const;

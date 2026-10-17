@@ -85,10 +85,21 @@ const cashSummaryValidation = z.object({
 });
 
 const checkoutValidation = z.object({
-  body: z.object({
-    paymentMethod: z.enum(["CASH", "CARD", "MOBILE_BANKING"]),
-    reference: z.string().max(100).optional(),
-  }),
+  body: z
+    .object({
+      paymentMethod: z.enum(["CASH", "CARD", "MOBILE_BANKING"]),
+      reference: z.string().max(100).optional(),
+      // Poisha. The tip is the salon's own money: in the till, never commissioned.
+      tipMinor: z.number().int().min(0).max(10_000_000).optional(),
+      // Comes off the bill; the upper bound (total less the deposit) is checked
+      // against the booking in the service.
+      discountMinor: z.number().int().min(0).optional(),
+      discountReason: z.string().trim().max(200).optional(),
+    })
+    .refine((b) => !b.discountMinor || (b.discountReason ?? "").length >= 3, {
+      message: "Give a reason for the discount",
+      path: ["discountReason"],
+    }),
 });
 
 const rescheduleValidation = z.object({

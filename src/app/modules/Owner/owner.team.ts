@@ -82,6 +82,7 @@ const getTeamPerformance = async (user: AccessUser, query: Query) => {
         staffId: true,
         status: true,
         totalMinor: true,
+        discountMinor: true,
         startTime: true,
         endTime: true,
         service: { select: { duration: true } },
@@ -182,7 +183,7 @@ const getTeamPerformance = async (user: AccessUser, query: Query) => {
     row.bookedMinutes += minutesOf(b.startTime, b.endTime, b.service.duration);
     if (b.status === AppointmentStatus.COMPLETED) {
       row.completed += 1;
-      row.revenueMinor += b.totalMinor;
+      row.revenueMinor += b.totalMinor - b.discountMinor;
     }
     if (b.status === AppointmentStatus.NO_SHOW) row.noShows += 1;
   }

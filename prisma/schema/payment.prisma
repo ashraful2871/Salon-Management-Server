@@ -1,7 +1,9 @@
 model Payment {
   id            String        @id @default(uuid())
   appointmentId String        @unique
-  amountMinor   Int // poisha
+  amountMinor   Int // poisha - the bill paid at the counter, never the tip
+  /// Tip taken with this payment (in the till, not in `amountMinor`).
+  tipMinor      Int           @default(0)
   paymentMethod PaymentMethod
   status        PaymentStatus @default(PENDING)
   transactionId String?

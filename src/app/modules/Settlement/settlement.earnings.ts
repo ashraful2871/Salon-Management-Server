@@ -194,13 +194,13 @@ export const getSalonEarnings = async (
     // What customers were billed on bookings that actually happened.
     prisma.appointment.aggregate({
       where: { salonId: { in: salonIds }, status: "COMPLETED" },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
       _count: true,
     }),
     // The bookings commission was actually charged on (walk-ins are exempt).
     prisma.appointment.aggregate({
       where: { salonId: { in: salonIds }, status: "COMPLETED", ...COMMISSIONED },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
     }),
     // The slice of that which reached the salon through us as a deposit.
     prisma.appointment.aggregate({
@@ -245,7 +245,7 @@ export const getSalonEarnings = async (
         status: "COMPLETED",
         appointmentDate: { gte: todayStart },
       },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
     }),
     prisma.appointment.aggregate({
       where: {
@@ -253,7 +253,7 @@ export const getSalonEarnings = async (
         status: "COMPLETED",
         appointmentDate: { gte: monthStart },
       },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
     }),
     prisma.ledgerEntry.aggregate({
       where: {
@@ -267,7 +267,7 @@ export const getSalonEarnings = async (
       Array<{ month: string; grossMinor: number; bookings: number }>
     >`
       SELECT to_char(date_trunc('month', a."appointmentDate"), 'YYYY-MM') AS month,
-             COALESCE(SUM(a."totalMinor"), 0)::int AS "grossMinor",
+             COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::int AS "grossMinor",
              COUNT(*)::int AS bookings
       FROM appointments a
       WHERE a."salonId" IN (${ids})
@@ -289,7 +289,7 @@ export const getSalonEarnings = async (
     `,
   ]);
 
-  const grossBookingsMinor = sum(completed._sum.totalMinor);
+  const grossBookingsMinor = (sum(completed._sum.totalMinor) - sum(completed._sum.discountMinor));
   const commissionMinor = sum(commission._sum.amountMinor);
   const depositsCollectedMinor = sum(depositsApplied._sum.depositMinor);
   const completedBookings = completed._count;
@@ -297,7 +297,7 @@ export const getSalonEarnings = async (
   const byStatus = (status: PayoutStatus) =>
     sum(payoutsByStatus.find((row) => row.status === status)?._sum.netMinor);
 
-  const monthGrossMinor = sum(monthGross._sum.totalMinor);
+  const monthGrossMinor = (sum(monthGross._sum.totalMinor) - sum(monthGross._sum.discountMinor));
   const monthCommissionMinor = sum(monthCommission._sum.amountMinor);
 
   return {
@@ -318,7 +318,7 @@ export const getSalonEarnings = async (
       byStatus(PayoutStatus.PROCESSING),
     paidOutMinor: byStatus(PayoutStatus.PAID),
     failedPayoutMinor: byStatus(PayoutStatus.FAILED),
-    todayGrossMinor: sum(todayGross._sum.totalMinor),
+    todayGrossMinor: (sum(todayGross._sum.totalMinor) - sum(todayGross._sum.discountMinor)),
     monthGrossMinor,
     monthCommissionMinor,
     monthNetMinor: monthGrossMinor - monthCommissionMinor,
@@ -333,8 +333,8 @@ export const getSalonEarnings = async (
     // Over the bookings that were commissioned, so exempt walk-ins do not
     // dilute the rate.
     effectiveCommissionPercent:
-      sum(commissioned._sum.totalMinor) > 0
-        ? Number(((commissionMinor / sum(commissioned._sum.totalMinor)) * 100).toFixed(2))
+      (sum(commissioned._sum.totalMinor) - sum(commissioned._sum.discountMinor)) > 0
+        ? Number(((commissionMinor / (sum(commissioned._sum.totalMinor) - sum(commissioned._sum.discountMinor))) * 100).toFixed(2))
         : 0,
     monthly: buildMonthly(keys, monthlyGross, monthlyCommission),
     ...getCommissionRates(),
@@ -392,12 +392,12 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
   ] = await Promise.all([
     prisma.appointment.aggregate({
       where: { status: "COMPLETED", appointmentDate: inRange, ...realSalon },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
       _count: true,
     }),
     prisma.appointment.aggregate({
       where: { status: "COMPLETED", appointmentDate: inRange, ...realSalon, ...COMMISSIONED },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
     }),
     prisma.ledgerEntry.aggregate({
       where: { account: LedgerAccount.PLATFORM_REVENUE, createdAt: inRange, ...realLedger },
@@ -453,7 +453,7 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
       Array<{ month: string; grossMinor: number; bookings: number }>
     >`
       SELECT to_char(date_trunc('month', a."appointmentDate"), 'YYYY-MM') AS month,
-             COALESCE(SUM(a."totalMinor"), 0)::int AS "grossMinor",
+             COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::int AS "grossMinor",
              COUNT(*)::int AS bookings
       FROM appointments a
       JOIN salons s ON s.id = a."salonId"
@@ -477,7 +477,7 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
     `,
   ]);
 
-  const grossBookingsMinor = sum(completed._sum.totalMinor);
+  const grossBookingsMinor = (sum(completed._sum.totalMinor) - sum(completed._sum.discountMinor));
   const platformRevenueMinor = sum(platformRevenue._sum.amountMinor);
   const completedBookings = completed._count;
 
@@ -518,8 +518,8 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
         ? Math.round(grossBookingsMinor / completedBookings)
         : 0,
     effectiveCommissionPercent:
-      sum(commissioned._sum.totalMinor) > 0
-        ? Number(((platformRevenueMinor / sum(commissioned._sum.totalMinor)) * 100).toFixed(2))
+      (sum(commissioned._sum.totalMinor) - sum(commissioned._sum.discountMinor)) > 0
+        ? Number(((platformRevenueMinor / (sum(commissioned._sum.totalMinor) - sum(commissioned._sum.discountMinor))) * 100).toFixed(2))
         : 0,
     monthly: buildMonthly(keys, monthlyGross, monthlyCommission),
     ...getCommissionRates(),
@@ -530,7 +530,7 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
  * Money per Asia/Dhaka day, for analytics (`modules/Analytics`). The one place
  * those figures are defined, so the dashboard and the finance console agree:
  *
- *   gmvMinor          `totalMinor` of COMPLETED bookings, on the day they were
+ *   gmvMinor          billable (`totalMinor - discountMinor`) of COMPLETED bookings, on the day they were
  *                     completed (`completedAt`, or the appointment date on rows
  *                     completed before that was stamped)
  *   commissionMinor   PLATFORM_REVENUE ledger entries by `createdAt`
@@ -579,7 +579,7 @@ export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
   const [gmv, commission, topups] = await Promise.all([
     prisma.$queryRaw<Array<{ day: string; gmv: number; n: number }>>`
       SELECT ${dhakaDay(COMPLETED_AT)} AS day,
-             COALESCE(SUM(a."totalMinor"), 0)::float AS gmv, COUNT(*)::int AS n
+             COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::float AS gmv, COUNT(*)::int AS n
       FROM appointments a
       JOIN salons s ON s.id = a."salonId"
       JOIN users u ON u.id = a."customerId"
@@ -629,7 +629,7 @@ export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
 /** Completed GMV over a range, grouped by salon area (the geo report). */
 export const getMoneyByArea = (f: MoneyFilter) =>
   prisma.$queryRaw<Array<{ area: string; district: string; gmvMinor: number; completed: number }>>`
-    SELECT s.area, s.district, COALESCE(SUM(a."totalMinor"), 0)::float AS "gmvMinor",
+    SELECT s.area, s.district, COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::float AS "gmvMinor",
            COUNT(*)::int AS completed
     FROM appointments a
     JOIN salons s ON s.id = a."salonId"
@@ -642,7 +642,7 @@ export const getMoneyByArea = (f: MoneyFilter) =>
 export const getMoneyBySalon = (f: MoneyFilter, limit = 20) =>
   prisma.$queryRaw<Array<{ salonId: string; name: string; area: string; gmvMinor: number; completed: number }>>`
     SELECT s.id AS "salonId", s.name, s.area,
-           COALESCE(SUM(a."totalMinor"), 0)::float AS "gmvMinor", COUNT(*)::int AS completed
+           COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::float AS "gmvMinor", COUNT(*)::int AS completed
     FROM appointments a
     JOIN salons s ON s.id = a."salonId"
     JOIN users u ON u.id = a."customerId"

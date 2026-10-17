@@ -1175,6 +1175,7 @@ const getMyEarnings = async (user: AccessUser, query: any = {}) => {
         appointmentDate: true,
         startTime: true,
         totalMinor: true,
+        discountMinor: true,
         depositMinor: true,
         depositStatus: true,
         source: true,
@@ -1210,7 +1211,7 @@ const getMyEarnings = async (user: AccessUser, query: any = {}) => {
       return {
         ...booking,
         commissionMinor,
-        netMinor: booking.totalMinor - commissionMinor,
+        netMinor: booking.totalMinor - booking.discountMinor - commissionMinor,
       };
     }),
   };

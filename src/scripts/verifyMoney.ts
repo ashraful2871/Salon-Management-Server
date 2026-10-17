@@ -32,6 +32,9 @@ import prisma from "../app/shared/prisma";
 import { getSetting } from "../app/utils/settings";
 import { systemAuditCtx } from "../app/utils/audit";
 import { AppointmentDeposit } from "../app/modules/Appointment/appointment.deposit";
+import { paymentSummary } from "../app/modules/Appointment/appointment.billing";
+import { expectedForDay } from "../app/modules/Owner/owner.dailyClose";
+import { dhakaDay } from "../app/modules/Analytics/analytics.days";
 import { getOwnerBuckets } from "../app/modules/Settlement/settlement.buckets";
 import { allocateDues, settleDuesPayment, waiveDues, watchOwner } from "../app/modules/Settlement/settlement.dues";
 import { assertTakingOnlineBookings } from "../app/modules/Appointment/appointment.service";
@@ -335,6 +338,70 @@ const run = async (tx: Prisma.TransactionClient) => {
       check("third run raised a payout", false);
     }
   }
+
+  // ------------------------------------------------------------ checkout v2 (Phase 14)
+  // ৳450 bill, ৳30 deposit, ৳50 discount, ৳40 tip: commission is 10% of the
+  // billable ৳400 = ৳40; the tip sits on the payment, never in the ledger.
+  const discounted = await tx.appointment.update({
+    where: { id: (await booking(AppointmentSource.PLATFORM, 3000)).id },
+    data: { discountMinor: 5000, discountReason: "verify:money", tipMinor: 4000 },
+  });
+  await AppointmentDeposit.settleCompletedTx(tx, discounted.id);
+  const discRevenue = await tx.ledgerEntry.findMany({
+    where: { appointmentId: discounted.id },
+    select: { account: true, amountMinor: true },
+  });
+  const commission = discRevenue
+    .filter((r) => r.account === LedgerAccount.PLATFORM_REVENUE)
+    .reduce((s, r) => s + r.amountMinor, 0);
+  check("checkout v2: ৳450 − ৳50 discount + ৳40 tip → commission ৳40", commission === 4000, `commission ${commission}`);
+  check(
+    "checkout v2: discounted journal balanced",
+    discRevenue.length > 0 && discRevenue.reduce((s, r) => s + r.amountMinor, 0) === 0,
+    JSON.stringify(discRevenue.map((r) => r.amountMinor)),
+  );
+  const due = paymentSummary(discounted).amountDueMinor;
+  await tx.payment.create({
+    data: {
+      appointmentId: discounted.id,
+      amountMinor: due,
+      tipMinor: 4000,
+      paymentMethod: "CASH",
+      status: "COMPLETED",
+      paymentDate: new Date(),
+    },
+  });
+  const paid = paymentSummary(await tx.appointment.findUniqueOrThrow({ where: { id: discounted.id }, include: { payment: true } }));
+  check(
+    "checkout v2: due = ৳370, then PAID with nothing left",
+    due === 37000 && paid.amountDueMinor === 0 && paid.paymentState === "PAID" && paid.billableMinor === 40000,
+    `due ${due} → ${paid.amountDueMinor} ${paid.paymentState}`,
+  );
+
+  // ------------------------------------------------------------ daily close (Phase 14)
+  const today = dhakaDay();
+  const expected = await expectedForDay(mirpur.id, today, tx);
+  check("daily close: expected cash = bill + tip (৳410)", expected.cashMinor === 41000, JSON.stringify(expected));
+  const closeData = {
+    salonId: mirpur.id,
+    date: new Date(`${today}T00:00:00Z`),
+    expectedCashMinor: expected.cashMinor,
+    countedCashMinor: 40000,
+    cardMinor: 0,
+    mobileMinor: 0,
+    differenceMinor: 40000 - expected.cashMinor,
+    closedById: ownerUser.id,
+  };
+  await tx.dailyClose.create({ data: closeData });
+  await tx.$executeRawUnsafe("SAVEPOINT close_twice");
+  let secondClose = "created";
+  try {
+    await tx.dailyClose.create({ data: closeData });
+  } catch (err) {
+    secondClose = (err as { code?: string }).code ?? "error";
+  }
+  await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT close_twice");
+  check("daily close: second close for the same day refused (P2002 → 409)", secondClose === "P2002", secondClose);
 
   // ------------------------------------------------------------ zero-sum
   const journals = await tx.ledgerEntry.groupBy({

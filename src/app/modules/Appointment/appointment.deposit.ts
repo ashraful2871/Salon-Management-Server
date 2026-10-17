@@ -23,6 +23,7 @@ import {
 } from "../../utils/emailTemplates";
 import { WalletService } from "../Wallet/wallet.service";
 import { SettlementService } from "../Settlement/settlement.service";
+import { billableMinor } from "./appointment.billing";
 
 /**
  * What happens to a deposit, and when.
@@ -259,10 +260,12 @@ export const settleCompletedTx = async (
     !(await getSetting("booking.commissionOnDirect"));
 
   // The rate in force when the booking was made; older bookings have none.
+  // The base is the billable amount (total less a checkout discount); a tip
+  // is the salon's alone and never enters it.
   const commissionMinor = exemptDirect
     ? 0
     : SettlementService.resolveCommissionMinor(
-        appointment.totalMinor,
+        billableMinor(appointment),
         appointment.commissionBps ??
           (await SettlementService.currentCommissionBps()),
       );

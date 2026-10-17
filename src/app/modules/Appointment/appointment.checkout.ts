@@ -11,6 +11,7 @@ import prisma from "../../shared/prisma";
 import { assertBookingPermission, scopeSalonIds } from "../../utils/salonAccess";
 import { paymentSummary, withPaymentSummary } from "./appointment.billing";
 import { getSetting } from "../../utils/settings";
+import { formatBDT } from "../../utils/money";
 import { AppointmentDeposit } from "./appointment.deposit";
 
 /**
@@ -132,8 +133,9 @@ const loadDetail = async (appointmentId: string) =>
     }),
   );
 
-const toReceipt = (appointment: ReceiptSource) => {
-  const { depositPaidMinor, paidAtCounterMinor } = paymentSummary(appointment);
+const toReceipt = (appointment: ReceiptSource, discountApplied = false) => {
+  const { billableMinor, depositPaidMinor, paidAtCounterMinor } =
+    paymentSummary(appointment);
 
   return {
     appointmentId: appointment.id,
@@ -143,8 +145,14 @@ const toReceipt = (appointment: ReceiptSource) => {
     counterName: appointment.counter?.name ?? null,
     customerName: appointment.customer.name,
     totalMinor: appointment.totalMinor,
+    discountMinor: appointment.discountMinor,
+    discountReason: appointment.discountReason,
+    billableMinor,
+    tipMinor: appointment.tipMinor,
     depositPaidMinor,
     collectedMinor: paidAtCounterMinor,
+    /** True only on the call that wrote the discount (an idempotent replay is false). */
+    discountApplied,
     paymentMethod: appointment.payment?.paymentMethod ?? null,
     completedAt: appointment.completedAt,
   };
@@ -279,7 +287,13 @@ const start = async (user: Actor, appointmentId: string) => {
 const checkout = async (
   user: Actor,
   appointmentId: string,
-  payload: { paymentMethod: CounterMethod; reference?: string },
+  payload: {
+    paymentMethod: CounterMethod;
+    reference?: string;
+    tipMinor?: number;
+    discountMinor?: number;
+    discountReason?: string;
+  },
 ) => {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
@@ -294,6 +308,26 @@ const checkout = async (
 
   if (appointment.status === AppointmentStatus.COMPLETED) {
     return toReceipt(appointment);
+  }
+
+  const tipMinor = payload.tipMinor ?? 0;
+  const discountMinor = payload.discountMinor ?? 0;
+  const discountReason = discountMinor > 0 ? payload.discountReason?.trim() || null : null;
+  if (discountMinor > 0 && !discountReason) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Give a reason for the discount");
+  }
+  // A deposit already left the customer's wallet, so it can't be discounted
+  // away; neither can money the counter has already taken.
+  const { depositPaidMinor, paidAtCounterMinor } = paymentSummary(appointment);
+  const maxDiscountMinor = Math.max(
+    appointment.totalMinor - depositPaidMinor - paidAtCounterMinor,
+    0,
+  );
+  if (discountMinor > maxDiscountMinor) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `The discount can be at most ${formatBDT(maxDiscountMinor)} (the bill less what is already paid)`,
+    );
   }
 
   const now = new Date();
@@ -328,6 +362,11 @@ const checkout = async (
         completedById: user.userId,
         checkedInAt: appointment.checkedInAt ?? now,
         checkedInById: appointment.checkedInById ?? user.userId,
+        // Written before settlement so commission is taken on the billable
+        // amount (total - discount). The tip never reaches settlement.
+        discountMinor,
+        discountReason,
+        tipMinor,
       },
     });
 
@@ -344,11 +383,20 @@ const checkout = async (
 
     const { amountDueMinor } = paymentSummary(settled);
 
-    if (amountDueMinor > 0 && !settled.payment) {
+    // `amountMinor` stays the bill paid at the counter (every earnings figure
+    // reads it); the tip rides alongside in `tipMinor`, so the till count sees
+    // both and commission sees neither.
+    if (settled.payment && tipMinor > 0) {
+      await tx.payment.update({
+        where: { id: settled.payment.id },
+        data: { tipMinor: { increment: tipMinor } },
+      });
+    } else if ((amountDueMinor > 0 || tipMinor > 0) && !settled.payment) {
       await tx.payment.create({
         data: {
           appointmentId,
           amountMinor: amountDueMinor,
+          tipMinor,
           paymentMethod: payload.paymentMethod,
           status: PaymentStatus.COMPLETED,
           paymentDate: now,
@@ -363,7 +411,7 @@ const checkout = async (
     });
   }, TX_OPTIONS);
 
-  return toReceipt(completed);
+  return toReceipt(completed, true);
 };
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import { BUSINESS_ROLES } from "../../utils/salonAccess";
 import { OwnerController } from "./owner.controller";
 import { bulkPriceBody, copyHoursBody, copyServicesBody, OwnerCatalogue } from "./owner.catalogue";
 import { customerNoteBody, OwnerCustomers } from "./owner.customers";
+import { OwnerDailyClose, reopenCloseBody, submitCloseBody } from "./owner.dailyClose";
 import { OwnerHome } from "./owner.home";
 import { OwnerMoney } from "./owner.money";
 import { bookingEmailModeBody, markReadBody, OwnerNotifications, prefsBody } from "./owner.notifications";
@@ -33,6 +34,23 @@ router.put(
   validateRequest(customerNoteBody, { replaceBody: true }),
   OwnerCustomers.note,
 );
+// Daily close (close.manage): expected vs counted per branch per Dhaka day.
+// Submitting twice for one day is 409; only the owner reopens (DELETE + reason).
+router.get("/daily-close/history", auth(...BUSINESS_ROLES), OwnerDailyClose.history);
+router.get("/daily-close", auth(...BUSINESS_ROLES), OwnerDailyClose.getDay);
+router.post(
+  "/daily-close",
+  auth(...BUSINESS_ROLES),
+  validateRequest(submitCloseBody, { replaceBody: true }),
+  OwnerDailyClose.submit,
+);
+router.delete(
+  "/daily-close/:id",
+  auth("SALON_OWNER"),
+  validateRequest(reopenCloseBody, { replaceBody: true }),
+  OwnerDailyClose.reopen,
+);
+
 // Reviews of the branches in reviews.reply scope; replies go through /reviews/:id/reply.
 router.get("/reviews", auth(...BUSINESS_ROLES), OwnerReviews.list);
 

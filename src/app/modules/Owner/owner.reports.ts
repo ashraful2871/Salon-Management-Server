@@ -97,7 +97,7 @@ const REVENUE_TYPES = new Set(["booking", "no_show", "late_cancel"]);
 const statusByDay = (ids: string[], r: Range) =>
   prisma.$queryRaw<Array<{ day: string; status: AppointmentStatus; n: number; total: number }>>`
     SELECT ${dayKey(`a."appointmentDate"`)} AS day, a.status, COUNT(*)::int AS n,
-           COALESCE(SUM(a."totalMinor") FILTER (WHERE a.status = 'COMPLETED'), 0)::float AS total
+           COALESCE(SUM(a."totalMinor" - a."discountMinor") FILTER (WHERE a.status = 'COMPLETED'), 0)::float AS total
     FROM appointments a
     WHERE ${inSalons(`a."salonId"`, ids)} AND ${onDays(`a."appointmentDate"`, r)}
     GROUP BY 1, 2`;
@@ -302,7 +302,7 @@ const services = async (c: Ctx) => {
       SELECT min(sv.name) AS name, min(sv.category::text) AS category, COUNT(DISTINCT sv."salonId")::int AS branches,
              COUNT(*)::int AS bookings,
              COUNT(*) FILTER (WHERE a.status = 'COMPLETED')::int AS completed,
-             COALESCE(SUM(a."totalMinor") FILTER (WHERE a.status = 'COMPLETED'), 0)::float AS revenue
+             COALESCE(SUM(a."totalMinor" - a."discountMinor") FILTER (WHERE a.status = 'COMPLETED'), 0)::float AS revenue
       FROM appointments a JOIN services sv ON sv.id = a."serviceId"
       WHERE ${inSalons(`a."salonId"`, ids)} AND ${onDays(`a."appointmentDate"`, c.range)} AND a.status <> 'CANCELLED'
       GROUP BY lower(trim(sv.name))
@@ -377,7 +377,7 @@ const customers = async (c: Ctx) => {
     prisma.$queryRaw<Array<{ customerId: string; name: string; visits: number; spent: number; lastBooking: string }>>`
       SELECT a."customerId", min(u.name) AS name,
              COUNT(*) FILTER (WHERE a.status = 'COMPLETED')::int AS visits,
-             COALESCE(SUM(a."totalMinor") FILTER (WHERE a.status = 'COMPLETED'), 0)::float AS spent,
+             COALESCE(SUM(a."totalMinor" - a."discountMinor") FILTER (WHERE a.status = 'COMPLETED'), 0)::float AS spent,
              to_char(MAX(a."appointmentDate") FILTER (WHERE a.status <> 'CANCELLED'), 'YYYY-MM-DD') AS "lastBooking"
       FROM appointments a JOIN users u ON u.id = a."customerId"
       WHERE ${inSalons(`a."salonId"`, ids)}
@@ -387,7 +387,7 @@ const customers = async (c: Ctx) => {
       ORDER BY 4 DESC LIMIT 50`,
     prisma.$queryRaw<Array<{ customerId: string; name: string; visits: number; spent: number }>>`
       SELECT a."customerId", min(u.name) AS name, COUNT(*)::int AS visits,
-             COALESCE(SUM(a."totalMinor"), 0)::float AS spent
+             COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::float AS spent
       FROM appointments a JOIN users u ON u.id = a."customerId"
       WHERE ${inSalons(`a."salonId"`, ids)} AND ${onDays(`a."appointmentDate"`, c.range)} AND a.status = 'COMPLETED'
       GROUP BY 1 ORDER BY 4 DESC LIMIT 20`,
@@ -552,7 +552,22 @@ const discovery = async (c: Ctx) => {
 
 const money = async (c: Ctx) => {
   if (!c.isOwner) throw new ApiError(StatusCodes.NOT_FOUND, "Not found");
-  const m = await moneyOf(c.salonIds, c.range);
+  const [m, closes] = await Promise.all([
+    moneyOf(c.salonIds, c.range),
+    // Daily closes (Phase 14): the till count against what was expected.
+    prisma.dailyClose.findMany({
+      where: { salonId: { in: c.salonIds }, date: { gte: dateOnly(c.range.from), lte: dateOnly(c.range.to) } },
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+      select: {
+        id: true,
+        date: true,
+        expectedCashMinor: true,
+        countedCashMinor: true,
+        differenceMinor: true,
+        salon: { select: { id: true, name: true } },
+      },
+    }),
+  ]);
   const commissionMinor = m.byType.get("commission") ?? 0;
   const paidOut = sum(m.raw.payouts.map((p) => p.v));
   return {
@@ -567,6 +582,16 @@ const money = async (c: Ctx) => {
     counterByMethod: m.raw.byMethod.map((x) => ({ key: x.method, valueMinor: x.v, payments: x.n })),
     platformByType: [...m.byType.entries()].map(([key, v]) => ({ key, valueMinor: v })).sort((a, b) => b.valueMinor - a.valueMinor),
     payouts: m.raw.payouts.map((p) => ({ payoutId: p.payoutId, paidAt: p.paidAt, amountMinor: p.v })),
+    closes: closes.map((x) => ({
+      id: x.id,
+      day: x.date.toISOString().slice(0, 10),
+      salonId: x.salon.id,
+      salonName: x.salon.name,
+      expectedCashMinor: x.expectedCashMinor,
+      countedCashMinor: x.countedCashMinor,
+      differenceMinor: x.differenceMinor,
+    })),
+    closeDifferenceMinor: sum(closes.map((x) => x.differenceMinor)),
     series: c.range.days.map((day) => ({
       day,
       counter: m.counterByDay.get(day) ?? 0,

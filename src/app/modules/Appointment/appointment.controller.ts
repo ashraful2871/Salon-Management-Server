@@ -27,6 +27,7 @@ const auditBookingWrite = async (
   action: string,
   id: string,
   after: Record<string, unknown>,
+  reason?: string | null,
 ) => {
   const role = req.user?.role;
   if (!req.admin && !(role && isBusinessRole(role))) return;
@@ -39,7 +40,7 @@ const auditBookingWrite = async (
     entityId: id,
     salonId,
     after,
-    reason: typeof req.body?.reason === "string" ? req.body.reason : null,
+    reason: reason ?? (typeof req.body?.reason === "string" ? req.body.reason : null),
   });
 };
 
@@ -303,13 +304,33 @@ const checkout = catchAsync(async (req: Request, res: Response) => {
     {
       paymentMethod: req.body.paymentMethod,
       reference: req.body.reference,
+      tipMinor: req.body.tipMinor,
+      discountMinor: req.body.discountMinor,
+      discountReason: req.body.discountReason,
     },
   );
   await auditBookingWrite(req, "booking.checkout", idFromParams(req), {
     status: "COMPLETED",
     paymentMethod: req.body.paymentMethod,
     reference: req.body.reference ?? null,
+    tipMinor: result.tipMinor,
+    discountMinor: result.discountMinor,
   });
+  // A discount moves money away from the salon and the platform alike, so it
+  // gets its own row with the reason the desk gave.
+  if (result.discountMinor > 0 && result.discountApplied) {
+    await auditBookingWrite(
+      req,
+      "booking.discount",
+      idFromParams(req),
+      {
+        totalMinor: result.totalMinor,
+        discountMinor: result.discountMinor,
+        billableMinor: result.billableMinor,
+      },
+      result.discountReason,
+    );
+  }
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,

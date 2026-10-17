@@ -129,7 +129,7 @@ const aggSql = (ids: string[]) => Prisma.sql`
     MAX(a."appointmentDate") FILTER (WHERE a.status = 'COMPLETED') AS last_visit,
     MAX(a."appointmentDate") FILTER (WHERE a.status <> 'CANCELLED') AS last_active,
     MAX(a."appointmentDate") AS last_at,
-    COALESCE(SUM(a."totalMinor") FILTER (WHERE a.status = 'COMPLETED'), 0)::bigint AS spent,
+    COALESCE(SUM(a."totalMinor" - a."discountMinor") FILTER (WHERE a.status = 'COMPLETED'), 0)::bigint AS spent,
     COUNT(*) FILTER (WHERE a.status = 'NO_SHOW')::int AS no_shows
   FROM appointments a
   WHERE a."salonId" IN (${Prisma.join(ids)})
@@ -289,7 +289,7 @@ const getCustomer = async (user: AccessUser, customerId: string, query: { salonI
     prisma.appointment.groupBy({ by: ["status"], where: inScope, _count: { _all: true } }),
     prisma.appointment.aggregate({
       where: completed,
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
       _min: { appointmentDate: true },
       _max: { appointmentDate: true },
     }),
@@ -347,7 +347,7 @@ const getCustomer = async (user: AccessUser, customerId: string, query: { salonI
       cancelled: count(AppointmentStatus.CANCELLED),
       noShows: count(AppointmentStatus.NO_SHOW),
       forfeits,
-      spentMinor: spend._sum.totalMinor ?? 0,
+      spentMinor: (spend._sum.totalMinor ?? 0) - (spend._sum.discountMinor ?? 0),
       firstVisit: spend._min.appointmentDate,
       lastVisit: spend._max.appointmentDate,
       favouriteService: service && favService ? { ...service, count: favService.count } : null,

@@ -27,10 +27,17 @@ export type PaymentState =
 export type BillableAppointment = {
   status: AppointmentStatus;
   totalMinor: number;
+  /** Taken off at checkout; absent on rows selected without it (= 0). */
+  discountMinor?: number;
   depositMinor: number;
   depositStatus: DepositStatus;
   payment?: { amountMinor: number; status: PaymentStatus } | null;
 };
+
+/** What the customer is billed: the agreed total less any checkout discount.
+ *  Commission and earnings use this, never `totalMinor` alone. Tips are not in it. */
+export const billableMinor = (a: { totalMinor: number; discountMinor?: number | null }) =>
+  Math.max(a.totalMinor - (a.discountMinor ?? 0), 0);
 
 export const paymentSummary = (a: BillableAppointment) => {
   // A HELD deposit has left the customer's wallet just as surely as an APPLIED
@@ -51,6 +58,7 @@ export const paymentSummary = (a: BillableAppointment) => {
     a.status === AppointmentStatus.NO_SHOW
   ) {
     return {
+      billableMinor: billableMinor(a),
       depositPaidMinor,
       paidAtCounterMinor,
       amountDueMinor: 0,
@@ -59,7 +67,7 @@ export const paymentSummary = (a: BillableAppointment) => {
   }
 
   const amountDueMinor = Math.max(
-    a.totalMinor - depositPaidMinor - paidAtCounterMinor,
+    billableMinor(a) - depositPaidMinor - paidAtCounterMinor,
     0,
   );
 
@@ -71,7 +79,13 @@ export const paymentSummary = (a: BillableAppointment) => {
         ? "UNRECORDED"
         : "UNPAID";
 
-  return { depositPaidMinor, paidAtCounterMinor, amountDueMinor, paymentState };
+  return {
+    billableMinor: billableMinor(a),
+    depositPaidMinor,
+    paidAtCounterMinor,
+    amountDueMinor,
+    paymentState,
+  };
 };
 
 /** The row as loaded, with its payment summary alongside. */
@@ -80,4 +94,4 @@ export const withPaymentSummary = <T extends BillableAppointment>(a: T) => ({
   ...paymentSummary(a),
 });
 
-export const AppointmentBilling = { paymentSummary, withPaymentSummary };
+export const AppointmentBilling = { billableMinor, paymentSummary, withPaymentSummary };

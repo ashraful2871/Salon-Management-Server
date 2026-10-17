@@ -4,6 +4,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import catchAsync from "../../shared/catchAsync";
 import prisma from "../../shared/prisma";
+import { formatBDT } from "../../utils/money";
 import sendResponse from "../../shared/sendResponse";
 import { scopeSalonIds, withAccessCache } from "../../utils/salonAccess";
 import { addDays, dayStart, isDay } from "../Analytics/analytics.days";
@@ -25,6 +26,9 @@ const ACTIONS: Record<string, string> = {
   "booking.status_change": "changed a booking's status",
   "booking.cancel": "cancelled a booking",
   "booking.walk_in": "added a walk-in",
+  "booking.discount": "gave a discount at checkout",
+  "close.submit": "closed the day at the till",
+  "close.reopen": "reopened a closed day",
   "appointment.reschedule": "moved a booking",
   "customer.note": "updated a customer note",
   "review.reply": "replied to a review",
@@ -58,6 +62,7 @@ const GROUPS: Record<string, string[]> = {
   customers: ["customer.note", "review.reply", "review.reply_edit"],
   catalogue: Object.keys(ACTIONS).filter((a) => a.startsWith("services.") || a.startsWith("salon.") || a.startsWith("dues.")),
   team: Object.keys(ACTIONS).filter((a) => a.startsWith("team.") || a.startsWith("staff.")),
+  close: ["close.submit", "close.reopen", "booking.discount"],
 };
 
 const HIDDEN_ROLES = ["ADMIN", "AGENT"];
@@ -68,6 +73,11 @@ const detailOf = (action: string, after: Prisma.JsonValue | null) => {
   const a = (after && typeof after === "object" && !Array.isArray(after) ? after : {}) as Record<string, unknown>;
   if (action === "booking.status_change" && typeof a.status === "string") return `to ${a.status.toLowerCase().replace("_", " ")}`;
   if (action === "booking.checkout" && typeof a.paymentMethod === "string") return `by ${a.paymentMethod.toLowerCase()}`;
+  if (action === "close.submit" && typeof a.differenceMinor === "number") {
+    const d = a.differenceMinor;
+    return d === 0 ? "and the till balanced" : `- ${d < 0 ? "short" : "over"} by ${formatBDT(Math.abs(d))}`;
+  }
+  if (action === "booking.discount" && typeof a.discountMinor === "number") return `of ${formatBDT(a.discountMinor)}`;
   if (action === "team.member_update" && typeof a.role === "string") return `to ${a.role.toLowerCase()}`;
   if (action === "team.accept" && typeof a.branchRole === "string") return `as ${a.branchRole.toLowerCase()}`;
   return null;
