@@ -4,6 +4,10 @@ import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { AppointmentCheckout } from "./appointment.checkout";
 import { AppointmentService } from "./appointment.service";
+import { AppointmentCalendar } from "./appointment.calendar";
+import { buildAuditCtx } from "../Admin/admin.middleware";
+import { isBusinessRole, withAccessCache } from "../../utils/salonAccess";
+import prisma from "../../shared/prisma";
 import { audit } from "../../utils/audit";
 import { assertAdminPermission } from "../Admin/admin.middleware";
 import type { Permission } from "../Admin/admin.permissions";
@@ -13,22 +17,32 @@ import type { Permission } from "../Admin/admin.permissions";
 const asAdmin = (req: Request, permission: Permission) =>
   assertAdminPermission(req, permission);
 
-/** Audits an admin acting on a booking; owners and staff are not audited. */
-const auditAdminWrite = (
+/**
+ * Audits a booking write by an admin, or by the business (owner, manager,
+ * receptionist, stylist) so the owner's Activity page can show who checked a
+ * customer in. Customers are not audited. Never throws.
+ */
+const auditBookingWrite = async (
   req: Request,
   action: string,
   id: string,
   after: Record<string, unknown>,
-) =>
-  req.admin
-    ? audit(req.auditCtx, {
-        action,
-        entityType: "booking",
-        entityId: id,
-        after,
-        reason: typeof req.body?.reason === "string" ? req.body.reason : null,
-      })
-    : Promise.resolve();
+  reason?: string | null,
+) => {
+  const role = req.user?.role;
+  if (!req.admin && !(role && isBusinessRole(role))) return;
+  const salonId =
+    (await prisma.appointment.findUnique({ where: { id }, select: { salonId: true } }).catch(() => null))
+      ?.salonId ?? null;
+  await audit(req.admin ? req.auditCtx : buildAuditCtx(req, role!), {
+    action,
+    entityType: "booking",
+    entityId: id,
+    salonId,
+    after,
+    reason: reason ?? (typeof req.body?.reason === "string" ? req.body.reason : null),
+  });
+};
 
 const bookAppointment = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.userId;
@@ -110,7 +124,7 @@ const updateAppointmentStatus = catchAsync(
       id,
       req.body
     );
-    await auditAdminWrite(req, "booking.status_change", id, {
+    await auditBookingWrite(req, "booking.status_change", id, {
       status: req.body.status,
     });
 
@@ -138,6 +152,7 @@ const cancelAppointment = catchAsync(async (req: Request, res: Response) => {
     id,
     reason,
   );
+  await auditBookingWrite(req, "booking.cancel", id, { status: "CANCELLED" });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -223,6 +238,7 @@ const actor = (req: Request) => ({
 
 const bookWalkIn = catchAsync(async (req: Request, res: Response) => {
   const result = await AppointmentService.bookWalkIn(actor(req), req.body);
+  await auditBookingWrite(req, "booking.walk_in", result.id, { status: result.status, serialNumber: result.serialNumber ?? null });
 
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,
@@ -253,7 +269,7 @@ const checkIn = catchAsync(async (req: Request, res: Response) => {
     actor(req),
     idFromParams(req),
   );
-  await auditAdminWrite(req, "booking.check_in", idFromParams(req), {
+  await auditBookingWrite(req, "booking.check_in", idFromParams(req), {
     status: "CHECKED_IN",
   });
 
@@ -268,7 +284,7 @@ const checkIn = catchAsync(async (req: Request, res: Response) => {
 const startAppointment = catchAsync(async (req: Request, res: Response) => {
   await asAdmin(req, "bookings.manage");
   const result = await AppointmentCheckout.start(actor(req), idFromParams(req));
-  await auditAdminWrite(req, "booking.start", idFromParams(req), {
+  await auditBookingWrite(req, "booking.start", idFromParams(req), {
     status: "IN_PROGRESS",
   });
 
@@ -288,13 +304,33 @@ const checkout = catchAsync(async (req: Request, res: Response) => {
     {
       paymentMethod: req.body.paymentMethod,
       reference: req.body.reference,
+      tipMinor: req.body.tipMinor,
+      discountMinor: req.body.discountMinor,
+      discountReason: req.body.discountReason,
     },
   );
-  await auditAdminWrite(req, "booking.checkout", idFromParams(req), {
+  await auditBookingWrite(req, "booking.checkout", idFromParams(req), {
     status: "COMPLETED",
     paymentMethod: req.body.paymentMethod,
     reference: req.body.reference ?? null,
+    tipMinor: result.tipMinor,
+    discountMinor: result.discountMinor,
   });
+  // A discount moves money away from the salon and the platform alike, so it
+  // gets its own row with the reason the desk gave.
+  if (result.discountMinor > 0 && result.discountApplied) {
+    await auditBookingWrite(
+      req,
+      "booking.discount",
+      idFromParams(req),
+      {
+        totalMinor: result.totalMinor,
+        discountMinor: result.discountMinor,
+        billableMinor: result.billableMinor,
+      },
+      result.discountReason,
+    );
+  }
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -324,7 +360,36 @@ const cashSummary = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const getCalendar = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentCalendar.getCalendar(withAccessCache(req), req.query);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Calendar retrieved successfully",
+    data: result,
+  });
+});
+
+const reschedule = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentCalendar.rescheduleAppointment(
+    withAccessCache(req),
+    buildAuditCtx(req, req.user!.role),
+    req.params.id,
+    req.body.slotId,
+  );
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Booking moved",
+    data: result,
+  });
+});
+
 export const AppointmentController = {
+  getCalendar,
+  reschedule,
   bookAppointment,
   bookWalkIn,
   getAllAppointments,

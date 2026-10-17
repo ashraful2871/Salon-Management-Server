@@ -1,86 +1,20 @@
 import { StatusCodes } from "http-status-codes";
-import { Prisma, UserRole } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
+import { AuditCtx } from "../../utils/audit";
 import { AccessUser, assertSalonPermission } from "../../utils/salonAccess";
+import { removeStylistByStaff, TeamService } from "../Team/team.service";
 
-const addStaff = async (actor: AccessUser, payload: any) => {
-  await assertSalonPermission(actor, payload.salonId, "team.invite");
-
-  // Check if user exists
-  const user = await prisma.user.findUnique({
-    where: {
-      email: payload.email,
-      isDeleted: false,
-    },
-  });
-
-  if (!user) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
-  }
-
-  // Check if user is already staff somewhere
-  const existingStaff = await prisma.staff.findUnique({
-    where: { userId: user.id },
-  });
-
-  if (existingStaff) {
-    throw new ApiError(StatusCodes.CONFLICT, "User is already a staff member");
-  }
-
-  // Create staff in transaction
-  const result = await prisma.$transaction(
-    async (tx: Prisma.TransactionClient) => {
-      // Update user role to STAFF
-      await tx.user.update({
-        where: { id: user.id },
-        data: { role: UserRole.STAFF },
-      });
-
-      // Create staff record
-      const staff = await tx.staff.create({
-        data: {
-          userId: user.id,
-          salonId: payload.salonId,
-          speciality: payload.speciality,
-          experience: payload.experience,
-          bio: payload.bio,
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              phone: true,
-              profilePhoto: true,
-            },
-          },
-          salon: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-        },
-      });
-
-      // Link services if provided
-      if (payload.serviceIds && payload.serviceIds.length > 0) {
-        await tx.staffService.createMany({
-          data: payload.serviceIds.map((serviceId: string) => ({
-            staffId: staff.id,
-            serviceId,
-          })),
-        });
-      }
-
-      return staff;
-    },
-  );
-
-  return result;
-};
+/**
+ * Adding a stylist no longer converts someone's account: it sends a STYLIST
+ * invitation, and they join when they accept with their own account.
+ */
+const addStaff = async (
+  actor: AccessUser,
+  payload: { salonId: string; email: string; name?: string },
+  ctx: AuditCtx,
+) => TeamService.invite(actor, payload.salonId, { email: payload.email, name: payload.name, role: "STYLIST" }, ctx);
 
 const getAllStaff = async (query: any, user?: any) => {
   const { page = 1, limit = 10, salonId, status } = query;
@@ -178,6 +112,7 @@ const getStaffById = async (id: string) => {
       },
       reviews: {
         where: { status: "PUBLISHED" },
+        omit: { ownerReplyById: true },
         include: {
           customer: {
             select: {
@@ -258,7 +193,7 @@ const updateStaff = async (user: AccessUser, staffId: string, payload: any) => {
   return result;
 };
 
-const removeStaff = async (user: AccessUser, staffId: string) => {
+const removeStaff = async (user: AccessUser, staffId: string, ctx: AuditCtx) => {
   const staff = await prisma.staff.findUnique({
     where: {
       id: staffId,
@@ -272,20 +207,8 @@ const removeStaff = async (user: AccessUser, staffId: string) => {
 
   await assertSalonPermission(user, staff.salonId, "team.invite");
 
-  // Soft delete and revert user role
-  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.staff.update({
-      where: { id: staffId },
-      data: { isDeleted: true },
-    });
-
-    await tx.user.update({
-      where: { id: staff.userId },
-      data: { role: "CUSTOMER" },
-    });
-  });
-
-  return null;
+  // The stylist's seat goes too, and the account role is re-derived.
+  return removeStylistByStaff(staff, user.userId, ctx);
 };
 
 export const StaffService = {

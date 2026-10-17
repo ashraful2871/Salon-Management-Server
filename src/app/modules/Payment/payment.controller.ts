@@ -113,6 +113,10 @@ const resultPage = (
   outcome: "success" | "failed" | "cancelled",
   tranId?: string,
 ) => {
+  // An owner's dues payment goes back to Money, which toasts from the param.
+  if (tranId?.startsWith("DUES-")) {
+    return `${config.frontend_url}/dashboard/money?dues=${outcome}&tran=${encodeURIComponent(tranId)}`;
+  }
   const url = `${WALLET_PAGE}/payment/${outcome}`;
   return tranId ? `${url}?tran=${encodeURIComponent(tranId)}` : url;
 };

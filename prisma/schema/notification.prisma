@@ -1,0 +1,39 @@
+/// In-app notifications for business accounts (owner Phase 13). Written only
+/// by `utils/notify.ts`. Read rows older than 90 days are deleted by the
+/// `notifications.retention` job.
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  type      String // event name, e.g. "booking.new"
+  title     String
+  body      String
+  link      String?
+  salonId   String?
+  /// "<event>:<entityId>" - a retry of the same event writes nothing new.
+  dedupeKey String?
+  /// false = in-app is off for this event: the row only remembers the
+  /// dedupe key (and that the email went), it never shows in the bell.
+  shown     Boolean   @default(true)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+/// One row per (user, event) the user changed; anything missing uses the
+/// defaults table in `utils/notify.ts`.
+model NotificationPref {
+  userId String
+  event  String
+  email  Boolean
+  inApp  Boolean
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, event])
+  @@map("notification_prefs")
+}

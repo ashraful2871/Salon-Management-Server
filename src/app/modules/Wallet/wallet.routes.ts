@@ -13,6 +13,7 @@ const ANY_SIGNED_IN = [
   UserRole.CUSTOMER,
   UserRole.STAFF,
   UserRole.SALON_OWNER,
+  UserRole.BRANCH_MANAGER,
   UserRole.ADMIN,
   UserRole.AGENT,
 ] as const;

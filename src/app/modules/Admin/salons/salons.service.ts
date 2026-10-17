@@ -4,7 +4,7 @@ import config from "../../../../config";
 import ApiError from "../../../Error/error";
 import prisma from "../../../shared/prisma";
 import { audit, auditTx, AuditCtx, diff } from "../../../utils/audit";
-import { sendEmail } from "../../../utils/emailSender";
+import { notify } from "../../../utils/notify";
 import { getSalonStatusTemplate } from "../../../utils/emailTemplates";
 import { embeddingModel } from "../../AI-Suggestion/ai.gemini";
 import { DOCUMENT_VERSION, indexSalon, scheduleReindex } from "../../AI-Suggestion/ai.indexer";
@@ -506,9 +506,14 @@ const notifyOwner = (
     link,
     contactUrl: `${config.frontend_url}/contact`,
   });
-  // sendEmail never throws; the catch is belt and braces so a mail problem
-  // can never fail the status change it reports.
-  void sendEmail(salon.owner.user.email, subject, html).catch(() => undefined);
+  // notify never throws, so a mail problem can never fail the status change it reports.
+  void notify([salon.owner.user.id], "salon.status", {
+    title: subject,
+    body: reason ? `${subject}. Reason: ${reason}` : `${subject}.`,
+    link: kind === "rejected" ? `/dashboard/store/${salon.id}` : `/salons/${salon.id}`,
+    salonId: salon.id,
+    email: { subject, html },
+  });
 };
 
 type StatusInput = {

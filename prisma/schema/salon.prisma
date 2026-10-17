@@ -1,45 +1,45 @@
 model Salon {
-  id             String                      @id @default(uuid())
-  name           String
-  description    String?
-  website        String?
-  address        String
-  area           String                      @default("N/A")
-  district       String                      @default("N/A")
-  division       String                      @default("N/A")
-  city           String
-  state          String?
-  zipCode        String?
+  id                String                      @id @default(uuid())
+  name              String
+  description       String?
+  website           String?
+  address           String
+  area              String                      @default("N/A")
+  district          String                      @default("N/A")
+  division          String                      @default("N/A")
+  city              String
+  state             String?
+  zipCode           String?
   latitude          Float?
   longitude         Float?
   locationAccuracy  LocationAccuracy?
   locationUpdatedAt DateTime?
-  phone          String
-  email          String?
-  images         String[]
-  operatingHours Json?
-  status         SalonStatus                 @default(PENDING_APPROVAL)
-  rating         Float                       @default(0)
-  totalReviews   Int                         @default(0)
-  ownerId        String
-  isDeleted      Boolean                     @default(false)
+  phone             String
+  email             String?
+  images            String[]
+  operatingHours    Json?
+  status            SalonStatus                 @default(PENDING_APPROVAL)
+  rating            Float                       @default(0)
+  totalReviews      Int                         @default(0)
+  ownerId           String
+  isDeleted         Boolean                     @default(false)
   /// Seed or test data; left out of admin lists unless asked for.
-  isTest         Boolean                     @default(false)
+  isTest            Boolean                     @default(false)
   /// The admin review trail behind `status`. `approvedAt` is the first time
   /// the salon went ACTIVE (backfilled from `updatedAt` for older salons).
   statusReason      String?
   statusChangedAt   DateTime?
   statusChangedById String?
   approvedAt        DateTime?
-  embedding     Unsupported("vector(768)")?
+  embedding         Unsupported("vector(768)")?
   /// Which model produced `embedding`, and from which document
   /// (`embeddingHash` is "<document version>:<sha256 of the text>"). The AI
   /// indexer re-embeds when either stops matching, so a model switch or a
   /// changed service list never leaves stale or incomparable vectors behind.
   /// Written only by AI-Suggestion/ai.indexer.ts, with raw SQL.
-  embeddingModel String?
-  embeddingHash  String?
-  embeddedAt     DateTime?
+  embeddingModel    String?
+  embeddingHash     String?
+  embeddedAt        DateTime?
 
   // Deposit policy. `depositPercent` wins when set, otherwise `depositMinor`;
   // either way the result is clamped to the platform min/max in
@@ -49,11 +49,20 @@ model Salon {
   cancellationWindowMin Int  @default(120) // free cancellation up to 2h before
   noShowSalonSharePct   Int  @default(70) // salon's cut of a forfeited deposit
 
+  // Online-booking pause (walk-ins and existing bookings are unaffected).
+  bookingPause       BookingPause @default(NONE)
+  bookingPauseReason String?
+  bookingPauseUntil  DateTime?
+  bookingPausedAt    DateTime?
+
+  /// Lets this branch's MANAGER members edit services, not just switch them on and off.
+  managerCanEditServices Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  owner           SalonOwner       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner           SalonOwner        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   services        Service[]
   staff           Staff[]
   counters        Counter[]
@@ -63,9 +72,59 @@ model Salon {
   commissionRules CommissionRule[]
   ledgerEntries   LedgerEntry[]
   payouts         Payout[]
+  members         SalonMember[]
+  invitations     SalonInvitation[]
+  closures        SalonClosure[]
+  dailyCloses     DailyClose[]
 
   @@index([latitude, longitude])
   @@index([status, isDeleted], map: "salons_status_is_deleted_idx") // already exists in DB; declaring it stops Prisma from dropping it
   @@index([createdAt])
   @@map("salons")
+}
+
+/// A holiday or special hours: no booking surface offers or accepts a time
+/// inside it (salon.closure.ts `isClosed`). `date` is the Dhaka calendar day.
+/// Times are "HH:mm" and null on an all-day closure.
+model SalonClosure {
+  id             String   @id @default(uuid())
+  salonId        String
+  date           DateTime @db.Date
+  allDay         Boolean  @default(true)
+  startTime      String?
+  endTime        String?
+  reason         String
+  /// The AVAILABLE slots this closure turned BLOCKED, reopened when it is removed.
+  blockedSlotIds String[] @default([])
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@unique([salonId, date, startTime])
+  @@index([salonId, date])
+  @@map("salon_closures")
+}
+
+/// The till count at closing time (owner Phase 14): one per branch per Dhaka
+/// day. Expected figures are counter payments taken that day (bill + tip).
+/// The owner can reopen a day (delete, audited) and the desk submits again.
+model DailyClose {
+  id                String   @id @default(uuid())
+  salonId           String
+  date              DateTime @db.Date
+  expectedCashMinor Int
+  countedCashMinor  Int
+  cardMinor         Int
+  mobileMinor       Int
+  /// counted - expected: negative = short, positive = over.
+  differenceMinor   Int
+  note              String?
+  closedById        String
+  createdAt         DateTime @default(now())
+
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@unique([salonId, date])
+  @@map("daily_closes")
 }

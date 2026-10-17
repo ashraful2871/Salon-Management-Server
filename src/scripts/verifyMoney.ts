@@ -17,6 +17,10 @@ import "../config"; // loads .env
 import { randomUUID } from "crypto";
 import {
   AppointmentSource,
+  BookingPause,
+  IntentPurpose,
+  IntentStatus,
+  SalonStatus,
   AppointmentStatus,
   DepositStatus,
   LedgerAccount,
@@ -28,7 +32,20 @@ import prisma from "../app/shared/prisma";
 import { getSetting } from "../app/utils/settings";
 import { systemAuditCtx } from "../app/utils/audit";
 import { AppointmentDeposit } from "../app/modules/Appointment/appointment.deposit";
+import { paymentSummary } from "../app/modules/Appointment/appointment.billing";
+import { expectedForDay } from "../app/modules/Owner/owner.dailyClose";
+import { dhakaDay } from "../app/modules/Analytics/analytics.days";
 import { getOwnerBuckets } from "../app/modules/Settlement/settlement.buckets";
+import { allocateDues, settleDuesPayment, waiveDues, watchOwner } from "../app/modules/Settlement/settlement.dues";
+import { assertTakingOnlineBookings } from "../app/modules/Appointment/appointment.service";
+import {
+  balanceAt,
+  buildInvoice,
+  buildMonthly,
+  computeMonthly,
+  monthBounds,
+  previousMonth,
+} from "../app/modules/Owner/owner.statements";
 import {
   SettlementService,
   transitionPayout,
@@ -322,6 +339,70 @@ const run = async (tx: Prisma.TransactionClient) => {
     }
   }
 
+  // ------------------------------------------------------------ checkout v2 (Phase 14)
+  // ৳450 bill, ৳30 deposit, ৳50 discount, ৳40 tip: commission is 10% of the
+  // billable ৳400 = ৳40; the tip sits on the payment, never in the ledger.
+  const discounted = await tx.appointment.update({
+    where: { id: (await booking(AppointmentSource.PLATFORM, 3000)).id },
+    data: { discountMinor: 5000, discountReason: "verify:money", tipMinor: 4000 },
+  });
+  await AppointmentDeposit.settleCompletedTx(tx, discounted.id);
+  const discRevenue = await tx.ledgerEntry.findMany({
+    where: { appointmentId: discounted.id },
+    select: { account: true, amountMinor: true },
+  });
+  const commission = discRevenue
+    .filter((r) => r.account === LedgerAccount.PLATFORM_REVENUE)
+    .reduce((s, r) => s + r.amountMinor, 0);
+  check("checkout v2: ৳450 − ৳50 discount + ৳40 tip → commission ৳40", commission === 4000, `commission ${commission}`);
+  check(
+    "checkout v2: discounted journal balanced",
+    discRevenue.length > 0 && discRevenue.reduce((s, r) => s + r.amountMinor, 0) === 0,
+    JSON.stringify(discRevenue.map((r) => r.amountMinor)),
+  );
+  const due = paymentSummary(discounted).amountDueMinor;
+  await tx.payment.create({
+    data: {
+      appointmentId: discounted.id,
+      amountMinor: due,
+      tipMinor: 4000,
+      paymentMethod: "CASH",
+      status: "COMPLETED",
+      paymentDate: new Date(),
+    },
+  });
+  const paid = paymentSummary(await tx.appointment.findUniqueOrThrow({ where: { id: discounted.id }, include: { payment: true } }));
+  check(
+    "checkout v2: due = ৳370, then PAID with nothing left",
+    due === 37000 && paid.amountDueMinor === 0 && paid.paymentState === "PAID" && paid.billableMinor === 40000,
+    `due ${due} → ${paid.amountDueMinor} ${paid.paymentState}`,
+  );
+
+  // ------------------------------------------------------------ daily close (Phase 14)
+  const today = dhakaDay();
+  const expected = await expectedForDay(mirpur.id, today, tx);
+  check("daily close: expected cash = bill + tip (৳410)", expected.cashMinor === 41000, JSON.stringify(expected));
+  const closeData = {
+    salonId: mirpur.id,
+    date: new Date(`${today}T00:00:00Z`),
+    expectedCashMinor: expected.cashMinor,
+    countedCashMinor: 40000,
+    cardMinor: 0,
+    mobileMinor: 0,
+    differenceMinor: 40000 - expected.cashMinor,
+    closedById: ownerUser.id,
+  };
+  await tx.dailyClose.create({ data: closeData });
+  await tx.$executeRawUnsafe("SAVEPOINT close_twice");
+  let secondClose = "created";
+  try {
+    await tx.dailyClose.create({ data: closeData });
+  } catch (err) {
+    secondClose = (err as { code?: string }).code ?? "error";
+  }
+  await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT close_twice");
+  check("daily close: second close for the same day refused (P2002 → 409)", secondClose === "P2002", secondClose);
+
   // ------------------------------------------------------------ zero-sum
   const journals = await tx.ledgerEntry.groupBy({
     by: ["journalId"],
@@ -334,12 +415,268 @@ const run = async (tx: Prisma.TransactionClient) => {
   throw new Rollback();
 };
 
+
+// ------------------------------------------------------------ dues (Phase 6)
+// Its own business and its own rolled-back transaction.
+const runDues = async (tx: Prisma.TransactionClient) => {
+  const tag = randomUUID().slice(0, 8);
+  const user = await tx.user.create({
+    data: { email: `verify-dues-owner-${tag}@seed.example.com`, name: "Verify Dues Owner", role: UserRole.SALON_OWNER, isTest: true },
+  });
+  const owner = await tx.salonOwner.create({ data: { userId: user.id, businessName: `Verify Dues ${tag}` } });
+  const salon = (name: string, bookingPause: BookingPause = BookingPause.NONE) =>
+    tx.salon.create({
+      data: {
+        name, address: "test road", area: "Mirpur", city: "Dhaka", phone: "01700000000", images: [],
+        ownerId: owner.id, isTest: true, status: SalonStatus.ACTIVE, bookingPause,
+      },
+    });
+  const a = await salon(`Verify Dues A ${tag}`);
+  const b = await salon(`Verify Dues B ${tag}`);
+  const c = await salon(`Verify Dues C ${tag}`, BookingPause.OWNER);
+  const owe = (salonId: string, amountMinor: number) =>
+    writeJournal(tx, {
+      salonId, ownerId: owner.id, kind: "verify.commission",
+      drafts: [
+        { account: LedgerAccount.SALON_PAYABLE, amountMinor: -amountMinor, description: "Platform commission deducted" },
+        { account: LedgerAccount.PLATFORM_REVENUE, amountMinor, description: "Platform commission deducted" },
+      ],
+    });
+  await owe(a.id, 150000);
+  await owe(b.id, 100000);
+
+  const before = await getOwnerBuckets(owner.id, { db: tx });
+  check("dues: owner at −৳2,500", before.duesMinor === 250000, `dues ${before.duesMinor}`);
+
+  const alloc = allocateDues(
+    [{ salonId: "a", balanceMinor: -15000 }, { salonId: "b", balanceMinor: -10000 }],
+    20000,
+  );
+  check(
+    "dues: allocation most negative first",
+    alloc.length === 2 && alloc[0].salonId === "a" && alloc[0].amountMinor === 15000 && alloc[1].amountMinor === 5000,
+    JSON.stringify(alloc),
+  );
+
+  // Pause: warn first, then pause 3 days later; OWNER pause untouched.
+  const rules = { pauseEnabled: true, creditLimitMinor: 100000, maxAgeDays: 30 };
+  const now = new Date();
+  const warned = await watchOwner({ id: owner.id, duesSince: null, duesWarnedAt: null }, 250000, rules, now, { email: false, db: tx });
+  const paused = await watchOwner(
+    { id: owner.id, duesSince: now, duesWarnedAt: new Date(now.getTime() - 3 * DAY) },
+    250000, rules, now, { email: false, db: tx },
+  );
+  const pauses = async () =>
+    (await tx.salon.findMany({ where: { id: { in: [a.id, b.id, c.id] } }, select: { id: true, bookingPause: true } }))
+      .map((s) => `${s.id === a.id ? "A" : s.id === b.id ? "B" : "C"}:${s.bookingPause}`).sort().join(",");
+  const afterPause = await pauses();
+  check(
+    "dues: warn → pause (OWNER kept)",
+    warned === "warned" && paused === "paused" && afterPause === "A:DUES,B:DUES,C:OWNER",
+    `${warned}/${paused} ${afterPause}`,
+  );
+  let refused = 0;
+  try {
+    assertTakingOnlineBookings({ bookingPause: BookingPause.DUES });
+  } catch (error) {
+    refused = (error as { statusCode?: number; errorCode?: string }).errorCode === "SALON_PAUSED" ? 409 : -1;
+  }
+  check("dues: paused salon refuses online booking (409 SALON_PAUSED)", refused === 409, `status ${refused}`);
+
+  // Pay with the same claim creditSettledIntent uses, twice (IPN + return).
+  const intent = await tx.paymentIntent.create({
+    data: {
+      transactionId: `DUES-verify-${tag}`, userId: user.id, purpose: IntentPurpose.SALON_DUES,
+      referenceId: owner.id, amountMinor: 250000, status: IntentStatus.PENDING, provider: "BKASH",
+    },
+  });
+  const settle = async () => {
+    const claim = await tx.paymentIntent.updateMany({
+      where: { id: intent.id, status: { not: IntentStatus.SUCCESS } },
+      data: { status: IntentStatus.SUCCESS, completedAt: new Date() },
+    });
+    if (claim.count) await settleDuesPayment(tx, intent, "bKash");
+  };
+  await settle();
+  await settle();
+
+  const lines = await tx.ledgerEntry.findMany({ where: { journalId: intent.id } });
+  const sum = lines.reduce((t, l) => t + l.amountMinor, 0);
+  check("dues: journal balanced, one per replay", lines.length === 4 && sum === 0, `${lines.length} rows, Σ ${sum}`);
+  const toSalon = (id: string) =>
+    lines.filter((l) => l.salonId === id && l.account === LedgerAccount.SALON_PAYABLE).reduce((t, l) => t + l.amountMinor, 0);
+  check(
+    "dues: allocated across two salons",
+    toSalon(a.id) === 150000 && toSalon(b.id) === 100000 && lines.every((l) => l.account !== LedgerAccount.CUSTOMER_WALLET),
+    `A ${toSalon(a.id)}, B ${toSalon(b.id)}`,
+  );
+  const after = await getOwnerBuckets(owner.id, { db: tx });
+  check("dues: buckets 0 after paying", after.duesMinor === 0, `dues ${after.duesMinor}`);
+
+  const resumed = await watchOwner({ id: owner.id, duesSince: now, duesWarnedAt: now }, after.duesMinor, rules, now, { email: false, db: tx });
+  const afterResume = await pauses();
+  check("dues: resume clears DUES only", resumed === "resumed" && afterResume === "A:NONE,B:NONE,C:OWNER", `${resumed} ${afterResume}`);
+
+  // Waiver: SALON_PAYABLE + / PLATFORM_REVENUE −, balanced.
+  await owe(a.id, 5000);
+  const waived = await waiveDues(tx, { ownerId: owner.id, amountMinor: 5000, reason: "verify" });
+  const w = await tx.ledgerEntry.aggregate({ where: { journalId: waived.journalId! }, _sum: { amountMinor: true } });
+  const final = await getOwnerBuckets(owner.id, { db: tx });
+  check("dues: waiver balanced and clears dues", w._sum.amountMinor === 0 && final.duesMinor === 0 && waived.salonId === a.id, `Σ ${w._sum.amountMinor}, dues ${final.duesMinor}`);
+
+  throw new Rollback();
+};
+// ------------------------------------------------------------ statements (Phase 7)
+// Its own business, ledger rows back-dated into the last two Dhaka months,
+// and its own rolled-back transaction.
+
+/** The Dhaka month containing `at`, "YYYY-MM". */
+const dhakaMonth = (at: Date) => new Date(at.getTime() + 6 * 60 * 60 * 1000).toISOString().slice(0, 7);
+
+const runStatements = async (tx: Prisma.TransactionClient) => {
+  const tag = randomUUID().slice(0, 8);
+  const user = await tx.user.create({
+    data: { email: `verify-stmt-${tag}@seed.example.com`, name: "Verify Statements", role: UserRole.SALON_OWNER, isTest: true },
+  });
+  const owner = await tx.salonOwner.create({ data: { userId: user.id, businessName: `Verify Statements ${tag}` } });
+  const salon = await tx.salon.create({
+    data: { name: `Verify Stmt ${tag}`, address: "Test road", area: "Mirpur", city: "Dhaka", phone: "01700000000", images: [], ownerId: owner.id, isTest: true },
+  });
+
+  const month = previousMonth();
+  const { periodStart, periodEnd } = monthBounds(month);
+  const before = previousMonth(periodStart); // the month before `month`
+  const earlier = monthBounds(before).periodStart;
+  const at = (base: Date, days: number) => new Date(base.getTime() + days * DAY);
+
+  // A balanced journal of [account, amount, description] legs at a back-dated instant.
+  const journal = async (createdAt: Date, legs: Array<[LedgerAccount, number, string]>) => {
+    const journalId = randomUUID();
+    await tx.ledgerEntry.createMany({
+      data: legs.map(([account, amountMinor, description]) => ({
+        id: randomUUID(), journalId, salonId: salon.id, ownerId: owner.id, account, amountMinor, description, createdAt,
+      })),
+    });
+    return journalId;
+  };
+  const W = LedgerAccount.CUSTOMER_WALLET;
+  const S = LedgerAccount.SALON_PAYABLE;
+  const R = LedgerAccount.PLATFORM_REVENUE;
+
+  // The month before: ৳200 deposit − ৳20 commission, paid out during `month`.
+  const old = await journal(at(earlier, 3), [
+    [W, -20000, "Deposit applied to the bill"],
+    [S, 20000, "Deposit owed to salon"],
+    [S, -2000, "Platform commission deducted"],
+    [R, 2000, "Platform commission"],
+  ]);
+  const paidPayout = await tx.payout.create({
+    data: {
+      ownerId: owner.id, salonId: salon.id, periodStart: earlier, periodEnd: periodStart,
+      grossMinor: 20000, commissionMinor: 2000, netMinor: 18000,
+      status: PayoutStatus.PAID, method: "BKASH", reference: `VS-${tag}-1`, paidAt: at(periodStart, 10),
+    },
+  });
+  await tx.ledgerEntry.updateMany({ where: { journalId: old, account: S }, data: { payoutId: paidPayout.id } });
+
+  // `month`: ৳500 deposit − ৳50 commission, then a ৳10 goodwill credit.
+  await journal(at(periodStart, 2), [
+    [W, -50000, "Deposit applied to the bill"],
+    [S, 50000, "Deposit owed to salon"],
+    [S, -5000, "Platform commission deducted"],
+    [R, 5000, "Platform commission"],
+  ]);
+  await journal(at(periodStart, 5), [
+    [W, 1000, "Goodwill credit - salon cancelled"],
+    [S, -1000, "Goodwill credit funded by salon"],
+  ]);
+
+  const built = await buildMonthly(owner.id, month, tx);
+  const t = built.statement.totals as Record<string, number>;
+  const ledgerClosing = await balanceAt(tx, owner.id, periodEnd);
+  check(
+    "statements: monthly closing = ledger",
+    built.created && t.closingMinor === 44000 && t.closingMinor === ledgerClosing && t.openingMinor === 18000,
+    `opening ${t.openingMinor}, closing ${t.closingMinor}, ledger ${ledgerClosing}`,
+  );
+  check(
+    "statements: movements add up",
+    t.depositsAppliedMinor === 50000 && t.commissionMinor === -5000 && t.goodwillMinor === -1000 && t.payoutsMinor === -18000,
+    `deposits ${t.depositsAppliedMinor}, commission ${t.commissionMinor}, goodwill ${t.goodwillMinor}, payouts ${t.payoutsMinor}`,
+  );
+  const rebuilt = await computeMonthly(owner.id, month, tx);
+  const again = await buildMonthly(owner.id, month, tx);
+  check(
+    "statements: rebuild gives the same ledgerHash",
+    rebuilt.ledgerHash === built.statement.ledgerHash && !again.created && again.statement.id === built.statement.id,
+    built.statement.ledgerHash.slice(0, 12),
+  );
+  const refused = await statusOf(() => buildMonthly(owner.id, dhakaMonth(new Date()), tx));
+  check("statements: refuses a month that has not ended", refused === 400, `status ${refused}`);
+
+  // Invoices: the older month is numbered after `month`, from one sequence.
+  const i1 = (await buildInvoice(owner.id, month, tx))?.statement;
+  const i2 = (await buildInvoice(owner.id, before, tx))?.statement;
+  const seq = (num?: string | null) => Number(num?.slice(-6) ?? NaN);
+  check(
+    "statements: invoice numbers increase",
+    !!i1 && !!i2 && /^SK-\d{4}-\d{6}$/.test(i1.number ?? "") && seq(i2.number) > seq(i1.number),
+    `${i1?.number} → ${i2?.number}`,
+  );
+  const invoiceTotal = (i1?.totals as Record<string, number> | undefined)?.totalMinor;
+  check("statements: invoice total = commission", invoiceTotal === 5000, `total ${invoiceTotal}`);
+
+  // Immutability trigger; a savepoint keeps the transaction usable.
+  await tx.$executeRawUnsafe("SAVEPOINT stmt_immutable");
+  let blocked = false;
+  try {
+    await tx.ownerStatement.update({ where: { id: built.statement.id }, data: { ledgerHash: "x" } });
+  } catch {
+    blocked = true;
+  }
+  await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT stmt_immutable");
+  check("statements: rows refuse UPDATE", blocked);
+
+  // PAID writes the payout statement in the same transaction.
+  const nowJournal = await journal(new Date(), [
+    [W, -30000, "Deposit applied to the bill"],
+    [S, 30000, "Deposit owed to salon"],
+  ]);
+  const pending = await tx.payout.create({
+    data: { ownerId: owner.id, salonId: salon.id, periodStart: at(new Date(), -1), periodEnd: new Date(), grossMinor: 30000, commissionMinor: 0, netMinor: 30000 },
+  });
+  await tx.ledgerEntry.updateMany({ where: { journalId: nowJournal, account: S }, data: { payoutId: pending.id } });
+  await transitionPayout(pending.id, PayoutStatus.APPROVED, {}, ctx, tx);
+  await transitionPayout(pending.id, PayoutStatus.PAID, { method: "BKASH", reference: `VS-${tag}-2` }, { ...ctx, fourEyesCleared: true }, tx);
+  const ps = await tx.ownerStatement.findUnique({ where: { payoutId: pending.id } });
+  const psNet = (ps?.totals as Record<string, number> | undefined)?.netMinor;
+  check("statements: PAID writes the payout statement", ps?.kind === "PAYOUT" && psNet === 30000, `net ${psNet ?? "none"}`);
+
+  throw new Rollback();
+};
+
 const main = async () => {
   try {
     await prisma.$transaction(run, { timeout: 180_000, maxWait: 15_000 });
   } catch (error) {
     if (!(error instanceof Rollback)) {
       check("scenario ran to the end", false, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  try {
+    await prisma.$transaction(runDues, { timeout: 120_000, maxWait: 15_000 });
+  } catch (error) {
+    if (!(error instanceof Rollback)) {
+      check("dues scenario ran to the end", false, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  try {
+    await prisma.$transaction(runStatements, { timeout: 120_000, maxWait: 15_000 });
+  } catch (error) {
+    if (!(error instanceof Rollback)) {
+      check("statements scenario ran to the end", false, error instanceof Error ? error.message : String(error));
     }
   }
 

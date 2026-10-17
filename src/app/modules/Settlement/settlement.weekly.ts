@@ -5,6 +5,7 @@ import { sendEmail } from "../../utils/emailSender";
 import { getPayoutBatchSummaryTemplate, getPayoutPreparedTemplate } from "../../utils/emailTemplates";
 import { formatBDT } from "../../utils/money";
 import { getSetting } from "../../utils/settings";
+import { notifyOwner } from "../../utils/notify";
 import { permissionsFor } from "../Admin/admin.permissions";
 import { addDays, dayStart, dhakaDay } from "../Analytics/analytics.days";
 import { destinationLabel, SettlementService } from "./settlement.service";
@@ -32,34 +33,32 @@ const financeRecipients = async () => {
     .map((a) => a.user.email);
 };
 
-/** "Being prepared" to each business that got a payout. Never throws. */
+/** "Being prepared" to each business that got a payout (notify, once per payout). Never throws. */
 const emailOwners = async (payoutIds: string[], expectedBy: string) => {
   if (payoutIds.length === 0) return 0;
   const payouts = await prisma.payout.findMany({
     where: { id: { in: payoutIds } },
-    select: {
-      netMinor: true,
-      destinationSnapshot: true,
-      owner: { select: { user: { select: { name: true, email: true } } } },
-    },
+    select: { id: true, ownerId: true, salonId: true, netMinor: true, destinationSnapshot: true },
   });
   const results = await Promise.all(
-    payouts.map((p) =>
-      p.owner.user.email
-        ? sendEmail(
-            p.owner.user.email,
-            `Payout of ${formatBDT(p.netMinor)} is being prepared`,
-            getPayoutPreparedTemplate({
-              ownerName: p.owner.user.name,
-              amount: formatBDT(p.netMinor),
-              destination: destinationLabel(p.destinationSnapshot),
-              expectedBy,
-            }),
-          )
-        : Promise.resolve({ ok: false }),
-    ),
+    payouts.map((p) => {
+      const destination = destinationLabel(p.destinationSnapshot);
+      const subject = `Payout of ${formatBDT(p.netMinor)} is being prepared`;
+      return notifyOwner(p.ownerId, "payout.created", {
+        title: subject,
+        body: `Expected by ${expectedBy}${destination ? ` to ${destination}` : ""}.`,
+        link: `/dashboard/money/payouts/${p.id}`,
+        salonId: p.salonId,
+        dedupeKey: `payout.created:${p.id}`,
+        email: {
+          subject,
+          html: (ownerName) =>
+            getPayoutPreparedTemplate({ ownerName, amount: formatBDT(p.netMinor), destination, expectedBy }),
+        },
+      });
+    }),
   );
-  return results.filter((r) => r.ok).length;
+  return results.filter((r) => r.emailed > 0).length;
 };
 
 /**

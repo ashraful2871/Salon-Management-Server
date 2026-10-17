@@ -302,7 +302,7 @@ const getCustomerDashboardStats = async (userId: string) => {
     // booking settled from the wallet.
     prisma.appointment.aggregate({
       where: { customerId: userId, status: "COMPLETED" },
-      _sum: { totalMinor: true, depositMinor: true },
+      _sum: { totalMinor: true, discountMinor: true, depositMinor: true },
     }),
     prisma.appointment.aggregate({
       where: { customerId: userId, depositStatus: "HELD" },
@@ -326,7 +326,8 @@ const getCustomerDashboardStats = async (userId: string) => {
     }),
   ]);
 
-  const totalSpentMinor = spent._sum.totalMinor ?? 0;
+  const totalSpentMinor =
+    (spent._sum.totalMinor ?? 0) - (spent._sum.discountMinor ?? 0);
   const completedCount = completedAppointments;
 
   return {

@@ -24,6 +24,7 @@ import { AdminRoutes } from "../modules/Admin/admin.routes";
 import { InvitationRoutes } from "../modules/Admin/invitations/invitation.routes";
 import { SettingsRoutes } from "../modules/Settings/settings.routes";
 import { OwnerRoutes } from "../modules/Owner/owner.routes";
+import { TeamRoutes } from "../modules/Team/team.routes";
 
 const router = express.Router();
 
@@ -127,6 +128,11 @@ const moduleRoutes = [
   {
     path: "/owner",
     route: OwnerRoutes,
+  },
+  {
+    // /salons/:salonId/members|invitations and /invitations/* (branch teams)
+    path: "/",
+    route: TeamRoutes,
   },
 ];
 

@@ -16,7 +16,7 @@ import { getSetting, getSettingSync } from "../../utils/settings";
 import { getSalonEarnings } from "./settlement.earnings";
 import { holdCutoff, payoutScope, salonBalances } from "./settlement.buckets";
 import { AccessUser, scopeSalonIds } from "../../utils/salonAccess";
-import { sendEmail } from "../../utils/emailSender";
+import { notifyOwner } from "../../utils/notify";
 import { getPayoutUpdateTemplate } from "../../utils/emailTemplates";
 import { formatBDT } from "../../utils/money";
 import config from "../../../config";
@@ -91,6 +91,8 @@ type EntryDraft = {
 
 type JournalInput = {
   appointmentId?: string | null;
+  /** Groups several sets under one id (a dues payment's sets share its intent id). */
+  journalId?: string;
   salonId: string | null;
   /** The business; read from the salon when not given. */
   ownerId?: string | null;
@@ -123,7 +125,7 @@ export const writeJournal = async (
     );
   }
 
-  const journalId = input.appointmentId ?? randomUUID();
+  const journalId = input.journalId ?? input.appointmentId ?? randomUUID();
   let ownerId = input.ownerId ?? null;
   if (!ownerId && input.salonId) {
     const salon = await db.salon.findUnique({
@@ -932,6 +934,13 @@ export const transitionPayout = async (
 
     const updated = await db.payout.findUniqueOrThrow({ where: { id } });
 
+    // Being paid includes the owner's payout statement (owner Phase 7), in
+    // the same transaction. Imported lazily: owner.statements imports this file.
+    if (paid) {
+      const { writePayoutStatement } = await import("../Owner/owner.statements");
+      await writePayoutStatement(db, id);
+    }
+
     const fields = (row: typeof payout) => ({
       status: row.status,
       method: row.method,
@@ -987,8 +996,9 @@ export const destinationLabel = (snapshot: unknown) => {
   return `${name} ••• ${s.last4}`;
 };
 
-/** PAID and FAILED both reach the business owner. Never throws. */
+/** PAID and FAILED both reach the business owner (notify, once per payout+status). Never throws. */
 const emailPayoutOwner = async (payout: {
+  id: string;
   ownerId: string;
   salonId: string | null;
   status: PayoutStatus;
@@ -1003,36 +1013,42 @@ const emailPayoutOwner = async (payout: {
       where: { id: payout.ownerId },
       select: {
         businessName: true,
-        user: { select: { name: true, email: true } },
         salons: payout.salonId
           ? { where: { id: payout.salonId }, select: { name: true } }
           : { select: { name: true }, take: 0 },
       },
     });
-    const user = owner?.user;
-    if (!owner || !user?.email) return;
+    if (!owner) return;
     const name = owner.salons[0]?.name ?? owner.businessName ?? "your business";
+    const paid = payout.status === PayoutStatus.PAID;
+    const destination = destinationLabel(payout.destinationSnapshot);
+    const subject = paid ? `Payout sent: ${formatBDT(payout.netMinor)}` : "Your payout did not go through";
 
-    const result = await sendEmail(
-      user.email,
-      payout.status === PayoutStatus.PAID
-        ? `Payout sent: ${formatBDT(payout.netMinor)}`
-        : "Your payout did not go through",
-      getPayoutUpdateTemplate(user.name, name, {
-        paid: payout.status === PayoutStatus.PAID,
-        amount: formatBDT(payout.netMinor),
-        method: payout.method,
-        reference: payout.reference,
-        failureReason: payout.failureReason,
-        destination: destinationLabel(payout.destinationSnapshot),
-        settingsUrl: `${config.frontend_url}/dashboard/money/payout-settings`,
-      }),
-    );
-    console.log(
-      `[payout] ${payout.status} email to the owner of ${name}: ${result.ok ? "sent" : `not sent (${result.error})`}`,
-    );
+    const result = await notifyOwner(payout.ownerId, paid ? "payout.paid" : "payout.failed", {
+      title: subject,
+      body: paid
+        ? `${formatBDT(payout.netMinor)} sent${destination ? ` to ${destination}` : ""}${payout.reference ? `, reference ${payout.reference}` : ""}.`
+        : `${formatBDT(payout.netMinor)} is back in your balance${payout.failureReason ? `: ${payout.failureReason}` : ""}.`,
+      link: `/dashboard/money/payouts/${payout.id}`,
+      salonId: payout.salonId,
+      dedupeKey: `${paid ? "payout.paid" : "payout.failed"}:${payout.id}`,
+      email: {
+        subject,
+        html: (ownerName) =>
+          getPayoutUpdateTemplate(ownerName, name, {
+            paid,
+            amount: formatBDT(payout.netMinor),
+            method: payout.method,
+            reference: payout.reference,
+            failureReason: payout.failureReason,
+            destination,
+            settingsUrl: `${config.frontend_url}/dashboard/money/payout-settings`,
+          }),
+      },
+    });
+    console.log(`[payout] ${payout.status} notice to the owner of ${name}: ${result.emailed ? "emailed" : "not emailed"}`);
   } catch (error) {
-    console.error("[payout] owner email failed", error);
+    console.error("[payout] owner notice failed", error);
   }
 };
 
@@ -1159,6 +1175,7 @@ const getMyEarnings = async (user: AccessUser, query: any = {}) => {
         appointmentDate: true,
         startTime: true,
         totalMinor: true,
+        discountMinor: true,
         depositMinor: true,
         depositStatus: true,
         source: true,
@@ -1194,7 +1211,7 @@ const getMyEarnings = async (user: AccessUser, query: any = {}) => {
       return {
         ...booking,
         commissionMinor,
-        netMinor: booking.totalMinor - commissionMinor,
+        netMinor: booking.totalMinor - booking.discountMinor - commissionMinor,
       };
     }),
   };

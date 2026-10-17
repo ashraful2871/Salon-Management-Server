@@ -194,13 +194,13 @@ export const getSalonEarnings = async (
     // What customers were billed on bookings that actually happened.
     prisma.appointment.aggregate({
       where: { salonId: { in: salonIds }, status: "COMPLETED" },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
       _count: true,
     }),
     // The bookings commission was actually charged on (walk-ins are exempt).
     prisma.appointment.aggregate({
       where: { salonId: { in: salonIds }, status: "COMPLETED", ...COMMISSIONED },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
     }),
     // The slice of that which reached the salon through us as a deposit.
     prisma.appointment.aggregate({
@@ -245,7 +245,7 @@ export const getSalonEarnings = async (
         status: "COMPLETED",
         appointmentDate: { gte: todayStart },
       },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
     }),
     prisma.appointment.aggregate({
       where: {
@@ -253,7 +253,7 @@ export const getSalonEarnings = async (
         status: "COMPLETED",
         appointmentDate: { gte: monthStart },
       },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
     }),
     prisma.ledgerEntry.aggregate({
       where: {
@@ -267,7 +267,7 @@ export const getSalonEarnings = async (
       Array<{ month: string; grossMinor: number; bookings: number }>
     >`
       SELECT to_char(date_trunc('month', a."appointmentDate"), 'YYYY-MM') AS month,
-             COALESCE(SUM(a."totalMinor"), 0)::int AS "grossMinor",
+             COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::int AS "grossMinor",
              COUNT(*)::int AS bookings
       FROM appointments a
       WHERE a."salonId" IN (${ids})
@@ -289,7 +289,7 @@ export const getSalonEarnings = async (
     `,
   ]);
 
-  const grossBookingsMinor = sum(completed._sum.totalMinor);
+  const grossBookingsMinor = (sum(completed._sum.totalMinor) - sum(completed._sum.discountMinor));
   const commissionMinor = sum(commission._sum.amountMinor);
   const depositsCollectedMinor = sum(depositsApplied._sum.depositMinor);
   const completedBookings = completed._count;
@@ -297,7 +297,7 @@ export const getSalonEarnings = async (
   const byStatus = (status: PayoutStatus) =>
     sum(payoutsByStatus.find((row) => row.status === status)?._sum.netMinor);
 
-  const monthGrossMinor = sum(monthGross._sum.totalMinor);
+  const monthGrossMinor = (sum(monthGross._sum.totalMinor) - sum(monthGross._sum.discountMinor));
   const monthCommissionMinor = sum(monthCommission._sum.amountMinor);
 
   return {
@@ -318,7 +318,7 @@ export const getSalonEarnings = async (
       byStatus(PayoutStatus.PROCESSING),
     paidOutMinor: byStatus(PayoutStatus.PAID),
     failedPayoutMinor: byStatus(PayoutStatus.FAILED),
-    todayGrossMinor: sum(todayGross._sum.totalMinor),
+    todayGrossMinor: (sum(todayGross._sum.totalMinor) - sum(todayGross._sum.discountMinor)),
     monthGrossMinor,
     monthCommissionMinor,
     monthNetMinor: monthGrossMinor - monthCommissionMinor,
@@ -333,8 +333,8 @@ export const getSalonEarnings = async (
     // Over the bookings that were commissioned, so exempt walk-ins do not
     // dilute the rate.
     effectiveCommissionPercent:
-      sum(commissioned._sum.totalMinor) > 0
-        ? Number(((commissionMinor / sum(commissioned._sum.totalMinor)) * 100).toFixed(2))
+      (sum(commissioned._sum.totalMinor) - sum(commissioned._sum.discountMinor)) > 0
+        ? Number(((commissionMinor / (sum(commissioned._sum.totalMinor) - sum(commissioned._sum.discountMinor))) * 100).toFixed(2))
         : 0,
     monthly: buildMonthly(keys, monthlyGross, monthlyCommission),
     ...getCommissionRates(),
@@ -392,12 +392,12 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
   ] = await Promise.all([
     prisma.appointment.aggregate({
       where: { status: "COMPLETED", appointmentDate: inRange, ...realSalon },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
       _count: true,
     }),
     prisma.appointment.aggregate({
       where: { status: "COMPLETED", appointmentDate: inRange, ...realSalon, ...COMMISSIONED },
-      _sum: { totalMinor: true },
+      _sum: { totalMinor: true, discountMinor: true },
     }),
     prisma.ledgerEntry.aggregate({
       where: { account: LedgerAccount.PLATFORM_REVENUE, createdAt: inRange, ...realLedger },
@@ -453,7 +453,7 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
       Array<{ month: string; grossMinor: number; bookings: number }>
     >`
       SELECT to_char(date_trunc('month', a."appointmentDate"), 'YYYY-MM') AS month,
-             COALESCE(SUM(a."totalMinor"), 0)::int AS "grossMinor",
+             COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::int AS "grossMinor",
              COUNT(*)::int AS bookings
       FROM appointments a
       JOIN salons s ON s.id = a."salonId"
@@ -477,7 +477,7 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
     `,
   ]);
 
-  const grossBookingsMinor = sum(completed._sum.totalMinor);
+  const grossBookingsMinor = (sum(completed._sum.totalMinor) - sum(completed._sum.discountMinor));
   const platformRevenueMinor = sum(platformRevenue._sum.amountMinor);
   const completedBookings = completed._count;
 
@@ -518,8 +518,8 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
         ? Math.round(grossBookingsMinor / completedBookings)
         : 0,
     effectiveCommissionPercent:
-      sum(commissioned._sum.totalMinor) > 0
-        ? Number(((platformRevenueMinor / sum(commissioned._sum.totalMinor)) * 100).toFixed(2))
+      (sum(commissioned._sum.totalMinor) - sum(commissioned._sum.discountMinor)) > 0
+        ? Number(((platformRevenueMinor / (sum(commissioned._sum.totalMinor) - sum(commissioned._sum.discountMinor))) * 100).toFixed(2))
         : 0,
     monthly: buildMonthly(keys, monthlyGross, monthlyCommission),
     ...getCommissionRates(),
@@ -530,7 +530,7 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
  * Money per Asia/Dhaka day, for analytics (`modules/Analytics`). The one place
  * those figures are defined, so the dashboard and the finance console agree:
  *
- *   gmvMinor          `totalMinor` of COMPLETED bookings, on the day they were
+ *   gmvMinor          billable (`totalMinor - discountMinor`) of COMPLETED bookings, on the day they were
  *                     completed (`completedAt`, or the appointment date on rows
  *                     completed before that was stamped)
  *   commissionMinor   PLATFORM_REVENUE ledger entries by `createdAt`
@@ -546,6 +546,8 @@ export type MoneyFilter = {
   includeTest: boolean;
   area?: string;
   channel?: string;
+  /** Only these salons (the owner home); an empty list matches nothing. */
+  salonIds?: string[];
 };
 
 export type DailyMoney = {
@@ -563,7 +565,8 @@ const COMPLETED_AT = `COALESCE(a."completedAt", a."appointmentDate")`;
 
 const narrow = (f: MoneyFilter) =>
   Prisma.sql`${f.area ? Prisma.sql`AND lower(trim(s.area)) = ${f.area.trim().toLowerCase()}` : Prisma.empty}
-    ${f.channel ? Prisma.sql`AND a."bookedVia"::text = ${f.channel}` : Prisma.empty}`;
+    ${f.channel ? Prisma.sql`AND a."bookedVia"::text = ${f.channel}` : Prisma.empty}
+    ${f.salonIds ? (f.salonIds.length ? Prisma.sql`AND s.id IN (${Prisma.join(f.salonIds)})` : Prisma.sql`AND false`) : Prisma.empty}`;
 
 const completedIn = (f: MoneyFilter) => Prisma.sql`
   a.status = 'COMPLETED'
@@ -576,7 +579,7 @@ export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
   const [gmv, commission, topups] = await Promise.all([
     prisma.$queryRaw<Array<{ day: string; gmv: number; n: number }>>`
       SELECT ${dhakaDay(COMPLETED_AT)} AS day,
-             COALESCE(SUM(a."totalMinor"), 0)::float AS gmv, COUNT(*)::int AS n
+             COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::float AS gmv, COUNT(*)::int AS n
       FROM appointments a
       JOIN salons s ON s.id = a."salonId"
       JOIN users u ON u.id = a."customerId"
@@ -595,7 +598,7 @@ export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
         ${f.includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false AND COALESCE(u."isTest", false) = false`}
         ${narrow(f)}
       GROUP BY 1`,
-    f.area || f.channel
+    f.area || f.channel || f.salonIds
       ? Promise.resolve([] as Array<{ day: string; v: number }>)
       : prisma.$queryRaw<Array<{ day: string; v: number }>>`
       SELECT ${dhakaDay(`t."createdAt"`)} AS day, COALESCE(SUM(t.amount), 0)::float AS v
@@ -626,7 +629,7 @@ export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
 /** Completed GMV over a range, grouped by salon area (the geo report). */
 export const getMoneyByArea = (f: MoneyFilter) =>
   prisma.$queryRaw<Array<{ area: string; district: string; gmvMinor: number; completed: number }>>`
-    SELECT s.area, s.district, COALESCE(SUM(a."totalMinor"), 0)::float AS "gmvMinor",
+    SELECT s.area, s.district, COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::float AS "gmvMinor",
            COUNT(*)::int AS completed
     FROM appointments a
     JOIN salons s ON s.id = a."salonId"
@@ -639,7 +642,7 @@ export const getMoneyByArea = (f: MoneyFilter) =>
 export const getMoneyBySalon = (f: MoneyFilter, limit = 20) =>
   prisma.$queryRaw<Array<{ salonId: string; name: string; area: string; gmvMinor: number; completed: number }>>`
     SELECT s.id AS "salonId", s.name, s.area,
-           COALESCE(SUM(a."totalMinor"), 0)::float AS "gmvMinor", COUNT(*)::int AS completed
+           COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::float AS "gmvMinor", COUNT(*)::int AS completed
     FROM appointments a
     JOIN salons s ON s.id = a."salonId"
     JOIN users u ON u.id = a."customerId"
@@ -648,7 +651,47 @@ export const getMoneyBySalon = (f: MoneyFilter, limit = 20) =>
     ORDER BY 4 DESC
     LIMIT ${limit}`;
 
+/**
+ * One business's money over [from, to) for the given branches (owner Reports,
+ * owner Phase 12), on the same bases as the monthly statement: counter takings
+ * = COMPLETED payments by `completedAt`; platform = SALON_PAYABLE entries by
+ * `createdAt`, per description (the caller maps descriptions to types);
+ * payouts = PAID lines by `paidAt`. Owner data, so test rows are kept.
+ */
+export const getSalonMoneyRange = async (f: { salonIds: string[]; from: Date; to: Date }) => {
+  if (!f.salonIds.length) return { counter: [], platform: [], byMethod: [], payouts: [] };
+  const ids = Prisma.join(f.salonIds);
+  const [counter, platform, byMethod, payouts] = await Promise.all([
+    prisma.$queryRaw<Array<{ day: string; v: number; n: number }>>`
+      SELECT ${dhakaDay(`a."completedAt"`)} AS day, COALESCE(SUM(p."amountMinor"), 0)::float AS v, COUNT(*)::int AS n
+      FROM payments p JOIN appointments a ON a.id = p."appointmentId"
+      WHERE p.status = 'COMPLETED' AND a."salonId" IN (${ids})
+        AND a."completedAt" >= ${utcTs(f.from)} AND a."completedAt" < ${utcTs(f.to)}
+      GROUP BY 1`,
+    prisma.$queryRaw<Array<{ day: string; description: string; v: number }>>`
+      SELECT ${dhakaDay(`l."createdAt"`)} AS day, l.description, COALESCE(SUM(l."amountMinor"), 0)::float AS v
+      FROM ledger_entries l
+      WHERE l.account = 'SALON_PAYABLE' AND l."salonId" IN (${ids})
+        AND l."createdAt" >= ${utcTs(f.from)} AND l."createdAt" < ${utcTs(f.to)}
+      GROUP BY 1, 2`,
+    prisma.$queryRaw<Array<{ method: string; v: number; n: number }>>`
+      SELECT p."paymentMethod"::text AS method, COALESCE(SUM(p."amountMinor"), 0)::float AS v, COUNT(*)::int AS n
+      FROM payments p JOIN appointments a ON a.id = p."appointmentId"
+      WHERE p.status = 'COMPLETED' AND a."salonId" IN (${ids})
+        AND a."completedAt" >= ${utcTs(f.from)} AND a."completedAt" < ${utcTs(f.to)}
+      GROUP BY 1`,
+    prisma.$queryRaw<Array<{ payoutId: string; paidAt: Date; v: number }>>`
+      SELECT po.id AS "payoutId", po."paidAt", COALESCE(SUM(l."amountMinor"), 0)::float AS v
+      FROM ledger_entries l JOIN payouts po ON po.id = l."payoutId"
+      WHERE l.account = 'SALON_PAYABLE' AND l."salonId" IN (${ids}) AND po.status = 'PAID'
+        AND po."paidAt" >= ${utcTs(f.from)} AND po."paidAt" < ${utcTs(f.to)}
+      GROUP BY 1, 2 ORDER BY 2 DESC`,
+  ]);
+  return { counter, platform, byMethod, payouts };
+};
+
 export const SettlementEarnings = {
+  getSalonMoneyRange,
   getCommissionRates,
   getSalonEarnings,
   getPlatformEarnings,

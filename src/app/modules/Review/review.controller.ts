@@ -32,6 +32,16 @@ const reportReview = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const replyToReview = catchAsync(async (req: Request, res: Response) => {
+  const result = await ReviewService.replyToReview(req, String(req.params.id), req.body.text, false);
+  sendResponse(res, { statusCode: StatusCodes.CREATED, success: true, message: "Reply posted", data: result });
+});
+
+const editReply = catchAsync(async (req: Request, res: Response) => {
+  const result = await ReviewService.replyToReview(req, String(req.params.id), req.body.text, true);
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Reply updated", data: result });
+});
+
 const getAllReviews = catchAsync(async (req: Request, res: Response) => {
   const result = await ReviewService.getAllReviews(req.query);
 
@@ -86,6 +96,8 @@ const getReviewsByStaffId = catchAsync(async (req: Request, res: Response) => {
 export const ReviewController = {
   createReview,
   reportReview,
+  replyToReview,
+  editReply,
   getAllReviews,
   getReviewById,
   getReviewsBySalonId,

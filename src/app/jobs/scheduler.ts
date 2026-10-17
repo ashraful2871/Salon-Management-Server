@@ -13,6 +13,10 @@ import { AdminUsersService } from "../modules/Admin/users/users.service";
 import { AdminApprovalsService } from "../modules/Admin/approvals/approvals.service";
 import { AdminSupportService } from "../modules/Admin/support/support.service";
 import { runWeeklyPayouts } from "../modules/Settlement/settlement.weekly";
+import { runDuesWatch } from "../modules/Settlement/settlement.dues";
+import { clearExpiredOwnerPauses } from "../modules/Salon/salon.pause";
+import { runMonthlyStatements } from "../modules/Owner/owner.statements";
+import { purgeReadNotifications, runOwnerDigest } from "../modules/Owner/owner.digest";
 import {
   rollupBeforeTryOnPurge,
   runAnalyticsRetention,
@@ -273,6 +277,22 @@ export const JOBS: JobDef[] = [
   { name: "support.autoclose", everyMs: 24 * HOUR, safeToRunNow: false, run: AdminSupportService.autoClose },
   // Monday 09:00 Dhaka (payouts.weekday): raise the week's payouts, once per ISO week.
   { name: "payouts.weekly", everyMs: HOUR, safeToRunNow: false, run: () => runWeeklyPayouts() },
+  // 10:00 Dhaka daily: dues reminders, the pause warning, pause and resume.
+  // Hourly part first: owner pauses whose end time has passed (salon.pause.ts).
+  {
+    name: "dues.watch",
+    everyMs: HOUR,
+    safeToRunNow: false,
+    run: async () => ({ ownerPausesCleared: await clearExpiredOwnerPauses(), ...(await runDuesWatch()) }),
+  },
+  // From 03:00 Dhaka on the 1st: last month's statements and commission
+  // invoices; idempotent per (owner, kind, month), later runs fill gaps.
+  { name: "statements.monthly", everyMs: HOUR, safeToRunNow: true, run: () => runMonthlyStatements() },
+  // 08:00 Dhaka daily: yesterday's bookings per branch to owners on the DIGEST
+  // booking email mode. Marked after the run, so a failure retries next hour.
+  { name: "owner.digest", everyMs: HOUR, safeToRunNow: false, run: () => runOwnerDigest() },
+  // Read bell notifications older than 90 days.
+  { name: "notifications.retention", everyMs: 24 * HOUR, safeToRunNow: false, run: purgeReadNotifications },
   // Daily metrics for D-1…D-3 (+ yesterday's closing balances once a day),
   // then the raw daily tables trimmed after their metrics are rolled up.
   { name: "analytics.rollup", everyMs: HOUR, safeToRunNow: true, run: runAnalyticsRollup },

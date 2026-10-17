@@ -73,6 +73,7 @@ const updateSalonValidation = z.object({
     email: z.string().email().optional(),
     images: z.array(z.string()).optional(),
     operatingHours: z.any().optional(),
+    managerCanEditServices: z.boolean().optional(),
     latitude: latitude.optional(),
     longitude: longitude.optional(),
   }).refine(coordsPair, coordsPairError),
@@ -168,7 +169,33 @@ const salonMapQuery = z
     path: ["lat"],
   });
 
+const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:mm");
+
+const createClosureValidation = z.object({
+  body: z
+    .object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
+      allDay: z.boolean().optional(),
+      startTime: HHMM.optional(),
+      endTime: HHMM.optional(),
+      reason: z.string().trim().min(2).max(120),
+    })
+    .refine((b) => b.allDay !== false || (b.startTime && b.endTime), {
+      message: "A part-day closure needs a start and an end time",
+      path: ["startTime"],
+    }),
+});
+
+const pauseValidation = z.object({
+  body: z.object({
+    reason: z.string().trim().min(2).max(200),
+    until: z.string().datetime({ offset: true }).optional(),
+  }),
+});
+
 export const SalonValidation = {
+  createClosureValidation,
+  pauseValidation,
   createSalonValidation,
   updateSalonValidation,
   updateSalonLocationValidation,

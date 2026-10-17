@@ -16,6 +16,12 @@ model Review {
   moderatedAt   DateTime?
   reportCount   Int          @default(0)
 
+  // One public reply from the business, editable for 24 h after it is posted.
+  // ownerReplyById is a plain user id (audit trail, no relation).
+  ownerReply     String?
+  ownerRepliedAt DateTime?
+  ownerReplyById String?
+
   // Relations
   appointment Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   customer    User           @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -41,4 +47,20 @@ model ReviewReport {
 
   @@unique([reviewId, reporterId])
   @@map("review_reports")
+}
+
+/// What a business keeps about one of its customers. Never sent to the
+/// customer: only the /owner/customers endpoints read it.
+model CustomerNote {
+  id          String   @id @default(uuid())
+  ownerId     String // SalonOwner.id - the business, shared by its branches
+  customerId  String
+  note        String? // <= 1000 chars
+  tags        String[] // <= 10, each <= 24 chars, lower-case
+  updatedById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([ownerId, customerId])
+  @@map("customer_notes")
 }

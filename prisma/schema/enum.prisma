@@ -4,6 +4,22 @@ enum UserRole {
   SALON_OWNER
   ADMIN
   AGENT
+  /// Works at a branch as MANAGER or RECEPTIONIST (derived from salon_members).
+  BRANCH_MANAGER
+}
+
+/// What a team member does at one branch (salon_members.role).
+enum BranchRole {
+  MANAGER
+  RECEPTIONIST
+  STYLIST
+}
+
+/// REMOVED is a soft delete: the row stays for the record.
+enum MemberStatus {
+  ACTIVE
+  SUSPENDED
+  REMOVED
 }
 
 enum UserStatus {
@@ -191,6 +207,14 @@ enum AppointmentSource {
   SALON_DIRECT // the salon's own customer - never commissioned
 }
 
+/// Owner statements (owner Phase 7): a month's movements, one payout, or the
+/// month's commission invoice.
+enum StatementKind {
+  MONTHLY
+  PAYOUT
+  INVOICE
+}
+
 enum LedgerAccount {
   SALON_PAYABLE
   PLATFORM_REVENUE
@@ -276,4 +300,12 @@ enum TicketPriority {
   NORMAL
   HIGH
   URGENT
+}
+
+/// Why a salon is not taking new online bookings. DUES is set and cleared only
+/// by the dues.watch job / a dues payment; it never touches OWNER.
+enum BookingPause {
+  NONE
+  OWNER
+  DUES
 }

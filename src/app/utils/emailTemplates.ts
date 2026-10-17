@@ -1046,6 +1046,21 @@ export const getReviewHiddenTemplate = (notice: {
      ${contactLine(notice.contactUrl)}`
   );
 
+/** The salon answered a customer's review in public. */
+export const getReviewReplyTemplate = (notice: {
+  name: string;
+  salonName: string;
+  reply: string;
+  salonUrl: string;
+}) =>
+  moneyLayout(
+    "The salon replied to your review",
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>${escapeHtml(notice.salonName)} replied to your review:</p>
+     <blockquote style="margin:12px 0;padding:8px 12px;border-left:3px solid #c8a24a;color:#34495e;">${escapeHtml(notice.reply).replace(/\r?\n/g, "<br>")}</blockquote>
+     <p><a href="${escapeHtml(notice.salonUrl)}">See it on the salon's page</a></p>`
+  );
+
 /** An admin's reply on a support ticket. The subject carries `[#<number>]`. */
 export const getSupportReplyTemplate = (reply: {
   name: string;
@@ -1107,3 +1122,93 @@ export const getAdminDigestTemplate = (digest: {
      <p style="margin-top:22px;"><a href="${digest.url}" style="color:#2c3e50;font-weight:bold;">Open the back office</a></p>`,
   );
 };
+
+/** dues.watch and dues payments: reminder, pause warning, paused, resumed. */
+export const getDuesNoticeTemplate = (notice: {
+  ownerName: string;
+  kind: "reminder" | "warning" | "paused" | "resumed";
+  amount: string;
+  pauseDate?: string | null;
+  url: string;
+}) => {
+  const heading = {
+    reminder: "You have dues to pay",
+    warning: "Online bookings pause in 3 days",
+    paused: "Online bookings are paused",
+    resumed: "Online bookings resumed",
+  }[notice.kind];
+  const body = {
+    reminder: `<p>Your business owes <strong>${escapeHtml(notice.amount)}</strong> in fees. You can clear it with bKash in two taps.</p>`,
+    warning: `<p>Your business owes <strong>${escapeHtml(notice.amount)}</strong>. Unless it is paid${
+      notice.pauseDate ? ` by <strong>${escapeHtml(notice.pauseDate)}</strong>` : ""
+    }, your salons stop taking new online bookings. Walk-ins and existing bookings are not affected.</p>`,
+    paused: `<p>Your business owes <strong>${escapeHtml(notice.amount)}</strong>, so your salons are no longer taking new online bookings. Walk-ins and existing bookings are not affected. Bookings resume as soon as the dues are paid.</p>`,
+    resumed: `<p>Thank you - your dues are cleared and your salons are taking online bookings again.</p>`,
+  }[notice.kind];
+  return moneyLayout(
+    heading,
+    `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     ${body}
+     <p><a href="${escapeHtml(notice.url)}">${notice.kind === "resumed" ? "Open Money" : "Pay dues"}</a></p>`,
+  );
+};
+
+/** The salon moved a customer's booking to another time. Deposit and price stay. */
+export const getBookingRescheduledTemplate = (notice: {
+  name: string;
+  salonName: string;
+  serviceName: string;
+  token: string | null;
+  from: string;
+  to: string;
+  contactUrl: string;
+}) =>
+  moneyLayout(
+    `Your booking moved to ${escapeHtml(notice.to)}`,
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>${escapeHtml(notice.salonName)} moved your booking${
+       notice.token ? ` <strong>${escapeHtml(notice.token)}</strong>` : ""
+     } for ${escapeHtml(notice.serviceName)}.</p>
+     <p><strong>Was:</strong> ${escapeHtml(notice.from)}<br/><strong>Now:</strong> ${escapeHtml(notice.to)}</p>
+     <p>Your deposit and price are unchanged. If the new time does not suit you, contact the salon or cancel from your bookings.</p>
+     ${contactLine(notice.contactUrl)}`
+  );
+
+const BRANCH_ROLE_LABEL: Record<string, string> = {
+  MANAGER: "a branch manager",
+  RECEPTIONIST: "a receptionist",
+  STYLIST: "a stylist",
+};
+
+export const branchRoleLabel = (role: string) => BRANCH_ROLE_LABEL[role] ?? role.toLowerCase();
+
+export const getTeamInvitationTemplate = (invite: {
+  name?: string | null;
+  inviterName: string;
+  salonName: string;
+  role: string;
+  link: string;
+  expiresAt: Date;
+}) =>
+  moneyLayout(
+    `Join ${escapeHtml(invite.salonName)} on SalonKhuji`,
+    `<p>Hi ${escapeHtml(invite.name || "there")},</p>
+     <p>${escapeHtml(invite.inviterName)} invited you to work at <strong>${escapeHtml(invite.salonName)}</strong> as <strong>${escapeHtml(branchRoleLabel(invite.role))}</strong>.</p>
+     <p><a href="${escapeHtml(invite.link)}" style="display:inline-block;padding:10px 20px;background:#1f2937;color:#fff;border-radius:999px;text-decoration:none;">Accept the invitation</a></p>
+     <p>Sign in (or create an account) with this email address, then accept. You will only see this branch's work.</p>
+     <p style="color:#7f8c8d;font-size:12px;">This link expires on ${invite.expiresAt.toUTCString()}. If you did not expect it, ignore this email.</p>`,
+  );
+
+export const getTeamJoinedTemplate = (notice: {
+  ownerName: string;
+  memberName: string;
+  memberEmail: string;
+  salonName: string;
+  role: string;
+}) =>
+  moneyLayout(
+    `${escapeHtml(notice.memberName)} joined ${escapeHtml(notice.salonName)}`,
+    `<p>Hi ${escapeHtml(notice.ownerName)},</p>
+     <p><strong>${escapeHtml(notice.memberName)}</strong> (${escapeHtml(notice.memberEmail)}) accepted the invitation and now works at <strong>${escapeHtml(notice.salonName)}</strong> as ${escapeHtml(branchRoleLabel(notice.role))}.</p>
+     <p>You can change their role or remove them from the Team page at any time.</p>`,
+  );

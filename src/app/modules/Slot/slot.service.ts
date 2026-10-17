@@ -1,9 +1,10 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
-import { UserRole, SlotStatus } from "@prisma/client";
+import { SlotStatus } from "@prisma/client";
 import { hasSlotStarted } from "../../utils/slotTime";
-import { accessibleSalonIds, assertSalonPermission } from "../../utils/salonAccess";
+import { withoutClosed } from "../Salon/salon.closure";
+import { accessibleSalonIds, assertSalonPermission, isBusinessRole } from "../../utils/salonAccess";
 
 const MAX_RANGE_DAYS = 90;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -44,8 +45,8 @@ const formatMinutes = (value: number) =>
   `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 
 const bulkCreateSlots = async (userId: string, userRole: string, payload: any) => {
-  if (userRole !== UserRole.SALON_OWNER) {
-    throw new ApiError(StatusCodes.FORBIDDEN, "Only salon owners can create slots");
+  if (!isBusinessRole(userRole)) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "Only the salon team can create slots");
   }
 
   await assertSalonPermission({ userId, role: userRole }, payload.salonId, "slots.manage");
@@ -378,15 +379,17 @@ const getSlots = async (query: any) => {
   // because the owner's slot manager still needs to see the whole day.
   if (upcomingOnly === true || upcomingOnly === "true") {
     const now = new Date();
-    return slots.filter((slot) => !hasSlotStarted(slot, now));
+    // A booking screen also never offers a time inside a closure; the owner's
+    // manager sees those slots (they were BLOCKED when the closure was set).
+    return withoutClosed(slots.filter((slot) => !hasSlotStarted(slot, now)));
   }
 
   return slots;
 };
 
 const updateSlotStatus = async (userId: string, userRole: string, slotId: string, payload: any) => {
-  if (userRole !== UserRole.SALON_OWNER) {
-    throw new ApiError(StatusCodes.FORBIDDEN, "Only salon owners can manage slot status");
+  if (!isBusinessRole(userRole)) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "Only the salon team can manage slot status");
   }
 
   const slot = await prisma.slot.findUnique({
@@ -412,8 +415,8 @@ const updateSlotStatus = async (userId: string, userRole: string, slotId: string
 };
 
 const deleteSlot = async (userId: string, userRole: string, slotId: string) => {
-  if (userRole !== UserRole.SALON_OWNER) {
-    throw new ApiError(StatusCodes.FORBIDDEN, "Only salon owners can delete slots");
+  if (!isBusinessRole(userRole)) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "Only the salon team can delete slots");
   }
 
   const slot = await prisma.slot.findUnique({
@@ -438,8 +441,8 @@ const deleteSlot = async (userId: string, userRole: string, slotId: string) => {
 };
 
 const deleteBulkSlots = async (userId: string, userRole: string, slotIds: string[]) => {
-  if (userRole !== UserRole.SALON_OWNER) {
-    throw new ApiError(StatusCodes.FORBIDDEN, "Only salon owners can delete slots");
+  if (!isBusinessRole(userRole)) {
+    throw new ApiError(StatusCodes.FORBIDDEN, "Only the salon team can delete slots");
   }
 
   const salonIds = (await accessibleSalonIds({ userId, role: userRole }, "slots.manage")) ?? [];

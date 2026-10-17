@@ -12,6 +12,11 @@ import { exportCsv } from "./finance.export";
 import { approvePayout, approvePayouts, exportPayoutFile, markPaid } from "./finance.payouts";
 import { PayoutAccountReview } from "./finance.payoutAccounts";
 import { AdminFinanceService, parseRange } from "./finance.service";
+import { adjustDues, listOwnerDues } from "../../Settlement/settlement.dues";
+import { adminListStatements } from "../../Owner/owner.statements";
+import { requireApprovalIf } from "../approvals/approvals.service";
+import { getSetting } from "../../../utils/settings";
+import { formatBDT } from "../../../utils/money";
 
 /**
  * /admin/finance - the finance console's reads, the payout preview, the
@@ -369,6 +374,68 @@ router.post(
       reason: req.body.reason,
     });
     ok(res, "Business details rejected", data);
+  }),
+);
+
+
+// ---------------------------------------------------------------- dues
+
+const duesAdjustBody = z.object({
+  body: z.object({
+    amountMinor: z.number().int().positive(),
+    reason: z.string().trim().min(3, "A reason is required").max(500),
+  }),
+});
+
+router.get(
+  "/dues",
+  adminAuth("finance.view"),
+  adminOnly,
+  catchAsync(async (req: Request, res: Response) => {
+    const includeTest = req.query.includeTest === "true";
+    ok(res, "Owner dues", await listOwnerDues({ includeTest }));
+  }),
+);
+
+// Tier 3: a waiver moves platform revenue to the salon (four-eyes over the threshold).
+router.post(
+  "/dues/:ownerId/adjust",
+  adminAuth("finance.wallet_adjust"),
+  adminOnly,
+  validateRequest(duesAdjustBody, { replaceBody: true }),
+  adminSensitiveLimiter,
+  requireStepUp(),
+  catchAsync(async (req: Request, res: Response) => {
+    const { amountMinor, reason } = req.body as { amountMinor: number; reason: string };
+    const ownerId = req.params.ownerId;
+    if (
+      await requireApprovalIf(
+        req,
+        res,
+        "dues.adjust",
+        async () => amountMinor >= (await getSetting("approvals.duesAdjustOverMinor")),
+        {
+          payload: { ownerId, amountMinor, reason },
+          summary: `Waive ${formatBDT(amountMinor)} of dues for owner ${ownerId}`,
+          reason,
+        },
+      )
+    ) {
+      return;
+    }
+    ok(res, "Dues adjusted", await adjustDues({ ownerId, amountMinor, reason }, req.auditCtx));
+  }),
+);
+
+// ---------------------------------------------------------------- statements
+
+// Read-only: owners' monthly statements, payout statements and invoices.
+router.get(
+  "/statements",
+  adminAuth("finance.view"),
+  adminOnly,
+  catchAsync(async (req: Request, res: Response) => {
+    ok(res, "Owner statements", await adminListStatements(req.query));
   }),
 );
 

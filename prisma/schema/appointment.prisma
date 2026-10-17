@@ -26,12 +26,19 @@ model Appointment {
 
   // Money, captured at booking time so a later price change cannot rewrite
   // what this customer agreed to pay.
-  totalMinor    Int           @default(0)
-  depositMinor  Int           @default(0)
-  depositStatus DepositStatus @default(NONE)
+  totalMinor     Int           @default(0)
+  depositMinor   Int           @default(0)
+  depositStatus  DepositStatus @default(NONE)
   /// The platform commission rate (basis points) in force when this booking
   /// was made. Null on bookings from before the snapshot: they use today's rate.
-  commissionBps Int?
+  commissionBps  Int?
+  /// Taken off the bill at checkout (owner Phase 14). Billable = total - discount;
+  /// commission and every earnings figure use billable. Reason required when > 0.
+  discountMinor  Int           @default(0)
+  discountReason String?
+  /// Counter tip, the salon's own money: never commissioned, never in billable.
+  /// The same amount sits on `Payment.tipMinor`.
+  tipMinor       Int           @default(0)
 
   /// Whether we brought this customer to the salon. Drives commission: a
   /// salon's own repeat customer is never commissioned.

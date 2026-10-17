@@ -24,7 +24,7 @@ export type SettingGroup =
   | "system"
   | "content";
 
-export type SettingKind = "int" | "number" | "boolean" | "announcement" | "list";
+export type SettingKind = "int" | "number" | "boolean" | "announcement" | "list" | "text";
 
 type Entry<T> = {
   schema: z.ZodType<T>;
@@ -77,6 +77,8 @@ const int = (min: number, max = Number.MAX_SAFE_INTEGER) =>
 const num = (min: number, max: number) =>
   ({ schema: z.number().min(min).max(max), kind: "number" as const, min, max });
 const bool = () => ({ schema: z.boolean(), kind: "boolean" as const });
+const text = (max: number) => ({ schema: z.string().trim().max(max), kind: "text" as const });
+const envText = (name: string) => () => raw(name);
 
 const announcementSchema = z
   .object({
@@ -454,6 +456,68 @@ export const SETTINGS = {
     group: "approvals",
     label: "Payouts over (poisha)",
     help: "When approvals are on, only payouts larger than this need a second admin to mark paid. None = every payout does.",
+    tier: 3,
+  }),
+  "approvals.duesAdjustOverMinor": def<number>({
+    ...int(0),
+    default: 100000,
+    group: "approvals",
+    label: "Dues waivers over (poisha)",
+    help: "Larger dues adjustments need a second admin when approvals are on.",
+    tier: 3,
+  }),
+  "dues.pauseEnabled": def<boolean>({
+    ...bool(),
+    default: false,
+    group: "money",
+    label: "Pause online bookings for unpaid dues",
+    help: "On: an owner over the dues limit or age is warned, then 3 days later every branch stops taking online bookings until paid.",
+    tier: 3,
+  }),
+  "dues.creditLimitMinor": def<number>({
+    ...int(0, 10000000),
+    default: 200000, // ৳2,000 (owner decision D5)
+    group: "money",
+    label: "Dues limit before pause (poisha)",
+    help: "Dues above this start the pause warning.",
+    tier: 3,
+  }),
+  "dues.maxAgeDays": def<number>({
+    ...int(1, 365),
+    default: 30,
+    group: "money",
+    label: "Dues age before pause (days)",
+    help: "Dues outstanding longer than this start the pause warning, whatever the amount.",
+    tier: 3,
+  }),
+  // Owner statements and invoices (owner Phase 7): the seller block on every
+  // invoice, and the VAT shown inside the commission (0 = no VAT line).
+  "finance.legalName": def<string>({
+    ...text(120),
+    default: "SalonKhuji",
+    env: envText("PLATFORM_LEGAL_NAME"),
+    envName: "PLATFORM_LEGAL_NAME",
+    group: "money",
+    label: "Platform legal name",
+    help: "Printed as the seller on commission invoices and statements.",
+    tier: 3,
+  }),
+  "finance.bin": def<string>({
+    ...text(40),
+    default: "",
+    env: envText("PLATFORM_BIN"),
+    envName: "PLATFORM_BIN",
+    group: "money",
+    label: "Platform BIN",
+    help: "VAT Business Identification Number on invoices. Empty hides the line.",
+    tier: 3,
+  }),
+  "finance.vatPercent": def<number>({
+    ...num(0, 25),
+    default: 0,
+    group: "money",
+    label: "VAT on commission (%)",
+    help: "VAT included in the commission on new invoices. Issued invoices keep their rate.",
     tier: 3,
   }),
   "audit.retentionDays": def<number>({

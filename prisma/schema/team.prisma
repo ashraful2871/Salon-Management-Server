@@ -1,0 +1,46 @@
+/// One person's job at one branch. The owner is never a member (salons.ownerId
+/// decides that); utils/salonAccess.ts turns ACTIVE rows into permissions.
+model SalonMember {
+  id                String       @id @default(uuid())
+  salonId           String
+  userId            String
+  role              BranchRole
+  status            MemberStatus @default(ACTIVE)
+  invitedById       String?
+  notifyNewBookings Boolean      @default(true)
+  removedAt         DateTime?
+  removedById       String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([salonId, userId])
+  @@index([userId, status])
+  @@index([salonId, status])
+  @@map("salon_members")
+}
+
+/// An emailed invitation to join one branch. Only the sha256 of the token is
+/// stored; the link is the only copy.
+model SalonInvitation {
+  id               String           @id @default(uuid())
+  salonId          String
+  email            String // normalised
+  name             String?
+  role             BranchRole
+  tokenHash        String           @unique
+  status           InvitationStatus @default(PENDING)
+  invitedById      String
+  expiresAt        DateTime
+  acceptedAt       DateTime?
+  acceptedByUserId String?
+  createdAt        DateTime         @default(now())
+
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@index([salonId, status])
+  @@index([email, status])
+  @@map("salon_invitations")
+}

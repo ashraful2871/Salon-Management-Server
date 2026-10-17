@@ -57,7 +57,7 @@ router.post(
 
 router.post(
   "/change-password",
-  auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN"),
+  auth("CUSTOMER", "STAFF", "SALON_OWNER", "BRANCH_MANAGER", "ADMIN"),
   validateRequest(AuthValidation.changePasswordValidation),
   AuthController.changePassword,
 );
@@ -66,7 +66,7 @@ router.post(
 router.post(
   "/change-email",
   authLimiter,
-  auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN", "AGENT"),
+  auth("CUSTOMER", "STAFF", "SALON_OWNER", "BRANCH_MANAGER", "ADMIN", "AGENT"),
   validateRequest(AuthValidation.changeEmailValidation, parsed),
   AuthController.changeEmail,
 );
@@ -74,14 +74,14 @@ router.post(
 router.post(
   "/change-email/confirm",
   otpLimiter,
-  auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN", "AGENT"),
+  auth("CUSTOMER", "STAFF", "SALON_OWNER", "BRANCH_MANAGER", "ADMIN", "AGENT"),
   validateRequest(AuthValidation.confirmEmailChangeValidation, parsed),
   AuthController.confirmEmailChange,
 );
 
 router.get(
   "/me",
-  auth("CUSTOMER", "STAFF", "SALON_OWNER", "ADMIN", "AGENT"),
+  auth("CUSTOMER", "STAFF", "SALON_OWNER", "BRANCH_MANAGER", "ADMIN", "AGENT"),
   AuthController.getMyProfile,
 );
 

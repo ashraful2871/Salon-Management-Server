@@ -3,6 +3,7 @@ import { AuditCtx } from "../../../utils/audit";
 import { isSettingKey, setSetting, settingPermission } from "../../../utils/settings";
 import { PaymentIntentService } from "../../Payment/paymentIntent.service";
 import { SettlementService } from "../../Settlement/settlement.service";
+import { adjustDues } from "../../Settlement/settlement.dues";
 import { WalletService } from "../../Wallet/wallet.service";
 import { Permission } from "../admin.permissions";
 
@@ -39,6 +40,7 @@ export type PayoutMarkPaidPayload = {
 };
 export type PayoutApprovePayload = { payoutId: string; reason?: string | null };
 export type SettingUpdatePayload ={ key: string; value: unknown; reason: string };
+export type DuesAdjustPayload = { ownerId: string; amountMinor: number; reason: string };
 
 const define = <P>(def: ActionDef<P>) => def;
 
@@ -100,6 +102,17 @@ export const ACTIONS = {
         {},
         { ctx: run.ctx, reason: p.reason ?? undefined },
         tx,
+      ),
+  }),
+  // Runs its own transaction (then resumes a DUES pause); the approval id is the
+  // journalId, so a replay writes nothing.
+  "dues.adjust": define<DuesAdjustPayload>({
+    permission: () => "finance.wallet_adjust",
+    transactional: false,
+    execute: (p, run) =>
+      adjustDues(
+        { ownerId: p.ownerId, amountMinor: p.amountMinor, reason: p.reason, approvalId: run.approvalId },
+        run.ctx,
       ),
   }),
   "setting.update": define<SettingUpdatePayload>({

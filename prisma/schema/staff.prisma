@@ -18,6 +18,41 @@ model Staff {
   staffServices StaffService[]
   appointments  Appointment[]
   reviews       Review[]
+  shifts        StaffShift[]
+  timeOff       StaffTimeOff[]
 
   @@map("staff")
+}
+
+/// A stylist's weekly working hours, Asia/Dhaka wall clock. A stylist with no
+/// rows works whenever the salon is open.
+model StaffShift {
+  id        String @id @default(uuid())
+  staffId   String
+  /// 0 = Sunday … 6 = Saturday.
+  weekday   Int
+  /// "HH:mm", start < end, same day.
+  startTime String
+  endTime   String
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, weekday, startTime])
+  @@map("staff_shifts")
+}
+
+/// A dated absence (leave, sick day, a few hours off).
+model StaffTimeOff {
+  id          String   @id @default(uuid())
+  staffId     String
+  startsAt    DateTime
+  endsAt      DateTime
+  reason      String?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, startsAt])
+  @@map("staff_time_off")
 }

@@ -26,6 +26,12 @@ import {
 } from "./providers/bkash/bkash.errors";
 import { sslCommerzProvider } from "./providers/sslcommerz.provider";
 import { ProviderName } from "./providers/types";
+import {
+  afterDuesChange,
+  MIN_DUES_PAYMENT_MINOR,
+  settleDuesPayment,
+} from "../Settlement/settlement.dues";
+import { getOwnerBuckets } from "../Settlement/settlement.buckets";
 
 const MIN_TOPUP_MINOR = 10000; // BDT 100
 const MAX_TOPUP_MINOR = 5000000; // BDT 50,000
@@ -98,6 +104,20 @@ const initiateTopup = async (
     },
   });
 
+  return startGatewaySession(intent, provider, user, "WALLET_TOPUP");
+};
+
+/**
+ * Opens the gateway session for an INITIATED intent and moves it to PENDING.
+ * Shared by top-ups and dues payments.
+ */
+const startGatewaySession = async (
+  intent: PaymentIntent,
+  provider: ReturnType<typeof getProvider>,
+  user: { name: string; email: string; phone: string | null },
+  purpose: "WALLET_TOPUP" | "SALON_DUES",
+) => {
+  const amountMinor = intent.amountMinor;
   try {
     const session = await provider.createSession({
       transactionId: intent.transactionId,
@@ -107,7 +127,7 @@ const initiateTopup = async (
         email: user.email,
         phone: user.phone ?? null,
       },
-      purpose: "WALLET_TOPUP",
+      purpose,
     });
 
     await prisma.paymentIntent.update({
@@ -133,6 +153,73 @@ const initiateTopup = async (
     });
     throw error;
   }
+};
+
+/**
+ * An owner paying what the business owes. The server decides the amount (the
+ * current dues); an INITIATED intent for the same owner, amount and gateway -
+ * one that never reached a session - is reused instead of a new row.
+ */
+const initiateDuesPayment = async (
+  userId: string,
+  ownerId: string,
+  providerName: ProviderName,
+) => {
+  const provider = getProvider(providerName);
+  if (!provider.isEnabled()) {
+    throw new ApiError(
+      StatusCodes.SERVICE_UNAVAILABLE,
+      `${provider.displayName} is not available right now`,
+    );
+  }
+
+  const { duesMinor } = await getOwnerBuckets(ownerId);
+  if (duesMinor <= 0) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "You have no dues to pay");
+  }
+  if (duesMinor < MIN_DUES_PAYMENT_MINOR) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Dues under ${formatBDT(MIN_DUES_PAYMENT_MINOR)} are settled from your next earnings`,
+    );
+  }
+  if (duesMinor > MAX_TOPUP_MINOR) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Dues over ${formatBDT(MAX_TOPUP_MINOR)} can't be paid online - contact support`,
+    );
+  }
+
+  const user = await prisma.user.findFirst({ where: { id: userId, isDeleted: false } });
+  if (!user) throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
+
+  const open = await prisma.paymentIntent.findFirst({
+    where: {
+      userId,
+      purpose: IntentPurpose.SALON_DUES,
+      referenceId: ownerId,
+      amountMinor: duesMinor,
+      provider: provider.name,
+      status: IntentStatus.INITIATED,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const intent =
+    open ??
+    (await prisma.paymentIntent.create({
+      data: {
+        transactionId: newTransactionId("DUES"),
+        userId,
+        purpose: IntentPurpose.SALON_DUES,
+        referenceId: ownerId,
+        amountMinor: duesMinor,
+        status: IntentStatus.INITIATED,
+        provider: provider.name,
+      },
+    }));
+
+  return startGatewaySession(intent, provider, user, "SALON_DUES");
 };
 
 // ---------------------------------------------------------------------------
@@ -218,12 +305,21 @@ const creditSettledIntent = async (
       );
     }
 
+    // An owner paying what the business owes: ledger only, never a wallet.
+    // Inside the claim, so a replay finds SUCCESS above and writes nothing.
+    if (intent.purpose === IntentPurpose.SALON_DUES) {
+      await settleDuesPayment(tx, intent, settled.method ?? provider.displayName);
+    }
+
     return true;
     // The same budget as WalletService: at Prisma's 5s default a slow hosted
     // Postgres closed this mid-credit after bKash had already captured the money.
   }, { maxWait: 10_000, timeout: 15_000 });
 
   if (credited) notifyTopupSuccess(intent, settled);
+  if (credited && intent.purpose === IntentPurpose.SALON_DUES && intent.referenceId) {
+    await afterDuesChange(intent.referenceId);
+  }
 };
 
 const notifyTopupSuccess = (
@@ -1110,6 +1206,7 @@ const getIntentStatus = async (userId: string, transactionId: string) => {
 
 export const PaymentIntentService = {
   initiateTopup,
+  initiateDuesPayment,
   processIpn,
   settleFromSuccessRedirect,
   resolveByTransactionId,

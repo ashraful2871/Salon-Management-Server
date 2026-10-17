@@ -6,6 +6,7 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import {
   AppointmentSource,
+  BookingPause,
   AppointmentStatus,
   BookingChannel,
   CancelledBy,
@@ -16,6 +17,8 @@ import {
   UserRole,
 } from "@prisma/client";
 import { sendEmail } from "../../utils/emailSender";
+import { notifyBranch } from "../../utils/notify";
+import { notifyBookingEvent } from "./appointment.notify";
 import {
   getBookingConfirmationTemplate,
   getNewBookingOwnerTemplate,
@@ -23,9 +26,12 @@ import {
 import { formatBDT } from "../../utils/money";
 import { getSetting } from "../../utils/settings";
 import {
-  accessibleSalonIds,
+  assertBookingPermission,
   assertSalonPermission,
-  scopeSalonIds,
+  bookingScopeWhere,
+  canSeeBooking,
+  grantAt,
+  isBusinessRole,
 } from "../../utils/salonAccess";
 import { hasSlotStarted } from "../../utils/slotTime";
 import { WalletService } from "../Wallet/wallet.service";
@@ -36,6 +42,9 @@ import {
 } from "./appointment.checkout";
 import { AppointmentDeposit } from "./appointment.deposit";
 import { AppointmentIdentity } from "./appointment.identity";
+import { attentionWhere, isAttentionKind } from "./appointment.attention";
+import { assertNotClosed } from "../Salon/salon.closure";
+import { assertStaffWorking } from "../Staff/staff.schedule";
 
 /**
  * Which status each status may move to. Terminal states go nowhere.
@@ -192,6 +201,20 @@ const timesOverlap = (
  * from two tabs are checked one after the other instead of both passing
  * against the same list. Must run inside the booking transaction.
  */
+/**
+ * New online bookings (web, assistant) stop while a salon is paused - by its
+ * owner or for unpaid dues. Walk-ins and existing bookings are not affected.
+ */
+export const assertTakingOnlineBookings = (salon: { bookingPause: BookingPause }) => {
+  if (salon.bookingPause !== BookingPause.NONE) {
+    throw ApiError.withCode(
+      StatusCodes.CONFLICT,
+      "This salon is not taking online bookings right now",
+      "SALON_PAUSED",
+    );
+  }
+};
+
 const assertWithinBookingLimits = async (
   tx: Prisma.TransactionClient,
   customerId: string,
@@ -288,20 +311,30 @@ type ClaimSlotInput = {
 };
 
 /**
- * The part every booking shares, online or walk-in: win the slot, give the
- * booking its queue identity, and write it. Runs in the caller's transaction,
- * so whatever the caller does next (a deposit hold) rolls the slot back with
- * it if it fails.
+ * Wins one AVAILABLE slot, or throws 409. The conditional update is the lock:
+ * two requests for the same slot cannot both see count 1. `holderId` is the one
+ * user whose own chat hold does not block the claim (null: any live hold
+ * does). Every booking path and the reschedule race on this one predicate.
  */
-const claimSlotAndCreate = async (
+export const claimSlot = async (
   tx: Prisma.TransactionClient,
-  input: ClaimSlotInput,
+  slot: Pick<Slot, "id">,
+  holderId: string | null,
 ) => {
   const now = new Date();
 
+  // A holiday or special hours set after the slot was made (or a slot
+  // unblocked by hand inside one) still cannot be booked: one check for web,
+  // assistant, walk-in and reschedule alike.
+  const target = await tx.slot.findUnique({
+    where: { id: slot.id },
+    select: { salonId: true, date: true, startTime: true, endTime: true },
+  });
+  if (target) await assertNotClosed(target.salonId, target.date, target.startTime, target.endTime, tx);
+
   const updatedSlot = await tx.slot.updateMany({
     where: {
-      id: input.slot.id,
+      id: slot.id,
       status: "AVAILABLE",
       isBooked: false,
       // A hold taken in the chat blocks the website too, otherwise "held" would
@@ -310,7 +343,7 @@ const claimSlotAndCreate = async (
       OR: [
         { heldUntil: null },
         { heldUntil: { lt: now } },
-        { heldByUserId: input.customerId },
+        ...(holderId ? [{ heldByUserId: holderId }] : []),
       ],
     },
     data: {
@@ -331,7 +364,7 @@ const claimSlotAndCreate = async (
     // when it may come straight back.
     const heldByAnother = await tx.slot.findFirst({
       where: {
-        id: input.slot.id,
+        id: slot.id,
         status: "AVAILABLE",
         isBooked: false,
         heldUntil: { gt: now },
@@ -346,6 +379,19 @@ const claimSlotAndCreate = async (
         : "Sorry, this slot has just been booked by another customer. Please select another available slot.",
     );
   }
+};
+
+/**
+ * The part every booking shares, online or walk-in: win the slot, give the
+ * booking its queue identity, and write it. Runs in the caller's transaction,
+ * so whatever the caller does next (a deposit hold) rolls the slot back with
+ * it if it fails.
+ */
+const claimSlotAndCreate = async (
+  tx: Prisma.TransactionClient,
+  input: ClaimSlotInput,
+) => {
+  await claimSlot(tx, input.slot, input.customerId);
 
   // The commission rate in force now, kept on the booking so a later change
   // to the setting never reprices it.
@@ -491,6 +537,7 @@ const quoteBooking = async (
   if (!salon) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found or inactive");
   }
+  assertTakingOnlineBookings(salon);
 
   if (!service) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Service not found or inactive");
@@ -515,6 +562,15 @@ const quoteBooking = async (
       StatusCodes.BAD_REQUEST,
       "Selected staff does not belong to this salon",
     );
+  }
+
+  // Early and friendly for the review page and the assistant summary; the
+  // claim checks again inside the booking transaction.
+  await assertNotClosed(salon.id, slot.date, slot.startTime, slot.endTime);
+
+  // A chosen stylist must be on shift and not on leave for the whole slot.
+  if (staff) {
+    await assertStaffWorking({ id: staff.id }, slot.date, slot.startTime, slot.endTime);
   }
 
   // What this booking costs, and what it costs to not turn up. Both are frozen
@@ -630,33 +686,40 @@ const bookAppointment = async (
     sendEmail(user.email, "Booking Confirmation - Salon Management", emailHtml);
   }
 
-  // Tell the owner, so a booking made overnight is not first seen when the
-  // customer walks in. Also not awaited.
-  const owner = salon.owner.user;
-  if (owner.email) {
-    const serial = appointment.serialNumber
-      ? ` #${appointment.serialNumber}`
-      : "";
-
-    sendEmail(
-      owner.email,
-      `New booking${serial} - ${appointment.service.name}`,
-      getNewBookingOwnerTemplate({
-        ownerName: owner.name || "there",
-        salonName: appointment.salon.name,
-        customerName: user.name || "A customer",
-        serviceName: appointment.service.name,
-        counterName: appointment.counter?.name,
-        serialNumber: appointment.serialNumber,
-        token: appointment.token,
-        date: formattedDate,
-        time: appointment.endTime
-          ? `${appointment.startTime} - ${appointment.endTime}`
-          : appointment.startTime,
-        dueAtCounter: formatBDT(totalMinor - depositMinor),
-      }),
-    );
-  }
+  // Tell the branch (owner + team, per their preferences; the owner's email
+  // follows bookingEmailMode), so a booking made overnight is not first seen
+  // when the customer walks in. Not awaited; notify never throws.
+  const serial = appointment.serialNumber ? ` #${appointment.serialNumber}` : "";
+  const bookingTime = appointment.endTime
+    ? `${appointment.startTime} - ${appointment.endTime}`
+    : appointment.startTime;
+  void notifyBranch(
+    appointment.salonId,
+    "booking.new",
+    {
+      title: `New booking${serial} - ${appointment.service.name}`,
+      body: `${user.name || "A customer"} · ${formattedDate}, ${bookingTime} at ${appointment.salon.name}`,
+      link: `/dashboard/appointments?date=all&searchTerm=${appointment.token}`,
+      dedupeKey: `booking.new:${appointment.id}`,
+      email: {
+        subject: `New booking${serial} - ${appointment.service.name}`,
+        html: (name) =>
+          getNewBookingOwnerTemplate({
+            ownerName: name,
+            salonName: appointment.salon.name,
+            customerName: user.name || "A customer",
+            serviceName: appointment.service.name,
+            counterName: appointment.counter?.name,
+            serialNumber: appointment.serialNumber,
+            token: appointment.token,
+            date: formattedDate,
+            time: bookingTime,
+            dueAtCounter: formatBDT(totalMinor - depositMinor),
+          }),
+      },
+    },
+    { staffId: appointment.staffId },
+  );
 
   return appointment;
 };
@@ -710,6 +773,7 @@ const bookWalkIn = async (
     customerName: string;
     customerPhone: string;
     notes?: string;
+    staffId?: string;
   },
 ) => {
   const slot = await prisma.slot.findUnique({
@@ -776,6 +840,18 @@ const bookWalkIn = async (
     );
   }
 
+  // An optional stylist: theirs to serve, so on shift and at this branch.
+  if (payload.staffId) {
+    const staff = await prisma.staff.findFirst({
+      where: { id: payload.staffId, salonId: salon.id, isDeleted: false },
+      select: { id: true, user: { select: { name: true } } },
+    });
+    if (!staff) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Selected staff does not belong to this salon");
+    }
+    await assertStaffWorking({ id: staff.id, name: staff.user.name }, slot.date, slot.startTime, slot.endTime);
+  }
+
   const customerName = payload.customerName.trim();
   const customerPhone = normalizePhone(payload.customerPhone);
   const email = walkInEmail(customerName, customerPhone);
@@ -806,6 +882,7 @@ const bookWalkIn = async (
         salonId: salon.id,
         serviceId: service.id,
         counterId: counter.id,
+        staffId: payload.staffId,
         notes: payload.notes,
         totalMinor: service.priceMinor,
         depositMinor: 0,
@@ -874,32 +951,19 @@ const getAllAppointments = async (
   if (userRole === UserRole.CUSTOMER) {
     // Customer sees only own appointments
     whereConditions.customerId = userId;
-  } else if (userRole === UserRole.STAFF) {
-    // Staff userId -> find staff profile -> filter by staffId
-    const staff = await prisma.staff.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
-
-    // If staff profile doesn't exist, return no data
-    if (!staff) {
-      return emptyResult;
-    }
-
-    whereConditions.staffId = staff.id;
-  } else if (userRole === UserRole.SALON_OWNER) {
-    const salonIds = await scopeSalonIds(
+  } else if (isBusinessRole(userRole)) {
+    // Owners, managers and receptionists see their branches; a stylist only
+    // their own bookings. A salon outside the set: an empty page.
+    const scope = await bookingScopeWhere(
       { userId, role: userRole },
       "bookings.view",
       salonId,
     );
-
-    // No salons, or a salon that is not theirs: an empty page
-    if (!salonIds?.length) {
+    if (!scope) {
       return emptyResult;
     }
 
-    whereConditions.salonId = { in: salonIds };
+    whereConditions.AND = [scope];
   }
 
   // Admin can see all (no extra role filter)
@@ -970,6 +1034,14 @@ const getAllAppointments = async (
     } else {
       whereConditions.salonId = salonId;
     }
+  }
+
+  // The owner home's "Needs attention" rows link here; same filter as the count.
+  if (query.attention !== undefined) {
+    if (!isAttentionKind(query.attention)) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, `Unknown attention filter "${query.attention}".`);
+    }
+    whereConditions.AND = [...(whereConditions.AND ?? []), attentionWhere(query.attention)];
   }
 
   // Status goes on last: the chip counts need every other filter but this one.
@@ -1167,27 +1239,16 @@ const canViewAppointment = async (
   appointment: {
     customerId: string;
     salonId: string;
+    staffId: string | null;
     salon: { ownerId: string };
   },
   userId: string,
   userRole: string,
 ) => {
-  switch (userRole) {
-    case UserRole.ADMIN:
-      return true;
-    case UserRole.CUSTOMER:
-      return appointment.customerId === userId;
-    case UserRole.SALON_OWNER:
-    case UserRole.STAFF: {
-      const salonIds = await accessibleSalonIds(
-        { userId, role: userRole },
-        "bookings.view",
-      );
-      return salonIds === null || salonIds.includes(appointment.salonId);
-    }
-    default:
-      return false;
-  }
+  if (userRole === UserRole.ADMIN) return true;
+  if (userRole === UserRole.CUSTOMER) return appointment.customerId === userId;
+  if (!isBusinessRole(userRole)) return false;
+  return canSeeBooking({ userId, role: userRole }, appointment);
 };
 
 const getAppointmentById = async (
@@ -1245,29 +1306,24 @@ const updateAppointmentStatus = async (
         "Customers can only cancel appointments",
       );
     }
-  } else if (userRole === UserRole.STAFF) {
-    if (appointment?.staff?.userId !== userId) {
-      throw new ApiError(
-        StatusCodes.FORBIDDEN,
-        "You can only update appointments assigned to you",
-      );
-    }
-  } else if (userRole === UserRole.SALON_OWNER) {
-    await assertSalonPermission(
+  } else if (isBusinessRole(userRole)) {
+    // A stylist only their own bookings; owner, manager, receptionist the branch.
+    await assertBookingPermission(
       { userId, role: userRole },
-      appointment.salonId,
+      appointment,
       "bookings.manage",
     );
   }
 
   if (
     payload.staffId &&
-    userRole !== UserRole.SALON_OWNER &&
-    userRole !== UserRole.ADMIN
+    userRole !== UserRole.ADMIN &&
+    (!isBusinessRole(userRole) ||
+      (await grantAt({ userId, role: userRole }, appointment.salonId))?.ownBookingsOnly !== false)
   ) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
-      "Only salon owners can assign staff to appointments",
+      "Only the salon desk can assign staff to appointments",
     );
   }
 
@@ -1278,13 +1334,23 @@ const updateAppointmentStatus = async (
         salonId: appointment.salonId,
         isDeleted: false,
       },
-      select: { id: true },
+      select: { id: true, user: { select: { name: true } } },
     });
 
     if (!staff) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
         "Selected staff does not belong to this salon",
+      );
+    }
+
+    // Re-sending the stylist already on the booking is not an assignment.
+    if (staff.id !== appointment.staffId) {
+      await assertStaffWorking(
+        { id: staff.id, name: staff.user.name },
+        appointment.appointmentDate,
+        appointment.startTime,
+        appointment.endTime,
       );
     }
   }
@@ -1436,6 +1502,7 @@ const updateAppointmentStatus = async (
   );
 
   AppointmentDeposit.notifyForfeited(forfeited);
+  if (to === AppointmentStatus.NO_SHOW) void notifyBookingEvent(appointmentId, "booking.no_show");
 
   return result;
 };
@@ -1455,12 +1522,12 @@ const cancelAppointment = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Appointment not found");
   }
 
-  const bySalon = userRole === UserRole.SALON_OWNER;
+  const bySalon = isBusinessRole(userRole) && appointment.customerId !== userId;
 
   if (bySalon) {
-    await assertSalonPermission(
+    await assertBookingPermission(
       { userId, role: userRole },
-      appointment.salonId,
+      appointment,
       "bookings.manage",
     );
   } else if (appointment.customerId !== userId) {
@@ -1533,6 +1600,7 @@ const cancelAppointment = async (
     freeCancellation: quote.freeCancellation,
     reason,
   });
+  void notifyBookingEvent(appointmentId, "booking.cancelled");
 
   return {
     ...result,

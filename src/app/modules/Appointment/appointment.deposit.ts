@@ -15,6 +15,7 @@ import { formatBDT } from "../../utils/money";
 import { getSetting, getSettingSync } from "../../utils/settings";
 import { atWallClock } from "../../utils/slotTime";
 import { sendEmail } from "../../utils/emailSender";
+import { notifyBookingEvent } from "./appointment.notify";
 import {
   getDepositForfeitedTemplate,
   getDepositReleasedTemplate,
@@ -22,6 +23,7 @@ import {
 } from "../../utils/emailTemplates";
 import { WalletService } from "../Wallet/wallet.service";
 import { SettlementService } from "../Settlement/settlement.service";
+import { billableMinor } from "./appointment.billing";
 
 /**
  * What happens to a deposit, and when.
@@ -258,10 +260,12 @@ export const settleCompletedTx = async (
     !(await getSetting("booking.commissionOnDirect"));
 
   // The rate in force when the booking was made; older bookings have none.
+  // The base is the billable amount (total less a checkout discount); a tip
+  // is the salon's alone and never enters it.
   const commissionMinor = exemptDirect
     ? 0
     : SettlementService.resolveCommissionMinor(
-        appointment.totalMinor,
+        billableMinor(appointment),
         appointment.commissionBps ??
           (await SettlementService.currentCommissionBps()),
       );
@@ -580,7 +584,7 @@ export const appealNoShow = async (
     );
   }
 
-  return prisma.appointment.update({
+  const appealed = await prisma.appointment.update({
     where: { id: appointmentId },
     data: {
       appealStatus: AppealStatus.PENDING,
@@ -588,6 +592,8 @@ export const appealNoShow = async (
       appealReason: reason,
     },
   });
+  void notifyBookingEvent(appointmentId, "appeal.filed");
+  return appealed;
 };
 
 /**
@@ -709,7 +715,11 @@ export const assertCanMarkNoShow = (
   userRole: string,
   appointment: Pick<Appointment, "appointmentDate" | "startTime">,
 ) => {
-  if (userRole !== UserRole.SALON_OWNER && userRole !== UserRole.ADMIN) {
+  if (
+    userRole !== UserRole.SALON_OWNER &&
+    userRole !== UserRole.BRANCH_MANAGER &&
+    userRole !== UserRole.ADMIN
+  ) {
     throw new ApiError(
       StatusCodes.FORBIDDEN,
       "Only the salon or an admin can mark a booking as a no-show",
@@ -797,6 +807,7 @@ export const autoMarkNoShows = async () => {
       if (forfeited === undefined) continue;
 
       notifyForfeited(forfeited);
+      void notifyBookingEvent(appointment.id, "booking.no_show");
       marked += 1;
     } catch (error) {
       console.error(
