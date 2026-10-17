@@ -227,6 +227,8 @@ const run = async (tx: Prisma.TransactionClient) => {
   await availableJournal(mirpur.id, 50000);
   await availableJournal(dhanmondi.id, -30000);
   const batch = () => SettlementService.runPayoutBatch({ ownerId: owner.id, db: tx }, ctx);
+  // With payouts.holdDays 0 the −৳15 entry from today is past the hold too and nets in.
+  const nettedMinor = holdDays > 0 ? 50000 : 48500;
 
   // ------------------------------------------------------------ destination
   // Payable money, but nowhere verified to send it: skipped, nothing claimed.
@@ -274,7 +276,7 @@ const run = async (tx: Prisma.TransactionClient) => {
   if (minMinor <= 50000) {
     check(
       "Mirpur +800 / Dhanmondi −300 → one payout of ৳500",
-      first.created.length === 1 && p1?.netMinor === 50000 && p1.salonId === null,
+      first.created.length === 1 && p1?.netMinor === nettedMinor && p1.salonId === null,
       first.created.map((c) => `${c.netMinor} salon=${c.salonId ?? "business"}`).join(", ") || "none",
     );
   } else {
@@ -292,7 +294,7 @@ const run = async (tx: Prisma.TransactionClient) => {
     bucketSum === (total._sum.amountMinor ?? 0),
     `${bucketSum} vs ${total._sum.amountMinor}`,
   );
-  if (p1) check("payout's entries sit in inPayout", after.inPayoutMinor === 50000, `inPayout ${after.inPayoutMinor}`);
+  if (p1) check("payout's entries sit in inPayout", after.inPayoutMinor === nettedMinor, `inPayout ${after.inPayoutMinor}`);
 
   // ------------------------------------------------------------ state machine
   const claimed = async (payoutId: string) => tx.ledgerEntry.count({ where: { payoutId } });
@@ -311,7 +313,7 @@ const run = async (tx: Prisma.TransactionClient) => {
     check("CANCELLED → PAID → 409", reopen === 409, `status ${reopen}`);
 
     const p2 = (await batch()).created[0];
-    check("released money goes in the next run", p2?.netMinor === 50000, `net ${p2?.netMinor ?? "none"}`);
+    check("released money goes in the next run", p2?.netMinor === nettedMinor, `net ${p2?.netMinor ?? "none"}`);
     if (p2) {
       await transitionPayout(p2.payoutId, PayoutStatus.PROCESSING, {}, ctx, tx);
       await transitionPayout(p2.payoutId, PayoutStatus.FAILED, { failureReason: "verify" }, ctx, tx);
@@ -334,7 +336,7 @@ const run = async (tx: Prisma.TransactionClient) => {
       );
       check("PAID → FAILED → 409", paidToFailed === 409, `status ${paidToFailed}`);
       const paidBuckets = await getOwnerBuckets(owner.id, { db: tx });
-      check("paid bucket holds the paid payout", paidBuckets.paidMinor === 50000, `paid ${paidBuckets.paidMinor}`);
+      check("paid bucket holds the paid payout", paidBuckets.paidMinor === nettedMinor, `paid ${paidBuckets.paidMinor}`);
     } else {
       check("third run raised a payout", false);
     }
