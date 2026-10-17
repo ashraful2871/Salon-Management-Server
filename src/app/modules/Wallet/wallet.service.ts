@@ -247,11 +247,17 @@ const mutate = async (args: MutateArgs, tx?: Prisma.TransactionClient) => {
 // these is safe to call twice.
 // ---------------------------------------------------------------------------
 
+/**
+ * One hold per booking, deposit and any prepaid bill together (owner Phase
+ * 15); `split` records how much of it is which, so a late cancel can take its
+ * fee from the deposit part only.
+ */
 const holdDeposit = (
   userId: string,
   amountMinor: number,
   appointmentId: string,
   tx?: Prisma.TransactionClient,
+  split?: { depositMinor: number; prepaidMinor: number },
 ) =>
   mutate(
     {
@@ -259,13 +265,18 @@ const holdDeposit = (
       type: WalletTxType.DEPOSIT_HOLD,
       amount: 0,
       holdDelta: amountMinor,
-      description: "Booking deposit held",
+      description:
+        split && split.prepaidMinor > 0
+          ? "Booking paid in full - held until your visit"
+          : "Booking deposit held",
       referenceType: "APPOINTMENT",
       referenceId: appointmentId,
       idempotencyKey: `hold:${appointmentId}`,
       // A hold moves money into heldBalance without changing the total, so
       // the row carries amount 0. Record the delta or the ledger shows ৳0.
-      metadata: { holdDeltaMinor: amountMinor },
+      metadata: split
+        ? { holdDeltaMinor: amountMinor, ...split }
+        : { holdDeltaMinor: amountMinor },
     },
     tx,
   );
@@ -275,6 +286,7 @@ const releaseDeposit = (
   amountMinor: number,
   appointmentId: string,
   tx?: Prisma.TransactionClient,
+  description?: string,
 ) =>
   mutate(
     {
@@ -282,7 +294,7 @@ const releaseDeposit = (
       type: WalletTxType.DEPOSIT_RELEASE,
       amount: 0,
       holdDelta: -amountMinor,
-      description: "Deposit released - booking cancelled in time",
+      description: description ?? "Deposit released - booking cancelled in time",
       referenceType: "APPOINTMENT",
       referenceId: appointmentId,
       idempotencyKey: `release:${appointmentId}`,
@@ -297,6 +309,7 @@ const applyDeposit = (
   amountMinor: number,
   appointmentId: string,
   tx?: Prisma.TransactionClient,
+  description?: string,
 ) =>
   mutate(
     {
@@ -304,7 +317,7 @@ const applyDeposit = (
       type: WalletTxType.DEPOSIT_APPLIED,
       amount: -amountMinor,
       holdDelta: -amountMinor,
-      description: "Deposit applied to your bill",
+      description: description ?? "Deposit applied to your bill",
       referenceType: "APPOINTMENT",
       referenceId: appointmentId,
       idempotencyKey: `apply:${appointmentId}`,
@@ -318,6 +331,7 @@ const forfeitDeposit = (
   amountMinor: number,
   appointmentId: string,
   tx?: Prisma.TransactionClient,
+  description?: string,
 ) =>
   mutate(
     {
@@ -325,7 +339,7 @@ const forfeitDeposit = (
       type: WalletTxType.DEPOSIT_FORFEIT,
       amount: -amountMinor,
       holdDelta: -amountMinor,
-      description: "Deposit forfeited - marked as no-show",
+      description: description ?? "Deposit forfeited - marked as no-show",
       referenceType: "APPOINTMENT",
       referenceId: appointmentId,
       idempotencyKey: `forfeit:${appointmentId}`,

@@ -256,6 +256,15 @@ export const SETTINGS = {
     help: "A salon's deposit is never above this.",
     tier: 3,
   }),
+  "booking.prepayEnabled": def<boolean>({
+    ...bool(),
+    default: false,
+    group: "money",
+    label: "Let customers pay in full in the app",
+    public: true,
+    help: "On: at a salon that opted in, a customer can pay the whole bill from their wallet when booking. The salon gets it in the weekly payout, less commission.",
+    tier: 3,
+  }),
   "booking.goodwillCreditMinor": def<number>({
     ...int(0, 50000),
     default: 2000,

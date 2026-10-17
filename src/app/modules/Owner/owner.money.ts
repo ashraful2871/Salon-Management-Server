@@ -11,7 +11,14 @@ import { assertOwnerOf, withAccessCache } from "../../utils/salonAccess";
 import { getSetting } from "../../utils/settings";
 import { getOwnerBuckets, holdCutoff, IN_PAYOUT } from "../Settlement/settlement.buckets";
 import { getSalonEarnings } from "../Settlement/settlement.earnings";
-import { destinationLabel } from "../Settlement/settlement.service";
+import {
+  COMMISSION_DEDUCTED_DESCRIPTION,
+  COMMISSION_RETURNED_DESCRIPTION,
+  destinationLabel,
+  PREPAID_OWED_DESCRIPTION,
+  PREPAID_REVERSED_DESCRIPTION,
+  SALON_REFUND_DESCRIPTION,
+} from "../Settlement/settlement.service";
 import { describeAccount } from "./owner.payoutAccount";
 import { DUES_PAID_DESCRIPTION, DUES_WAIVED_DESCRIPTION, MIN_DUES_PAYMENT_MINOR } from "../Settlement/settlement.dues";
 import { PaymentIntentService } from "../Payment/paymentIntent.service";
@@ -32,6 +39,8 @@ import { PaymentIntentService } from "../Payment/paymentIntent.service";
  */
 export const TRANSACTION_TYPES = [
   "booking",
+  "prepaid",
+  "refund",
   "no_show",
   "late_cancel",
   "commission",
@@ -43,9 +52,13 @@ type TransactionType = (typeof TRANSACTION_TYPES)[number];
 
 export const TYPE_DESCRIPTIONS: Record<Exclude<TransactionType, "payout_adjustment">, string[]> = {
   booking: ["Deposit owed to salon"],
+  // Owner Phase 15: a bill paid in full in the app ("Paid in app"); a no-show
+  // forfeits it too, and an upheld appeal reverses it.
+  prepaid: [PREPAID_OWED_DESCRIPTION, PREPAID_REVERSED_DESCRIPTION],
+  refund: [SALON_REFUND_DESCRIPTION],
   no_show: ["Salon share of forfeited deposit", "Salon share reversed on appeal"],
   late_cancel: ["Late cancellation fee kept by salon"],
-  commission: ["Platform commission deducted"],
+  commission: [COMMISSION_DEDUCTED_DESCRIPTION, COMMISSION_RETURNED_DESCRIPTION],
   goodwill: ["Goodwill credit funded by salon"],
   dues: [DUES_PAID_DESCRIPTION, DUES_WAIVED_DESCRIPTION],
 };

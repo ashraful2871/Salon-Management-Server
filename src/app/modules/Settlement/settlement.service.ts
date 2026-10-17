@@ -180,6 +180,7 @@ export const recordCompletedBooking = async (
   if (await hasEntries(db, appointment.id)) return;
 
   const deposit = appointment.depositMinor;
+  const prepaid = appointment.prepaidMinor;
 
   await bookingJournal(db, appointment, "booking.completed", [
     {
@@ -191,6 +192,17 @@ export const recordCompletedBooking = async (
       account: LedgerAccount.SALON_PAYABLE,
       amountMinor: deposit,
       description: "Deposit owed to salon",
+    },
+    // The rest of a bill paid in the app (owner Phase 15); 0 writes nothing.
+    {
+      account: LedgerAccount.CUSTOMER_WALLET,
+      amountMinor: -prepaid,
+      description: PREPAID_APPLIED_DESCRIPTION,
+    },
+    {
+      account: LedgerAccount.SALON_PAYABLE,
+      amountMinor: prepaid,
+      description: PREPAID_OWED_DESCRIPTION,
     },
     {
       account: LedgerAccount.SALON_PAYABLE,
@@ -205,16 +217,22 @@ export const recordCompletedBooking = async (
   ]);
 };
 
-/** A forfeited deposit, split per the salon's configured share. */
+/**
+ * A forfeited deposit, split per the salon's configured share. A prepaid bill
+ * is forfeited with it (owner Phase 0 decision) and split like a completed
+ * booking: the salon is owed it, less `prepaidCommissionMinor`.
+ */
 export const recordForfeitedDeposit = async (
   db: Prisma.TransactionClient,
   appointment: Appointment,
   salonSharePct: number,
+  prepaidCommissionMinor = 0,
 ) => {
   if (await hasEntries(db, appointment.id)) return;
 
   const deposit = appointment.depositMinor;
-  if (deposit <= 0) return;
+  const prepaid = appointment.prepaidMinor;
+  if (deposit <= 0 && prepaid <= 0) return;
 
   const clampedPct = Math.min(Math.max(salonSharePct, 0), 100);
   const salonShare = Math.round((deposit * clampedPct) / 100);
@@ -236,6 +254,7 @@ export const recordForfeitedDeposit = async (
       amountMinor: platformShare,
       description: "Platform share of forfeited deposit",
     },
+    ...prepaidDrafts(prepaid, prepaidCommissionMinor, "Prepaid bill forfeited"),
   ]);
 };
 
@@ -277,7 +296,12 @@ export const reverseForfeitedDeposit = async (
   salonSharePct: number,
 ) => {
   const deposit = appointment.depositMinor;
-  if (deposit <= 0) return;
+  const prepaid = appointment.prepaidMinor;
+  if (deposit <= 0 && prepaid <= 0) return;
+
+  // The commission the forfeit actually took on the prepaid part, read back
+  // rather than recomputed, so a rate change since cannot unbalance the two.
+  const prepaidCommission = prepaid > 0 ? await commissionTaken(db, appointment.id) : 0;
 
   const clampedPct = Math.min(Math.max(salonSharePct, 0), 100);
   const salonShare = Math.round((deposit * clampedPct) / 100);
@@ -299,7 +323,75 @@ export const reverseForfeitedDeposit = async (
       amountMinor: -platformShare,
       description: "Platform share reversed on appeal",
     },
+    ...prepaidDrafts(prepaid, prepaidCommission, "Prepaid bill returned on appeal").map(
+      (draft) => ({ ...draft, amountMinor: -draft.amountMinor, description: REVERSED[draft.description] ?? draft.description }),
+    ),
   ]);
+};
+
+/** Names of the prepaid legs (owner Phase 15); owner.money maps them to types. */
+export const PREPAID_APPLIED_DESCRIPTION = "Prepaid bill applied";
+export const PREPAID_OWED_DESCRIPTION = "Prepaid bill owed to salon";
+export const PREPAID_REVERSED_DESCRIPTION = "Prepaid bill reversed on appeal";
+export const COMMISSION_DEDUCTED_DESCRIPTION = "Platform commission deducted";
+export const COMMISSION_RETURNED_DESCRIPTION = "Platform commission returned";
+export const SALON_REFUND_DESCRIPTION = "Refund to customer";
+
+const REVERSED: Record<string, string> = {
+  [PREPAID_OWED_DESCRIPTION]: PREPAID_REVERSED_DESCRIPTION,
+  [COMMISSION_DEDUCTED_DESCRIPTION]: COMMISSION_RETURNED_DESCRIPTION,
+  "Platform commission": "Platform commission reversed",
+};
+
+/** A prepaid bill moving from the customer to the salon, less commission. */
+const prepaidDrafts = (
+  prepaid: number,
+  commissionMinor: number,
+  walletDescription: string,
+): EntryDraft[] =>
+  prepaid <= 0
+    ? []
+    : [
+        { account: LedgerAccount.CUSTOMER_WALLET, amountMinor: -prepaid, description: walletDescription },
+        { account: LedgerAccount.SALON_PAYABLE, amountMinor: prepaid, description: PREPAID_OWED_DESCRIPTION },
+        { account: LedgerAccount.SALON_PAYABLE, amountMinor: -commissionMinor, description: COMMISSION_DEDUCTED_DESCRIPTION },
+        { account: LedgerAccount.PLATFORM_REVENUE, amountMinor: commissionMinor, description: "Platform commission" },
+      ];
+
+/** Net commission this booking has paid so far (deducted less returned). */
+const commissionTaken = async (db: Prisma.TransactionClient, appointmentId: string) => {
+  const sum = await db.ledgerEntry.aggregate({
+    where: {
+      appointmentId,
+      account: LedgerAccount.PLATFORM_REVENUE,
+      description: { in: ["Platform commission", "Platform commission reversed", "Platform commission reversed on refund"] },
+    },
+    _sum: { amountMinor: true },
+  });
+  return Math.max(sum._sum.amountMinor ?? 0, 0);
+};
+
+/**
+ * A salon refunding a completed booking to the customer's wallet (owner
+ * Phase 15). The salon carries it; commission comes back only with `returnCommission`
+ * (a full refund of a bill paid wholly in the app). Returns that commission.
+ */
+export const recordSalonRefund = async (
+  db: Prisma.TransactionClient,
+  appointment: Appointment,
+  amountMinor: number,
+  returnCommission: boolean,
+) => {
+  const commission = returnCommission ? await commissionTaken(db, appointment.id) : 0;
+
+  await bookingJournal(db, appointment, "booking.refund", [
+    { account: LedgerAccount.SALON_PAYABLE, amountMinor: -amountMinor, description: SALON_REFUND_DESCRIPTION },
+    { account: LedgerAccount.CUSTOMER_WALLET, amountMinor: amountMinor, description: "Refund from salon" },
+    { account: LedgerAccount.SALON_PAYABLE, amountMinor: commission, description: COMMISSION_RETURNED_DESCRIPTION },
+    { account: LedgerAccount.PLATFORM_REVENUE, amountMinor: -commission, description: "Platform commission reversed on refund" },
+  ]);
+
+  return commission;
 };
 
 // ---------------------------------------------------------------------------
@@ -1224,6 +1316,7 @@ export const SettlementService = {
   recordForfeitedDeposit,
   recordLateCancellationPenalty,
   reverseForfeitedDeposit,
+  recordSalonRefund,
   getSalonBalance,
   runPayoutBatch,
   previewPayoutBatch,

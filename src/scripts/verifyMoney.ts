@@ -31,6 +31,7 @@ import {
 import prisma from "../app/shared/prisma";
 import { getSetting } from "../app/utils/settings";
 import { systemAuditCtx } from "../app/utils/audit";
+import { runPrepaid } from "./verifyMoney.prepaid";
 import { AppointmentDeposit } from "../app/modules/Appointment/appointment.deposit";
 import { paymentSummary } from "../app/modules/Appointment/appointment.billing";
 import { expectedForDay } from "../app/modules/Owner/owner.dailyClose";
@@ -656,6 +657,20 @@ const runStatements = async (tx: Prisma.TransactionClient) => {
 };
 
 const main = async () => {
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        await runPrepaid(tx, check);
+        throw new Rollback();
+      },
+      { timeout: 120_000, maxWait: 15_000 },
+    );
+  } catch (error) {
+    if (!(error instanceof Rollback)) {
+      check("prepaid scenario ran to the end", false, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   try {
     await prisma.$transaction(run, { timeout: 180_000, maxWait: 15_000 });
   } catch (error) {

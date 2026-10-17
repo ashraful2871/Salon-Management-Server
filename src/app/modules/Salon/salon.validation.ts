@@ -74,6 +74,8 @@ const updateSalonValidation = z.object({
     images: z.array(z.string()).optional(),
     operatingHours: z.any().optional(),
     managerCanEditServices: z.boolean().optional(),
+    /** Customers may pay the whole bill in the app (owner Phase 15). */
+    acceptsPrepay: z.boolean().optional(),
     latitude: latitude.optional(),
     longitude: longitude.optional(),
   }).refine(coordsPair, coordsPairError),

@@ -305,6 +305,8 @@ type ClaimSlotInput = {
   notes?: string;
   totalMinor: number;
   depositMinor: number;
+  /** The rest of the bill paid in the app (owner Phase 15); held with the deposit. */
+  prepaidMinor?: number;
   source: AppointmentSource;
   /** Which surface took the booking. Defaults to the review page. */
   bookedVia?: BookingChannel;
@@ -427,8 +429,11 @@ const claimSlotAndCreate = async (
       bookedVia: input.bookedVia ?? BookingChannel.WEB,
       totalMinor: input.totalMinor,
       depositMinor: input.depositMinor,
+      prepaidMinor: input.prepaidMinor ?? 0,
       depositStatus:
-        input.depositMinor > 0 ? DepositStatus.HELD : DepositStatus.NONE,
+        input.depositMinor + (input.prepaidMinor ?? 0) > 0
+          ? DepositStatus.HELD
+          : DepositStatus.NONE,
       commissionBps,
     },
     include: newBookingInclude,
@@ -452,6 +457,8 @@ const quoteBooking = async (
     counterId: string;
     slotId: string;
     staffId?: string | null;
+    /** Pay the whole bill now (owner Phase 15). */
+    payInFull?: boolean;
   },
 ) => {
   // Verify user is customer
@@ -582,7 +589,33 @@ const quoteBooking = async (
     totalMinor,
   );
 
-  return { user, slot, salon, service, staff, counter, totalMinor, depositMinor };
+  // Paying the whole bill now (owner Phase 15): the platform switch and the
+  // salon's opt-in must both be on. Asking when it is off is a 400, not a
+  // silent deposit-only booking the customer did not choose.
+  const prepayAllowed =
+    salon.acceptsPrepay &&
+    totalMinor > depositMinor &&
+    (await getSetting("booking.prepayEnabled"));
+  if (payload.payInFull && !prepayAllowed) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "This salon does not take full payment in the app. Pay the deposit and the rest at the salon.",
+    );
+  }
+  const prepaidMinor = payload.payInFull ? totalMinor - depositMinor : 0;
+
+  return {
+    user,
+    slot,
+    salon,
+    service,
+    staff,
+    counter,
+    totalMinor,
+    depositMinor,
+    prepaidMinor,
+    prepayAllowed,
+  };
 };
 
 export type BookingQuote = Awaited<ReturnType<typeof quoteBooking>>;
@@ -591,10 +624,10 @@ const bookAppointment = async (
   userId: string,
   payload: any,
 ): Promise<Awaited<ReturnType<typeof claimSlotAndCreate>>> => {
-  const { user, slot, salon, totalMinor, depositMinor } = await quoteBooking(
-    userId,
-    payload,
-  );
+  const { user, slot, salon, totalMinor, depositMinor, prepaidMinor } =
+    await quoteBooking(userId, payload);
+  // One hold covers the deposit and any prepaid bill.
+  const holdMinor = depositMinor + prepaidMinor;
 
   // Transaction for double booking prevention. The deposit hold lives in here
   // too: if the customer cannot cover it the whole thing rolls back and the
@@ -614,18 +647,20 @@ const bookAppointment = async (
           notes: payload.notes,
           totalMinor,
           depositMinor,
+          prepaidMinor,
           source: AppointmentSource.PLATFORM,
           // The chat passes ASSISTANT; the review page passes nothing and gets
           // WEB. Same transaction, same emails, same token either way.
           bookedVia: payload.bookedVia,
         });
 
-        if (depositMinor > 0) {
+        if (holdMinor > 0) {
           await WalletService.holdDeposit(
             userId,
-            depositMinor,
+            holdMinor,
             createdAppointment.id,
             tx,
+            { depositMinor, prepaidMinor },
           );
         }
 
@@ -641,11 +676,13 @@ const bookAppointment = async (
         error.message.startsWith("Insufficient")
       ) {
         const wallet = await WalletService.getWalletSummary(userId);
-        const shortfall = Math.max(depositMinor - wallet.availableMinor, 0);
+        const shortfall = Math.max(holdMinor - wallet.availableMinor, 0);
 
         throw new ApiError(
           StatusCodes.PAYMENT_REQUIRED,
-          `Add ${formatBDT(shortfall)} to your wallet to confirm this booking. A ${formatBDT(depositMinor)} deposit is held and returned when you turn up.`,
+          prepaidMinor > 0
+            ? `Add ${formatBDT(shortfall)} to your wallet to pay ${formatBDT(holdMinor)} for this booking now.`
+            : `Add ${formatBDT(shortfall)} to your wallet to confirm this booking. A ${formatBDT(depositMinor)} deposit is held and returned when you turn up.`,
         );
       }
 
@@ -671,9 +708,11 @@ const bookAppointment = async (
       appointment.service.name,
       formattedDate,
       appointment.startTime,
-      depositMinor > 0
-        ? `${formatBDT(totalMinor)} (${formatBDT(depositMinor)} deposit held, ${formatBDT(totalMinor - depositMinor)} due at the salon)`
-        : formatBDT(totalMinor),
+      prepaidMinor > 0
+        ? `${formatBDT(totalMinor)} (paid in full in the app, nothing due at the salon)`
+        : depositMinor > 0
+          ? `${formatBDT(totalMinor)} (${formatBDT(depositMinor)} deposit held, ${formatBDT(totalMinor - depositMinor)} due at the salon)`
+          : formatBDT(totalMinor),
       {
         token: appointment.token,
         serialNumber: appointment.serialNumber,
@@ -714,7 +753,7 @@ const bookAppointment = async (
             token: appointment.token,
             date: formattedDate,
             time: bookingTime,
-            dueAtCounter: formatBDT(totalMinor - depositMinor),
+            dueAtCounter: formatBDT(totalMinor - depositMinor - prepaidMinor),
           }),
       },
     },
@@ -1569,13 +1608,15 @@ const cancelAppointment = async (
       ],
     });
     const depositMinor = Math.max(appointment.depositMinor, 0);
+    const refundMinor = AppointmentDeposit.heldMinor(appointment);
 
     return {
       ...result,
-      depositRefunded: depositMinor > 0,
+      depositRefunded: refundMinor > 0,
       fullRefund: true,
       depositMinor,
-      refundMinor: depositMinor,
+      prepaidMinor: appointment.prepaidMinor,
+      refundMinor,
       penaltyMinor: 0,
       penaltyPercent: 0,
       cancellationWindowMin: appointment.salon.cancellationWindowMin,
@@ -1607,6 +1648,7 @@ const cancelAppointment = async (
     depositRefunded: quote.refundMinor > 0,
     fullRefund: quote.freeCancellation,
     depositMinor: quote.depositMinor,
+    prepaidMinor: quote.prepaidMinor,
     refundMinor: quote.refundMinor,
     penaltyMinor: quote.penaltyMinor,
     penaltyPercent: quote.penaltyPercent,
@@ -1641,6 +1683,7 @@ const getCancellationPreview = async (
     startsAt: quote.startsAt,
     cancellationWindowMin: quote.cancellationWindowMin,
     depositMinor: quote.depositMinor,
+    prepaidMinor: quote.prepaidMinor,
     freeCancellation: quote.freeCancellation,
     refundMinor: quote.refundMinor,
     // Kept under the old name so existing clients still read the deduction.

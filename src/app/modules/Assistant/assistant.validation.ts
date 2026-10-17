@@ -150,6 +150,8 @@ const startTopup = z.object({
         `Maximum top-up is ${formatBDT(PaymentIntentService.MAX_TOPUP_MINOR)}`,
       ),
     autoConfirm: z.boolean().optional(),
+    /** "Top up & pay all": book with the whole bill paid (owner Phase 15). */
+    payInFull: z.boolean().optional(),
     label: z.string().max(80).optional(),
     /** The gateway picked on the card. Absent means SSLCommerz, which is what
      *  every card drawn before the choice existed sends. */

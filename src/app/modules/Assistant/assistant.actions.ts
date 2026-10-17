@@ -1495,6 +1495,11 @@ const handleChooseSlot = async (
   // market on behalf of a customer who may never sign in.
   let holdExpiresAt: string | null = null;
   let confirmToken: string | null = null;
+  let prepayToken: string | null = null;
+
+  // Pay the whole bill now (owner Phase 15), when the platform and the salon
+  // both allow it. The rest of the bill is held with the deposit in one hold.
+  const prepaidMinor = quote?.prepayAllowed ? priceMinor - depositMinor : 0;
 
   if (quote && ctx.userId && ctx.conversationId) {
     const held = await holdSlot(slot.id, ctx.userId, HOLD_MINUTES);
@@ -1522,6 +1527,21 @@ const handleChooseSlot = async (
       dm: depositMinor,
       exp: expiresAt,
     });
+    if (prepaidMinor > 0) {
+      prepayToken = signConfirm({
+        v: 1,
+        cid: ctx.conversationId,
+        uid: ctx.userId,
+        sid: slot.id,
+        svc: service.id,
+        cnt: counter.id,
+        ...(state.staffId ? { stf: state.staffId } : {}),
+        pm: priceMinor,
+        dm: depositMinor,
+        pp: prepaidMinor,
+        exp: expiresAt,
+      });
+    }
   }
 
   const blocks: Block[] = [
@@ -1567,6 +1587,16 @@ const handleChooseSlot = async (
       ...(confirmToken ? { confirmToken } : {}),
       ...(holdExpiresAt ? { holdExpiresAt } : {}),
       ...(move ? { reschedule: move } : {}),
+      ...(prepaidMinor > 0
+        ? {
+            prepay: {
+              prepaidMinor,
+              payNowMinor: priceMinor,
+              shortfallMinor: Math.max(priceMinor - wallet.availableMinor, 0),
+              ...(prepayToken ? { confirmToken: prepayToken } : {}),
+            },
+          }
+        : {}),
     }),
   ];
 

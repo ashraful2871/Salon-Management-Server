@@ -52,6 +52,7 @@ type CardAppointment = {
   serialNumber: number | null;
   totalMinor: number;
   depositMinor: number;
+  prepaidMinor: number;
   salon: { name: string; address: string; phone: string };
   service: { name: string };
   counter: { name: string } | null;
@@ -103,7 +104,7 @@ const confirmedBlock = async (
   });
 
   const dueAtSalonMinor = Math.max(
-    appointment.totalMinor - appointment.depositMinor,
+    appointment.totalMinor - appointment.depositMinor - appointment.prepaidMinor,
     0,
   );
 
@@ -138,6 +139,7 @@ const confirmedBlock = async (
     staffName: appointment.staff?.user?.name ?? null,
     totalMinor: appointment.totalMinor,
     depositMinor: appointment.depositMinor,
+    prepaidMinor: appointment.prepaidMinor,
     dueAtSalonMinor,
     freeCancellationUntil:
       stillFree && freeUntil ? freeUntil.toISOString() : null,
@@ -154,7 +156,7 @@ const confirmedTurn = async (
   state: AssistantState,
 ): Promise<TurnResult> => {
   const dueAtSalonMinor = Math.max(
-    appointment.totalMinor - appointment.depositMinor,
+    appointment.totalMinor - appointment.depositMinor - appointment.prepaidMinor,
     0,
   );
 
@@ -165,7 +167,9 @@ const confirmedTurn = async (
   const due =
     dueAtSalonMinor > 0
       ? ` Pay ${formatBDT(dueAtSalonMinor)} at the salon.`
-      : " Nothing more to pay at the salon.";
+      : appointment.prepaidMinor > 0
+        ? " Paid in full - nothing to pay at the salon."
+        : " Nothing more to pay at the salon.";
 
   return {
     text: `Booked. ${appointment.service.name} at ${appointment.salon.name}, ${appointment.startTime}.${serial}${due} The confirmation is on its way to your inbox.`,
@@ -308,6 +312,7 @@ const confirmBooking = async (input: ConfirmInput) => {
       counterId: payload.cnt,
       slotId: payload.sid,
       staffId: payload.stf ?? null,
+      payInFull: (payload.pp ?? 0) > 0,
     });
   } catch (error) {
     throw new AssistantConfirmError(
@@ -324,7 +329,11 @@ const confirmBooking = async (input: ConfirmInput) => {
 
   // The figures moved under them. Booking at the new number without saying so
   // is not acceptable, however small the difference.
-  if (quote.totalMinor !== payload.pm || quote.depositMinor !== payload.dm) {
+  if (
+    quote.totalMinor !== payload.pm ||
+    quote.depositMinor !== payload.dm ||
+    quote.prepaidMinor !== (payload.pp ?? 0)
+  ) {
     throw new AssistantConfirmError(
       StatusCodes.CONFLICT,
       await recover(state, input.userId, payload.cid, COPY.priceChanged),
@@ -341,6 +350,7 @@ const confirmBooking = async (input: ConfirmInput) => {
       ...(payload.stf ? { staffId: payload.stf } : {}),
       slotId: payload.sid,
       ...(input.notes ? { notes: input.notes } : {}),
+      ...((payload.pp ?? 0) > 0 ? { payInFull: true } : {}),
       bookedVia: "ASSISTANT",
     });
 

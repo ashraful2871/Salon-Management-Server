@@ -102,6 +102,7 @@ const holdForTopup = async (
   state: AssistantState,
   userId: string,
   conversationId: string,
+  payInFull = false,
 ): Promise<string | null> => {
   if (state.step !== "summary" || !state.slotId) return null;
 
@@ -125,7 +126,15 @@ const holdForTopup = async (
   const heldUntil = await heldUntilFor(state.slotId, userId);
   if (!heldUntil) return null;
 
-  return signConfirm({ ...quote, exp: heldUntil.getTime() });
+  // The stored quote is the deposit-only one; paying in full adds the rest.
+  // The confirm re-quotes, so a salon that stopped taking it answers 400.
+  const { pp: _pp, ...base } = quote;
+  const prepaidMinor = payInFull ? base.pm - base.dm : 0;
+  return signConfirm({
+    ...base,
+    ...(prepaidMinor > 0 ? { pp: prepaidMinor } : {}),
+    exp: heldUntil.getTime(),
+  });
 };
 
 /** A gateway page still worth sending the customer back to. */
@@ -155,6 +164,8 @@ type StartTopupInput = {
   autoConfirm: boolean;
   label?: string;
   provider?: ProviderName;
+  /** Book with the whole bill paid in the app (owner Phase 15). */
+  payInFull?: boolean;
 };
 
 const startTopup = (input: StartTopupInput) =>
@@ -191,7 +202,12 @@ const startTopup = (input: StartTopupInput) =>
     // Before any money moves: if the time they want to book is gone, say so
     // and show what is free instead of taking a payment for nothing.
     if (input.autoConfirm) {
-      const token = await holdForTopup(state, input.userId, conversation.id);
+      const token = await holdForTopup(
+        state,
+        input.userId,
+        conversation.id,
+        input.payInFull,
+      );
 
       if (!token) {
         const fresh = await runAction(

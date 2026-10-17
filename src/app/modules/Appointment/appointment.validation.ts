@@ -8,6 +8,8 @@ const bookAppointmentValidation = z.object({
     counterId: z.string().nonempty({ message: "Counter ID is required" }),
     slotId: z.string().nonempty({ message: "Slot ID is required" }),
     notes: z.string().optional(),
+    /** Pay the whole bill from the wallet now (owner Phase 15). */
+    payInFull: z.boolean().optional(),
   }),
 });
 
@@ -108,7 +110,16 @@ const rescheduleValidation = z.object({
   }),
 });
 
+/** A salon refund of a completed booking, to the customer's wallet (owner Phase 15). */
+const refundValidation = z.object({
+  body: z.object({
+    amountMinor: z.number().int().min(1, "Refund at least ৳0.01"),
+    reason: z.string().trim().min(3, "Give a reason for the refund").max(200),
+  }),
+});
+
 export const AppointmentValidation = {
+  refundValidation,
   bookAppointmentValidation,
   walkInValidation,
   updateAppointmentStatusValidation,

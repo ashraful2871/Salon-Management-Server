@@ -30,6 +30,8 @@ export type BillableAppointment = {
   /** Taken off at checkout; absent on rows selected without it (= 0). */
   discountMinor?: number;
   depositMinor: number;
+  /** Rest of the bill paid in the app (owner Phase 15); absent = 0. */
+  prepaidMinor?: number;
   depositStatus: DepositStatus;
   payment?: { amountMinor: number; status: PaymentStatus } | null;
 };
@@ -47,6 +49,13 @@ export const paymentSummary = (a: BillableAppointment) => {
     a.depositStatus === DepositStatus.APPLIED
       ? a.depositMinor
       : 0;
+  // Held and applied with the deposit, so it counts the same way.
+  const prepaidPaidMinor =
+    a.depositStatus === DepositStatus.HELD ||
+    a.depositStatus === DepositStatus.APPLIED
+      ? Math.max(a.prepaidMinor ?? 0, 0)
+      : 0;
+  const paidInApp = prepaidPaidMinor > 0;
 
   const paidAtCounterMinor =
     a.payment?.status === PaymentStatus.COMPLETED ? a.payment.amountMinor : 0;
@@ -60,6 +69,8 @@ export const paymentSummary = (a: BillableAppointment) => {
     return {
       billableMinor: billableMinor(a),
       depositPaidMinor,
+      prepaidPaidMinor,
+      paidInApp,
       paidAtCounterMinor,
       amountDueMinor: 0,
       paymentState: (refunded ? "REFUNDED" : "NOT_APPLICABLE") as PaymentState,
@@ -67,7 +78,7 @@ export const paymentSummary = (a: BillableAppointment) => {
   }
 
   const amountDueMinor = Math.max(
-    billableMinor(a) - depositPaidMinor - paidAtCounterMinor,
+    billableMinor(a) - depositPaidMinor - prepaidPaidMinor - paidAtCounterMinor,
     0,
   );
 
@@ -82,6 +93,8 @@ export const paymentSummary = (a: BillableAppointment) => {
   return {
     billableMinor: billableMinor(a),
     depositPaidMinor,
+    prepaidPaidMinor,
+    paidInApp,
     paidAtCounterMinor,
     amountDueMinor,
     paymentState,
