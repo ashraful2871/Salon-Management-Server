@@ -34,6 +34,7 @@ const OWNER_EDITABLE_FIELDS = [
   "email",
   "images",
   "operatingHours",
+  "audience",
   "depositMinor",
   "depositPercent",
   "cancellationWindowMin",
@@ -69,6 +70,7 @@ const createSalon = async (user: AccessUser, payload: any) => {
       email: payload.email,
       images: payload.images ?? [],
       operatingHours: payload.operatingHours,
+      audience: payload.audience,
       ownerId,
       ...(payload.latitude !== undefined && {
         latitude: payload.latitude,
@@ -113,6 +115,7 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
     radiusKm,
     sort,
     category,
+    audience,
   } = query;
 
   // Only ADMIN/AGENT may pick a status (or see every status by omitting it).
@@ -195,6 +198,7 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
       district,
       area,
       category,
+      audience,
     };
     const rows = await findNearbySalonIds(args);
 
@@ -240,6 +244,9 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
     areaConditions.push({
       services: { some: { isDeleted: false, isActive: true, category } },
     });
+  }
+  if (audience) {
+    areaConditions.push({ audience: { in: [audience, "UNISEX"] } });
   }
   if (areaConditions.length) {
     whereConditions.AND = areaConditions;

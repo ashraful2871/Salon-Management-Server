@@ -90,6 +90,14 @@ enum SalonStatus {
   SUSPENDED
 }
 
+/// Who a salon serves: a ladies parlour, a gents parlour, or both.
+/// The public LADIES / GENTS filters include UNISEX salons.
+enum SalonAudience {
+  UNISEX
+  LADIES
+  GENTS
+}
+
 enum LocationAccuracy {
   EXACT
   APPROXIMATE
