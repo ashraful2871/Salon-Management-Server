@@ -31,6 +31,8 @@ const longitude = z
 const coordsPair = (b: { latitude?: number; longitude?: number }) =>
   (b.latitude === undefined) === (b.longitude === undefined);
 
+const audience = z.enum(["UNISEX", "LADIES", "GENTS"]);
+
 const coordsPairError = {
   message: "Send latitude and longitude together",
   path: ["latitude"],
@@ -52,6 +54,7 @@ const createSalonValidation = z.object({
     email: z.string().email().optional(),
     images: z.array(z.string()).optional(),
     operatingHours: z.any().optional(),
+    audience: audience.optional(),
     latitude: latitude.optional(),
     longitude: longitude.optional(),
   }).refine(coordsPair, coordsPairError),
@@ -73,6 +76,7 @@ const updateSalonValidation = z.object({
     email: z.string().email().optional(),
     images: z.array(z.string()).optional(),
     operatingHours: z.any().optional(),
+    audience: audience.optional(),
     managerCanEditServices: z.boolean().optional(),
     /** Customers may pay the whole bill in the app (owner Phase 15). */
     acceptsPrepay: z.boolean().optional(),
@@ -116,6 +120,8 @@ const salonListQuery = z
       .optional(),
     radiusKm: z.coerce.number().min(0.5).max(50).default(NEARBY_MAX_RADIUS_KM),
     sort: z.enum(["distance", "rating", "newest"]).optional(),
+    // LADIES / GENTS also return UNISEX salons, which serve both.
+    audience: z.enum(["LADIES", "GENTS"]).optional(),
     category: z
       .enum([
         "HAIRCUT",

@@ -104,11 +104,12 @@ router.post(
 /**
  * The only endpoint here that writes a booking, so it is the only one behind
  * `auth` rather than `optionalAuth`: a guest has no wallet to take a deposit
- * from. The role set matches the one `bookAppointment` itself accepts.
+ * from. Any signed-in account gets through; `quoteBooking` refuses every role
+ * but CUSTOMER with the same `CUSTOMER_ONLY` message as the booking page.
  */
 router.post(
   "/bookings/confirm",
-  auth(UserRole.CUSTOMER, UserRole.SALON_OWNER, UserRole.ADMIN),
+  auth(),
   assistantLimiter,
   validated(AssistantValidation.confirmBooking),
   AssistantController.confirm,

@@ -5,6 +5,8 @@ dotenv.config({ path: path.join(process.cwd(), ".env") });
 // Define the shape of the configuration object
 interface Config {
   env: string | undefined;
+  /** The product name (`SITE_NAME`, default "Stylio"). */
+  siteName: string;
   port: string | undefined;
   database_url: string | undefined;
   jwt: {
@@ -127,19 +129,30 @@ const frontendUrl = env("FRONTEND_URL") || "http://localhost:3000";
 const apiUrl = env("API_URL") || "http://localhost:5000";
 
 /**
+ * The product name in every email, subject, message and label the API writes.
+ * Change it here (`SITE_NAME`) and on the frontend (`NEXT_PUBLIC_SITE_NAME`).
+ */
+const siteName = env("SITE_NAME") || "Stylio";
+
+/**
  * Production always sets EMAIL_FROM. The fallbacks only keep a developer who
  * has not set it from sending as a stranger: with SMTP the authenticated
  * mailbox is the only address the server is entitled to use anyway, and
- * Resend's shared test sender is the equivalent for the API.
+ * Resend's shared test sender is the equivalent for the API. Whatever name
+ * EMAIL_FROM carries, mail goes out under `siteName`.
  */
-const emailFrom =
-  env("EMAIL_FROM") ||
-  (env("SMTP_USER") && !env("RESEND_API_KEY")
-    ? `Salon Management <${env("SMTP_USER")}>`
-    : "Salon Management <onboarding@resend.dev>");
+const emailFromAddress = (() => {
+  const from = env("EMAIL_FROM");
+  if (from) return from.match(/<([^>]+)>/)?.[1]?.trim() || from.trim();
+  return env("SMTP_USER") && !env("RESEND_API_KEY")
+    ? env("SMTP_USER")
+    : "onboarding@resend.dev";
+})();
+const emailFrom = `${siteName} <${emailFromAddress}>`;
 
 const config = {
   env: process.env.NODE_ENV,
+  siteName,
   port: process.env.PORT,
   database_url: process.env.DATABASE_URL,
   frontend_url: frontendUrl,

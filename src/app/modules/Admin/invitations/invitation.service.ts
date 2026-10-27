@@ -10,6 +10,7 @@ import { getAdminInvitationTemplate } from "../../../utils/emailTemplates";
 import { normalizeEmail } from "../../../utils/normalizeEmail";
 import { maskEmail } from "../admin.service";
 
+import { SITE_NAME } from "../../../utils/brand";
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -83,10 +84,10 @@ const createInvitation = async (
   const link = `${config.frontend_url}/invite/admin?token=${encodeURIComponent(token)}`;
   const sent = await sendEmail(
     email,
-    "You are invited to the SalonKhuji team",
+    `You are invited to the ${SITE_NAME} team`,
     getAdminInvitationTemplate({
       name: invitation.name,
-      inviterName: inviter?.name ?? "A SalonKhuji admin",
+      inviterName: inviter?.name ?? `A ${SITE_NAME} admin`,
       roleLabel: roleLabel(kind, invitation.adminRole, invitation.area),
       link,
       expiresAt,

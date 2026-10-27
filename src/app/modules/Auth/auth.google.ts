@@ -12,6 +12,7 @@ import { sendEmail } from '../../utils/emailSender';
 import { getGoogleLinkedNoticeTemplate } from '../../utils/emailTemplates';
 import { AuthResult, issueSession, startEmailVerification, twoFactorGate } from './auth.session';
 
+import { SITE_NAME } from "../../utils/brand";
 /**
  * Google sign-in, Authorization Code + PKCE, run entirely on this server. The
  * browser only ever carries the flow token (in an httpOnly cookie Next.js sets)
@@ -230,7 +231,7 @@ const resolveGoogleAccount = async (
           await prisma.authIdentity.create({ data: identityData(existing.id) });
           await sendEmail(
             existing.email,
-            'Google sign-in was added to your account - SalonKhuji',
+            `Google sign-in was added to your account - ${SITE_NAME}`,
             getGoogleLinkedNoticeTemplate(existing.name)
           );
         } else {

@@ -562,17 +562,27 @@ export const rankSalons = async ({
   });
 
   const byScore = (a: { score: number }, b: { score: number }) => b.score - a.score;
-  const best = scored.filter((s) => s.matchType === "best").sort(byScore);
+  // "Top rated" is a sort order, not a nudge: within a tier the stars the
+  // card shows go highest first (salons with no reviews last), then more
+  // reviews, then the blended score.
+  type Ranked = (typeof scored)[number];
+  const byRating = (a: Ranked, b: Ranked) =>
+    Number(b.reviews > 0) - Number(a.reviews > 0) ||
+    Math.round(b.rating * 10) - Math.round(a.rating * 10) ||
+    b.reviews - a.reviews ||
+    byScore(a, b);
+  const rank = intent.sortBy === "rating" ? byRating : byScore;
+  const best = scored.filter((s) => s.matchType === "best").sort(rank);
   const partial = scored
     .filter((s) => s.matchType === "partial")
-    .sort((a, b) => b.met.size - a.met.size || byScore(a, b));
+    .sort((a, b) => b.met.size - a.met.size || rank(a, b));
 
   let shown = [...best, ...partial].slice(0, limit);
   let usedAlternatives = false;
   if (shown.length === 0) {
     usedAlternatives = true;
     shown = [...scored]
-      .sort(byScore)
+      .sort(rank)
       .slice(0, Math.min(ALTERNATIVES, limit))
       .map((s) => ({ ...s, matchType: "alternative" as const }));
   }

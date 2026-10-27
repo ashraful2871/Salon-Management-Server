@@ -13,6 +13,7 @@
 import { sendEmail, getEmailProviderName } from "../app/utils/emailSender";
 import config from "../config";
 
+import { SITE_NAME } from "../app/utils/brand";
 const main = async () => {
   const to = process.argv[2];
 
@@ -29,7 +30,7 @@ const main = async () => {
   const started = Date.now();
   const result = await sendEmail(
     to,
-    "Salon Management - email delivery test",
+    `${SITE_NAME} - email delivery test`,
     `<div style="font-family:sans-serif;line-height:1.6">
        <h2 style="margin:0 0 12px">Email delivery is working</h2>
        <p>This was sent by <code>npm run test:email</code>.</p>

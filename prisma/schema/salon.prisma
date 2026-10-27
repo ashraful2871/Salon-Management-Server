@@ -18,6 +18,7 @@ model Salon {
   email             String?
   images            String[]
   operatingHours    Json?
+  audience          SalonAudience               @default(UNISEX)
   status            SalonStatus                 @default(PENDING_APPROVAL)
   rating            Float                       @default(0)
   totalReviews      Int                         @default(0)

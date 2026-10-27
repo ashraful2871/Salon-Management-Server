@@ -716,6 +716,7 @@ const buildPlan = (locations: Location[], probes: [number, number][], owner: Pla
       email: chance(r, 0.6) ? `${slug(name).slice(0, 40)}@example.com` : null,
       images,
       operatingHours: hours,
+      audience: type === "GENTS" || type === "LADIES" ? type : "UNISEX",
       status: "ACTIVE",
       ownerId: owner.salonOwnerId,
       depositMinor: DEPOSIT_MINOR[tier],

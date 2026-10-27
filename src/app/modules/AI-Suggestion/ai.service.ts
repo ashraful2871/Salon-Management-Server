@@ -29,6 +29,7 @@ import {
   rankSalons,
 } from "./ai.search";
 
+import { SITE_NAME } from "../../utils/brand";
 /**
  * AI salon search, end to end:
  *
@@ -132,7 +133,7 @@ const describeIntent = (intent: SearchIntent) => ({
  * The reply language is decided here, not left to the model: asked to answer
  * "in the customer's language", it answered Banglish in Bangla script.
  */
-const summarySystem = (language: string) => `You are the booking assistant on SalonKhuji, a salon booking website in Bangladesh.
+const summarySystem = (language: string) => `You are the booking assistant on ${SITE_NAME}, a salon booking website in Bangladesh.
 Write a short, friendly reply of 2 or 3 sentences to the customer's search, recommending the salons in the data, best match first.
 - Use only facts in the data. Never invent salons, services, prices, ratings, distances or opening hours.
 - Say what matched (service and price, area or distance, rating) in plain words.

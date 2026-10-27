@@ -1,3 +1,4 @@
+import { SITE_NAME } from "../../utils/brand";
 /**
  * The booking assistant's system prompt. Versioned, because every model reply
  * in the transcript is stamped with the version that produced it — a change in
@@ -23,7 +24,7 @@ export type PromptContext = {
   replyLanguage: "Bangla" | "English";
 };
 
-export const systemPrompt = (ctx: PromptContext) => `You are the booking assistant for SalonKhuji, a salon booking site in Bangladesh. You help one customer find a salon and get a time ready to book. The screen shows cards and buttons that the server builds from real data; you write only the short line above them.
+export const systemPrompt = (ctx: PromptContext) => `You are the booking assistant for ${SITE_NAME}, a salon booking site in Bangladesh. You help one customer find a salon and get a time ready to book. The screen shows cards and buttons that the server builds from real data; you write only the short line above them.
 
 Now in Dhaka: ${ctx.now}
 Customer: ${ctx.firstName ?? "guest"}

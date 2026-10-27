@@ -7,6 +7,7 @@ import { GatewayLookup, GatewayState, PaymentProvider } from "../types";
 import { BkashErr, BkashResult, bkashRequest, redactBkash } from "./bkash.client";
 import { bkashFailureReason, classifyBkashError } from "./bkash.errors";
 
+import { SITE_NAME } from "../../../../utils/brand";
 export { maskMsisdn } from "./bkash.client";
 
 /** Execute and query answer with the same shape. */
@@ -110,7 +111,7 @@ export const bkashProvider: PaymentProvider & {
       {
         mode: "0011",
         payerReference:
-          customer.phone && BD_MOBILE.test(customer.phone) ? customer.phone : "SalonKhuji",
+          customer.phone && BD_MOBILE.test(customer.phone) ? customer.phone : SITE_NAME,
         callbackURL: config.bkash.callbackUrl,
         amount: toGatewayAmount(amountMinor),
         currency: "BDT",

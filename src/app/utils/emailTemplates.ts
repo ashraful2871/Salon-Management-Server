@@ -1,3 +1,5 @@
+import config from "../../config";
+import { SITE_NAME } from "./brand";
 export const getBookingConfirmationTemplate = (
   customerName: string,
   salonName: string,
@@ -250,7 +252,7 @@ export const getBookingConfirmationTemplate = (
         <p>If you need to reschedule or cancel your appointment, please contact the salon or use our platform.</p>
       </div>
       <div class="footer">
-        <p>&copy; ${new Date().getFullYear()} Salon Management. All rights reserved.</p>
+        <p>&copy; ${new Date().getFullYear()} ${SITE_NAME}. All rights reserved.</p>
       </div>
     </div>
   </body>
@@ -364,7 +366,7 @@ export const getPasswordResetTemplate = (
     "Reset Your Password",
     `
       <p style="font-size:18px;">Hi ${userName},</p>
-      <p>We received a request to reset the password for your Salon Management account.
+      <p>We received a request to reset the password for your ${SITE_NAME} account.
       Click the button below to choose a new one.</p>
       <p><strong>This link expires in ${expiresInMinutes} minutes and can only be used once.</strong></p>
     `,
@@ -404,14 +406,14 @@ export const getOtpEmailTemplate = (
             <tr>
               <td style="padding:40px 30px;">
                 <p style="margin:0 0 16px;font-size:18px;">Hi ${escapeHtml(userName)},</p>
-                <p style="margin:0 0 24px;">Enter this code on SalonKhuji to confirm your email address:</p>
+                <p style="margin:0 0 24px;">Enter this code on ${SITE_NAME} to confirm your email address:</p>
                 <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 24px;">
                   <tr>
                     <td align="center" style="background-color:#f8f9fa;border:1px solid #e1e5e8;border-radius:6px;padding:16px 28px;font-family:'Courier New',Courier,monospace;font-size:34px;font-weight:700;letter-spacing:10px;color:#2c3e50;">${code}</td>
                   </tr>
                 </table>
                 <p style="margin:0 0 12px;"><strong>It expires in ${expiresInMinutes} minutes.</strong></p>
-                <p style="margin:0;">Never share this code. SalonKhuji will never ask you for it.</p>
+                <p style="margin:0;">Never share this code. ${SITE_NAME} will never ask you for it.</p>
               </td>
             </tr>
             <tr>
@@ -438,7 +440,7 @@ const moneyLayout = (heading: string, body: string) => `
       </div>
       <div style="padding: 30px 25px;">${body}</div>
       <div style="background-color: #f4f7f6; padding: 18px; text-align: center; font-size: 12px; color: #7f8c8d;">
-        Salon Management
+        ${SITE_NAME}
       </div>
     </div>
   </body>
@@ -631,7 +633,7 @@ export const getPayoutAccountAddedTemplate = (notice: {
   moneyLayout(
     "A payout account was added",
     `<p>Hi ${escapeHtml(notice.ownerName)},</p>
-     <p>A new payout account was added to your SalonKhuji business: <strong>${escapeHtml(notice.account)}</strong>.</p>
+     <p>A new payout account was added to your ${SITE_NAME} business: <strong>${escapeHtml(notice.account)}</strong>.</p>
      <p>Our finance team checks every new account before money is sent to it.${
        notice.cooldownHours
          ? ` Payouts keep going to your current account for at least ${notice.cooldownHours} hours.`
@@ -763,7 +765,7 @@ export const getEmailChangedNoticeTemplate = (
   moneyLayout(
     "Your email was changed",
     `<p>Hi ${escapeHtml(userName)},</p>
-     <p>The email address on your Salon Management account was just changed to <strong>${escapeHtml(newEmail)}</strong>.</p>
+     <p>The email address on your ${SITE_NAME} account was just changed to <strong>${escapeHtml(newEmail)}</strong>.</p>
      <p>From now on, sign in with the new address. Booking confirmations, receipts and password reset links will be sent there instead of here.</p>
      <p style="color:#c0392b;font-size:13px;">If you did not make this change, please contact support straight away - someone may have access to your account.</p>`
   );
@@ -776,9 +778,9 @@ export const getGoogleLinkedNoticeTemplate = (userName: string) =>
   moneyLayout(
     "Google sign-in was added",
     `<p>Hi ${escapeHtml(userName)},</p>
-     <p>Google sign-in was added to your SalonKhuji account. You can now sign in with Google as well as with your password.</p>
+     <p>Google sign-in was added to your ${SITE_NAME} account. You can now sign in with Google as well as with your password.</p>
      <p style="color:#c0392b;font-size:13px;">If this wasn't you, reset your password and contact support.</p>
-     <p style="color:#7f8c8d;font-size:12px;">SalonKhuji - salon.ashrafulash.com</p>`
+     <p style="color:#7f8c8d;font-size:12px;">${SITE_NAME} - ${new URL(config.frontend_url).host}</p>`
   );
 
 /**
@@ -848,9 +850,9 @@ export const getAdminInvitationTemplate = (invite: {
   expiresAt: Date;
 }) =>
   moneyLayout(
-    "You are invited to the SalonKhuji team",
+    `You are invited to the ${SITE_NAME} team`,
     `<p>Hi ${escapeHtml(invite.name || "there")},</p>
-     <p>${escapeHtml(invite.inviterName)} invited you to join SalonKhuji as <strong>${escapeHtml(invite.roleLabel)}</strong>.</p>
+     <p>${escapeHtml(invite.inviterName)} invited you to join ${SITE_NAME} as <strong>${escapeHtml(invite.roleLabel)}</strong>.</p>
      <p><a href="${escapeHtml(invite.link)}" style="display:inline-block;padding:10px 20px;background:#1f2937;color:#fff;border-radius:999px;text-decoration:none;">Accept the invitation</a></p>
      <p>Sign in (or create an account) with this email address, then accept. You will set up an authenticator app before you can use the console.</p>
      <p style="color:#7f8c8d;font-size:12px;">This link expires on ${invite.expiresAt.toUTCString()}. If you did not expect it, ignore this email.</p>`
@@ -866,9 +868,9 @@ export const getAccountSuspendedTemplate = (notice: {
   contactUrl: string;
 }) =>
   moneyLayout(
-    "Your SalonKhuji account is suspended",
+    `Your ${SITE_NAME} account is suspended`,
     `<p>Hi ${escapeHtml(notice.name)},</p>
-     <p>We have suspended your SalonKhuji account${notice.until ? ` until <strong>${notice.until.toUTCString()}</strong>` : ""}. While it is suspended you cannot sign in or book.</p>
+     <p>We have suspended your ${SITE_NAME} account${notice.until ? ` until <strong>${notice.until.toUTCString()}</strong>` : ""}. While it is suspended you cannot sign in or book.</p>
      <p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>
      ${notice.until ? "<p>Your account reactivates on its own when the suspension ends.</p>" : ""}
      ${contactLine(notice.contactUrl)}`
@@ -880,26 +882,26 @@ export const getAccountBlockedTemplate = (notice: {
   contactUrl: string;
 }) =>
   moneyLayout(
-    "Your SalonKhuji account is blocked",
+    `Your ${SITE_NAME} account is blocked`,
     `<p>Hi ${escapeHtml(notice.name)},</p>
-     <p>We have blocked your SalonKhuji account. You can no longer sign in or book.</p>
+     <p>We have blocked your ${SITE_NAME} account. You can no longer sign in or book.</p>
      <p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>
      ${contactLine(notice.contactUrl)}`
   );
 
 export const getAccountReactivatedTemplate = (notice: { name: string; signInUrl: string }) =>
   moneyLayout(
-    "Your SalonKhuji account is active again",
+    `Your ${SITE_NAME} account is active again`,
     `<p>Hi ${escapeHtml(notice.name)},</p>
-     <p>Your SalonKhuji account is active again. You can <a href="${escapeHtml(notice.signInUrl)}">sign in</a> and book as usual.</p>`
+     <p>Your ${SITE_NAME} account is active again. You can <a href="${escapeHtml(notice.signInUrl)}">sign in</a> and book as usual.</p>`
   );
 
 /** To a customer or owner when support starts a read-only "View as" of their account. */
 export const getImpersonationNoticeTemplate = (notice: { name: string; minutes: number; contactUrl: string }) =>
   moneyLayout(
-    "SalonKhuji support viewed your account",
+    `${SITE_NAME} support viewed your account`,
     `<p>Hi ${escapeHtml(notice.name)},</p>
-     <p>A member of the SalonKhuji support team opened a read-only view of your account to help with a request. The view lasts at most ${notice.minutes} minutes and cannot change, book, cancel or pay for anything.</p>
+     <p>A member of the ${SITE_NAME} support team opened a read-only view of your account to help with a request. The view lasts at most ${notice.minutes} minutes and cannot change, book, cancel or pay for anything.</p>
      <p>If you did not ask us for help, <a href="${escapeHtml(notice.contactUrl)}">contact us</a>.</p>`
   );
 
@@ -937,7 +939,7 @@ export const getSalonStatusTemplate = (notice: {
   switch (notice.kind) {
     case "approved":
       return moneyLayout(
-        "Your salon is live on SalonKhuji",
+        `Your salon is live on ${SITE_NAME}`,
         `<p>Hi ${name},</p>
          <p>Good news: ${salon} is approved and customers can now find and book it.</p>
          ${buttonLink(notice.link, "See your salon")}`
@@ -982,7 +984,7 @@ export const getOwnerApplicationDecisionTemplate = (notice: {
 }) =>
   notice.approved
     ? moneyLayout(
-        "You are now a salon owner on SalonKhuji",
+        `You are now a salon owner on ${SITE_NAME}`,
         `<p>Hi ${escapeHtml(notice.name)},</p>
          <p>Your application for <strong>${escapeHtml(notice.businessName)}</strong> is approved. Sign out and back in, then add your salon from the dashboard; we review each salon before it goes live.</p>
          ${buttonLink(notice.link, "Add your salon")}`
@@ -1012,7 +1014,7 @@ export const getBookingCancelledByAdminTemplate = (notice: {
   moneyLayout(
     "Booking cancelled",
     `<p>Hi ${escapeHtml(notice.name)},</p>
-     <p>SalonKhuji cancelled ${notice.audience === "customer" ? "your" : "a"} booking${
+     <p>${SITE_NAME} cancelled ${notice.audience === "customer" ? "your" : "a"} booking${
        notice.token ? ` <strong>${escapeHtml(notice.token)}</strong>` : ""
      } for ${escapeHtml(notice.serviceName)} at ${escapeHtml(notice.salonName)} on ${escapeHtml(notice.when)}${
        notice.audience === "customer" ? "" : " on the customer's behalf"
@@ -1191,7 +1193,7 @@ export const getTeamInvitationTemplate = (invite: {
   expiresAt: Date;
 }) =>
   moneyLayout(
-    `Join ${escapeHtml(invite.salonName)} on SalonKhuji`,
+    `Join ${escapeHtml(invite.salonName)} on ${SITE_NAME}`,
     `<p>Hi ${escapeHtml(invite.name || "there")},</p>
      <p>${escapeHtml(invite.inviterName)} invited you to work at <strong>${escapeHtml(invite.salonName)}</strong> as <strong>${escapeHtml(branchRoleLabel(invite.role))}</strong>.</p>
      <p><a href="${escapeHtml(invite.link)}" style="display:inline-block;padding:10px 20px;background:#1f2937;color:#fff;border-radius:999px;text-decoration:none;">Accept the invitation</a></p>

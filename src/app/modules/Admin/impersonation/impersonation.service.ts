@@ -11,6 +11,7 @@ import { IMPERSONATION_MINUTES, impersonationOf } from "../../../utils/impersona
 import { getSetting } from "../../../utils/settings";
 import type { AdminContext } from "../admin.middleware";
 
+import { SITE_NAME } from "../../../utils/brand";
 const VIEWABLE_ROLES = new Set(["CUSTOMER", "STAFF", "BRANCH_MANAGER", "SALON_OWNER"]);
 
 /**
@@ -62,7 +63,7 @@ const start = async (admin: AdminContext, ctx: AuditCtx | undefined, userId: str
       minutes: IMPERSONATION_MINUTES,
       contactUrl: `${config.frontend_url}/contact`,
     });
-    void sendEmail(target.email, "SalonKhuji support viewed your account", html).catch(() => undefined);
+    void sendEmail(target.email, `${SITE_NAME} support viewed your account`, html).catch(() => undefined);
   }
 
   return { accessToken, until, user: { id: target.id, name: target.name, role: target.role } };

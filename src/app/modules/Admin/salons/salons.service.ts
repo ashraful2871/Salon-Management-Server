@@ -22,6 +22,7 @@ import {
   SalonReasonCode,
 } from "./salons.validation";
 
+import { SITE_NAME } from "../../../utils/brand";
 const DAY = 24 * 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -492,7 +493,7 @@ const notifyOwner = (
       ? `${config.frontend_url}/dashboard/store/${salon.id}`
       : `${config.frontend_url}/salons/${salon.id}`;
   const subject = {
-    approved: `${salon.name} is live on SalonKhuji`,
+    approved: `${salon.name} is live on ${SITE_NAME}`,
     rejected: `${salon.name} was not approved`,
     suspended: `${salon.name} is suspended`,
     reactivated: `${salon.name} is live again`,
@@ -613,7 +614,7 @@ const cancelUpcoming = async (admin: AdminContext, ctx: AuditCtx | undefined, id
   let failed = 0;
   for (const booking of upcoming) {
     try {
-      await AppointmentService.cancelForSalonByAdmin(booking.id, `Cancelled by SalonKhuji: ${reason}`);
+      await AppointmentService.cancelForSalonByAdmin(booking.id, `Cancelled by ${SITE_NAME}: ${reason}`);
       cancelled++;
     } catch (error) {
       failed++;

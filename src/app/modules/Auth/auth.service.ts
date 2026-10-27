@@ -38,6 +38,7 @@ import {
   ADMIN_SESSION_MAX_SECONDS,
 } from "./auth.session";
 
+import { SITE_NAME } from "../../utils/brand";
 /**
  * A cost-12 hash of random bytes nobody kept. Login compares against it when
  * the email is unknown or has no password, so a miss takes as long as a wrong
@@ -484,7 +485,7 @@ const changeEmail = async (
 
   await sendEmail(
     newEmail,
-    `${issued.code} is your SalonKhuji code to confirm your new email`,
+    `${issued.code} is your ${SITE_NAME} code to confirm your new email`,
     getOtpEmailTemplate(user.name, issued.code, OTP_TTL_SECONDS / 60),
   );
 
@@ -580,7 +581,7 @@ const confirmEmailChange = async (
   // Cannot throw, so a mail outage never undoes the change.
   await sendEmail(
     old.email,
-    "Your email was changed - Salon Management",
+    `Your email was changed - ${SITE_NAME}`,
     getEmailChangedNoticeTemplate(updatedUser.name, updatedUser.email),
   );
 
@@ -672,7 +673,7 @@ const forgotPassword = async (payload: { email: string }) => {
 
   await sendEmail(
     user.email,
-    "Reset your password - Salon Management",
+    `Reset your password - ${SITE_NAME}`,
     getPasswordResetTemplate(user.name, resetUrl, PASSWORD_RESET_TTL_MINUTES),
   );
 

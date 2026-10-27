@@ -491,7 +491,8 @@ const parseRules = (query: string, places: KnownPlace[]): RulesResult => {
     rest = rest.replace(ratedAbove[0], " ".repeat(ratedAbove[0].length));
   }
 
-  let sortBy: SortPreference = "relevance";
+  // Naming a star rating ("5 star salon") is asking for the best rated first.
+  let sortBy: SortPreference = minRating !== null ? "rating" : "relevance";
   for (const phrase of TOP_RATED) {
     const result = consume(rest, phrasePattern(phrase));
     if (result.matched) {

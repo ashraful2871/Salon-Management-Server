@@ -5,6 +5,7 @@ import router from "./app/routes";
 import globalErrorHandler from "./app/middlewares/globalErrorHandler";
 import notFound from "./app/middlewares/notFound";
 
+import { SITE_NAME } from "./app/utils/brand";
 const app: Application = express();
 
 /**
@@ -44,7 +45,7 @@ app.use(cookieParser());
 app.get("/", (_req: Request, res: Response) => {
   res.json({
     success: true,
-    message: "Salon Management Server is running!",
+    message: `${SITE_NAME} Server is running!`,
   });
 });
 

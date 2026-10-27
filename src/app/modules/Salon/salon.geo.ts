@@ -20,6 +20,7 @@ type NearbyArgs = {
   district?: string;
   area?: string;
   category?: string;
+  audience?: "LADIES" | "GENTS";
 };
 
 const originOf = (a: NearbyArgs) =>
@@ -43,6 +44,10 @@ const nearbyWhere = (a: NearbyArgs) => {
   if (a.category)
     conds.push(
       Prisma.sql`EXISTS (SELECT 1 FROM services sv WHERE sv."salonId" = s.id AND sv."isActive" AND NOT sv."isDeleted" AND sv.category = ${a.category}::"ServiceCategory")`,
+    );
+  if (a.audience)
+    conds.push(
+      Prisma.sql`s.audience IN (${a.audience}::"SalonAudience", 'UNISEX'::"SalonAudience")`,
     );
   if (a.city) conds.push(Prisma.sql`s.city ILIKE ${escapeLike(a.city)}`);
   if (a.division)

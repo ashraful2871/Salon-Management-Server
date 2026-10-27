@@ -9,6 +9,7 @@ import sendResponse from "../../shared/sendResponse";
 import { scopeSalonIds, withAccessCache } from "../../utils/salonAccess";
 import { addDays, dayStart, isDay } from "../Analytics/analytics.days";
 
+import { SITE_NAME } from "../../utils/brand";
 /**
  * GET /owner/activity - who did what at the caller's branches, from the audit
  * log (owner Phase 13). Scope is `activity.view`: an owner sees every branch,
@@ -178,7 +179,7 @@ const list = catchAsync(async (req: Request, res: Response) => {
     at: r.createdAt,
     actor: r.actorUserId
       ? { id: r.actorUserId, name: nameOf.get(r.actorUserId) ?? "Former team member", role: r.actorRole }
-      : { id: null, name: "SalonKhuji (automatic)", role: r.actorRole },
+      : { id: null, name: `${SITE_NAME} (automatic)`, role: r.actorRole },
     salon: r.salonId ? { id: r.salonId, name: salonOf.get(r.salonId) ?? "Deleted branch" } : null,
     action: r.action,
     text: ACTIONS[r.action] ?? r.action,

@@ -11,6 +11,7 @@ import { payoutNeedsApproval, SettlementService } from "../../Settlement/settlem
 import { realPayoutWhere } from "../../Settlement/settlement.buckets";
 import { requestApproval } from "../approvals/approvals.service";
 
+import { SITE_NAME } from "../../../utils/brand";
 /**
  * The weekly payout desk: approve (four-eyes over approvals.payoutOverMinor),
  * processing, cancel, fail, bulk mark-paid with references, and the bKash /
@@ -139,7 +140,7 @@ const BEFTN_COLUMNS: CsvColumn<FileRow>[] = [
   { header: "routing_number", value: (r) => r.account?.routingNumber },
   { header: "account_number", value: (r) => (r.account ? revealNumber(r.account) : null) },
   { header: "amount_taka", value: (r) => r.netMinor, money: true },
-  { header: "narration", value: (r) => `SalonKhuji payout ${payoutNote(r.id)}` },
+  { header: "narration", value: (r) => `${SITE_NAME} payout ${payoutNote(r.id)}` },
 ];
 
 const EXPORTABLE: PayoutStatus[] = [PayoutStatus.APPROVED, PayoutStatus.PROCESSING];
