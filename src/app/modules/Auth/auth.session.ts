@@ -13,6 +13,7 @@ import {
 } from '../../utils/verificationTicket';
 import { enabledMfaStep } from '../../utils/mfa';
 
+import { SITE_NAME } from "../../utils/brand";
 export type SignedIn = {
   status: 'SIGNED_IN';
   accessToken: string;
@@ -119,7 +120,7 @@ export const assertCanSignIn = (user: {
 export const sendVerificationCode = (user: { email: string; name: string }, code: string) =>
   sendEmail(
     user.email,
-    `${code} is your SalonKhuji verification code`,
+    `${code} is your ${SITE_NAME} verification code`,
     getOtpEmailTemplate(user.name, code, OTP_TTL_SECONDS / 60)
   );
 

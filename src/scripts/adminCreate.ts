@@ -17,6 +17,7 @@ import { getPasswordResetTemplate } from "../app/utils/emailTemplates";
 import { issueToken } from "../app/utils/verificationToken";
 import { normalizeEmail } from "../app/utils/normalizeEmail";
 
+import { SITE_NAME } from "../app/utils/brand";
 // Longer than the 15-minute forgot-password link: the new admin may not be
 // at their inbox. After it lapses, "forgot password" on /login still works.
 const SETUP_LINK_TTL_MINUTES = 60;
@@ -85,7 +86,7 @@ const main = async () => {
 
   const result = await sendEmail(
     user.email,
-    "Set your password - Salon Management admin",
+    `Set your password - ${SITE_NAME} admin`,
     getPasswordResetTemplate(user.name, resetUrl, SETUP_LINK_TTL_MINUTES),
   );
 

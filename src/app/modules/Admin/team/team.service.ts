@@ -8,6 +8,7 @@ import { getAdminTeamChangeTemplate } from "../../../utils/emailTemplates";
 import type { AdminContext } from "../admin.middleware";
 import { InvitationService } from "../invitations/invitation.service";
 
+import { SITE_NAME } from "../../../utils/brand";
 const roleName = (role: AdminRole) => role.replace(/_/g, " ").toLowerCase();
 
 // Serializable, so two super admins demoting each other at the same moment
@@ -165,7 +166,7 @@ const removeMember = async (actor: AdminContext, ctx: AuditCtx | undefined, user
     member,
     actor,
     "Removed from the admin team",
-    `${member.name} (${roleName(member.adminRole)}) was removed from the SalonKhuji admin team. The account is now a customer account.`,
+    `${member.name} (${roleName(member.adminRole)}) was removed from the ${SITE_NAME} admin team. The account is now a customer account.`,
     reason,
   );
   return { userId };

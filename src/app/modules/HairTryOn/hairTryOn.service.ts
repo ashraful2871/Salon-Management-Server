@@ -12,6 +12,7 @@ import { getProvider } from "./hairTryOn.provider";
 import { verifyTurnstile } from "./hairTryOn.turnstile";
 import { enqueueHairJob } from "./hairTryOn.worker";
 
+import { SITE_NAME } from "../../utils/brand";
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 const MIN_SHORT_SIDE = 400;
 // The upload preset can't carry max_file_size (the Admin API drops it).
@@ -57,7 +58,7 @@ const WATERMARK: TransformationOptions[] = [
     overlay: {
       font_family: "Arial",
       font_size: 28,
-      text: "AI preview · SalonKhuji",
+      text: `AI preview · ${SITE_NAME}`,
     },
     color: "#ffffff",
     opacity: 70,

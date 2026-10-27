@@ -19,6 +19,7 @@ import { clientIp } from "../../middlewares/rateLimiter";
 import { buildAuditCtx } from "../Admin/admin.middleware";
 import { AddPayoutAccountInput, KycInput } from "./owner.validation";
 
+import { SITE_NAME } from "../../utils/brand";
 /**
  * Where a business is paid. An owner adds an account with a code emailed to
  * their sign-in address (and their authenticator code when 2FA is on); Finance
@@ -162,7 +163,7 @@ const sendCode = catchAsync(async (req: Request, res: Response) => {
 
   await sendEmail(
     owner.user.email,
-    `${issued.code} is your SalonKhuji code to change your payout account`,
+    `${issued.code} is your ${SITE_NAME} code to change your payout account`,
     getOtpEmailTemplate(owner.user.name, issued.code, OTP_TTL_SECONDS / 60),
   );
 
@@ -283,7 +284,7 @@ const add = catchAsync(async (req: Request, res: Response) => {
     cooldownHours: created.cooldownUntil ? cooldownHours : null,
     contactUrl: `${config.frontend_url}/contact`,
   });
-  const subject = "A payout account was added to your SalonKhuji business";
+  const subject = `A payout account was added to your ${SITE_NAME} business`;
   // The owner through notify (email locked on); the business email, when it is
   // a different address, still gets its own copy - it is the security notice.
   await notifyOwner(owner.id, "payout_account.changed", {

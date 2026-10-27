@@ -2,6 +2,7 @@ import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
 import { notifyBranch } from "../../utils/notify";
 
+import { SITE_NAME } from "../../utils/brand";
 /**
  * Tells the branch about a booking that changed without them (owner Phase 13):
  * the customer cancelled, a no-show was recorded, the customer appealed one.
@@ -52,7 +53,7 @@ export const notifyBookingEvent = async (
       },
       "appeal.filed": {
         title: `${who} appealed a no-show`,
-        body: `${what} on ${day} at ${a.salon.name}. SalonKhuji reviews it within 48 hours${
+        body: `${what} on ${day} at ${a.salon.name}. ${SITE_NAME} reviews it within 48 hours${
           a.appealReason ? `. Their reason: "${a.appealReason.slice(0, 200)}"` : ""
         }.`,
       },

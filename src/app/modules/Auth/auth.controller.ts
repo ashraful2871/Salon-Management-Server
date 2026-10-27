@@ -10,6 +10,7 @@ import { completeGoogleFlow, startGoogleFlow } from "./auth.google";
 import { verifyTwoFactor as verifyTwoFactorCode } from "./auth.twoFactor";
 import { isGoogleEnabled } from "../../../config";
 
+import { SITE_NAME } from "../../utils/brand";
 const register = catchAsync(async (req: Request, res: Response) => {
   const result = await AuthService.register(req.body, clientIp(req));
 
@@ -94,7 +95,7 @@ const verifyOtp = catchAsync(async (req: Request, res: Response) => {
     success: true,
     message:
       result.status === "SIGNED_IN"
-        ? "Email verified. Welcome to SalonKhuji!"
+        ? `Email verified. Welcome to ${SITE_NAME}!`
         : "Email verified. Enter the code from your authenticator app",
     data: result,
   });

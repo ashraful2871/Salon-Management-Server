@@ -46,6 +46,7 @@ import { attentionWhere, isAttentionKind } from "./appointment.attention";
 import { assertNotClosed } from "../Salon/salon.closure";
 import { assertStaffWorking } from "../Staff/staff.schedule";
 
+import { SITE_NAME } from "../../utils/brand";
 /**
  * Which status each status may move to. Terminal states go nowhere.
  *
@@ -440,6 +441,17 @@ const claimSlotAndCreate = async (
   });
 };
 
+/** "a salon owner", for the customers-only booking message. */
+const roleNoun = (role: UserRole) =>
+  ({
+    CUSTOMER: "a customer",
+    STAFF: "a stylist",
+    SALON_OWNER: "a salon owner",
+    BRANCH_MANAGER: "a branch manager",
+    ADMIN: "an admin",
+    AGENT: "an agent",
+  })[role] ?? "a non-customer account";
+
 /**
  * Every check a booking must pass, and what it will cost. No writes.
  *
@@ -461,20 +473,21 @@ const quoteBooking = async (
     payInFull?: boolean;
   },
 ) => {
-  // Verify user is customer
+  // Only customer accounts book. Every booking path (the booking page and the
+  // chat, both through here) gets the same answer; the frontend branches on
+  // the code to show its own notice.
   const user = await prisma.user.findUnique({
     where: { id: userId },
   });
 
-  if (
-    !user ||
-    (user.role !== UserRole.CUSTOMER &&
-      user.role !== UserRole.SALON_OWNER &&
-      user.role !== UserRole.ADMIN)
-  ) {
-    throw new ApiError(
+  if (!user) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
+  }
+  if (user.role !== UserRole.CUSTOMER) {
+    throw ApiError.withCode(
       StatusCodes.FORBIDDEN,
-      "Only customers can book appointments",
+      `Only customer accounts can book appointments. You are signed in as ${roleNoun(user.role)}; sign in with a customer account to book.`,
+      "CUSTOMER_ONLY",
     );
   }
 
@@ -722,7 +735,7 @@ const bookAppointment = async (
     );
 
     // Call without await so it doesn't block the API response
-    sendEmail(user.email, "Booking Confirmation - Salon Management", emailHtml);
+    sendEmail(user.email, `Booking Confirmation - ${SITE_NAME}`, emailHtml);
   }
 
   // Tell the branch (owner + team, per their preferences; the owner's email

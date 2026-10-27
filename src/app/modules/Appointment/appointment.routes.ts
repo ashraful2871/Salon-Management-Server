@@ -9,9 +9,11 @@ import { BUSINESS_ROLES } from "../../utils/salonAccess";
 
 const router = express.Router();
 
+// Any signed-in account reaches the service, which refuses every role but
+// CUSTOMER with a message that says so (`CUSTOMER_ONLY`), not a bare 403.
 router.post(
   "/",
-  auth("CUSTOMER"),
+  auth(),
   validateRequest(AppointmentValidation.bookAppointmentValidation),
   AppointmentController.bookAppointment,
 );

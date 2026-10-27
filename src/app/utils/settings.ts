@@ -5,6 +5,7 @@ import ApiError from "../Error/error";
 import prisma from "../shared/prisma";
 import { audit, AuditCtx } from "./audit";
 
+import { SITE_NAME } from "./brand";
 /**
  * Platform settings: values the admin console can change without a deploy.
  *
@@ -503,7 +504,7 @@ export const SETTINGS = {
   // invoice, and the VAT shown inside the commission (0 = no VAT line).
   "finance.legalName": def<string>({
     ...text(120),
-    default: "SalonKhuji",
+    default: SITE_NAME,
     env: envText("PLATFORM_LEGAL_NAME"),
     envName: "PLATFORM_LEGAL_NAME",
     group: "money",

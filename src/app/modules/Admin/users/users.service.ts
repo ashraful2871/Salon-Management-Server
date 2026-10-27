@@ -17,6 +17,7 @@ import { parseListQuery } from "../admin.query";
 import { maskEmail, maskPhone } from "../admin.service";
 import { REASON_LABELS, STATUS_REASON_CODES } from "./users.validation";
 
+import { SITE_NAME } from "../../../utils/brand";
 const DAY = 24 * 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -474,11 +475,11 @@ const notifyStatus = (
   const contactUrl = `${config.frontend_url}/contact`;
   const [subject, html] =
     status === "SUSPENDED"
-      ? ["Your SalonKhuji account is suspended", getAccountSuspendedTemplate({ name: target.name, reason, until, contactUrl })]
+      ? [`Your ${SITE_NAME} account is suspended`, getAccountSuspendedTemplate({ name: target.name, reason, until, contactUrl })]
       : status === "BLOCKED"
-        ? ["Your SalonKhuji account is blocked", getAccountBlockedTemplate({ name: target.name, reason, contactUrl })]
+        ? [`Your ${SITE_NAME} account is blocked`, getAccountBlockedTemplate({ name: target.name, reason, contactUrl })]
         : [
-            "Your SalonKhuji account is active again",
+            `Your ${SITE_NAME} account is active again`,
             getAccountReactivatedTemplate({ name: target.name, signInUrl: `${config.frontend_url}/login` }),
           ];
   // sendEmail never throws; the catch is belt and braces so a mail problem
@@ -560,7 +561,7 @@ const updateStatus = async (
       try {
         await AppointmentService.cancelByAdmin(
           booking.id,
-          `Cancelled by SalonKhuji: account ${input.status.toLowerCase()}`,
+          `Cancelled by ${SITE_NAME}: account ${input.status.toLowerCase()}`,
         );
         cancelledBookings++;
       } catch (error) {

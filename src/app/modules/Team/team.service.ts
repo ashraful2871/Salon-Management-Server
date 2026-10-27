@@ -13,6 +13,7 @@ import { AccessUser, assertSalonPermission, grantAt } from "../../utils/salonAcc
 import { maskEmail } from "../Admin/admin.service";
 import { issueSession } from "../Auth/auth.session";
 
+import { SITE_NAME } from "../../utils/brand";
 type Db = Prisma.TransactionClient | typeof prisma;
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -362,7 +363,7 @@ const sendInvitationEmail = async (
   const link = `${config.frontend_url}/invite?token=${encodeURIComponent(token)}&email=${encodeURIComponent(invitation.email)}`;
   const sent = await sendEmail(
     invitation.email,
-    `Join ${salon?.name ?? "a salon"} on SalonKhuji`,
+    `Join ${salon?.name ?? "a salon"} on ${SITE_NAME}`,
     getTeamInvitationTemplate({
       name: invitation.name,
       inviterName: inviter?.name ?? "The salon owner",
@@ -402,7 +403,7 @@ const invite = async (actor: AccessUser, salonId: string, input: InviteInput, ct
 
   if (existing) {
     if (existing.role === UserRole.ADMIN || existing.role === UserRole.AGENT) {
-      throw new ApiError(StatusCodes.CONFLICT, "This email belongs to a SalonKhuji staff account.");
+      throw new ApiError(StatusCodes.CONFLICT, `This email belongs to a ${SITE_NAME} staff account.`);
     }
     if (existing.id === salon.owner.userId) {
       throw new ApiError(StatusCodes.CONFLICT, "That's the owner of this salon.");

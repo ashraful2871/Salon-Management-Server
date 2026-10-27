@@ -13,13 +13,14 @@ import ApiError from "../Error/error";
 import prisma from "../shared/prisma";
 import { getSetting } from "./settings";
 
+import { SITE_NAME } from "./brand";
 /**
  * TOTP second factor for ADMIN and AGENT accounts: 6 digits, 30 s steps, one
  * step of clock drift either way. The secret is AES-256-GCM encrypted at rest
  * with MFA_ENCRYPTION_KEY; recovery codes are stored as sha256 only.
  */
 
-const ISSUER = "SalonKhuji";
+const ISSUER = SITE_NAME;
 const PERIOD_S = 30;
 const MAX_FAILURES = 5;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
@@ -70,7 +71,7 @@ export const decrypt = (enc: string): string => {
 
 export const newTotpSecret = (): string => generateSecret();
 
-/** The authenticator app shows it as "SalonKhuji:<email>". */
+/** The authenticator app shows it as "<SITE_NAME>:<email>". */
 export const otpauthUrl = (email: string, secret: string) =>
   generateURI({ issuer: ISSUER, label: email, secret, period: PERIOD_S, digits: 6 });
 

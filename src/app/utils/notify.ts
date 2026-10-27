@@ -3,6 +3,7 @@ import config from "../../config";
 import prisma from "../shared/prisma";
 import { sendEmail } from "./emailSender";
 
+import { SITE_NAME } from "./brand";
 /**
  * Owner Phase 13: one way to tell a business account something happened -
  * an in-app row (the bell) and/or an email, each per the person's
@@ -111,7 +112,7 @@ const plainEmail = (name: string, payload: NotifyPayload) => {
   <p>Hi ${escapeHtml(name)},</p>
   <h2 style="font-size:18px;margin:16px 0 8px">${escapeHtml(payload.title)}</h2>
   <p style="line-height:1.5">${escapeHtml(payload.body)}</p>
-  <p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 18px;border-radius:999px;background:#222;color:#fff;text-decoration:none">Open SalonKhuji</a></p>
+  <p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 18px;border-radius:999px;background:#222;color:#fff;text-decoration:none">Open ${SITE_NAME}</a></p>
   <p style="font-size:12px;color:#777">You can change which emails you get in Settings → Notifications.</p>
 </div>`;
 };

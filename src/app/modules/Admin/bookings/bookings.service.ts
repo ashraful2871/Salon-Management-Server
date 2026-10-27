@@ -15,6 +15,7 @@ import { parseListQuery } from "../admin.query";
 import { maskEmail, maskPhone } from "../admin.service";
 import { BOOKING_CANCEL_REASON_LABELS, BookingCancelReasonCode } from "./bookings.validation";
 
+import { SITE_NAME } from "../../../utils/brand";
 const DAY = 24 * 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PHONE = /^\+?[\d\s-]{4,}$/;
@@ -450,7 +451,7 @@ const cancelForCustomer = async (ctx: AuditCtx | undefined, id: string, input: C
 
   // The customer-cancel path with the free window forced: the whole deposit
   // goes back, no penalty, no goodwill, cancelledBy = ADMIN.
-  const cancelled = await AppointmentService.cancelByAdmin(id, `Cancelled by SalonKhuji: ${reason}`);
+  const cancelled = await AppointmentService.cancelByAdmin(id, `Cancelled by ${SITE_NAME}: ${reason}`);
 
   await audit(ctx, {
     action: "booking.cancel_admin",
