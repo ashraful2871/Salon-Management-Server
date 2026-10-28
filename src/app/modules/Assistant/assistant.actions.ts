@@ -1,3 +1,4 @@
+import { UserRole } from "@prisma/client";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
@@ -1039,6 +1040,9 @@ export type WalletView = {
   isFrozen: boolean;
   availableMinor: number;
   heldMinor: number;
+  /** Set for a signed-in owner, admin, stylist…: the booking page's
+   *  `CUSTOMER_ONLY` sentence. They can neither book nor top up here. */
+  notCustomer: string | null;
 };
 
 export const readWallet = async (userId?: string): Promise<WalletView> => {
@@ -1048,16 +1052,24 @@ export const readWallet = async (userId?: string): Promise<WalletView> => {
       isFrozen: false,
       availableMinor: 0,
       heldMinor: 0,
+      notCustomer: null,
     };
   }
 
-  const summary = await WalletService.getWalletSummary(userId);
+  const [summary, user] = await Promise.all([
+    WalletService.getWalletSummary(userId),
+    prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
+  ]);
 
   return {
     signedIn: true,
     isFrozen: summary.isFrozen,
     availableMinor: summary.availableMinor,
     heldMinor: summary.heldBalanceMinor,
+    notCustomer:
+      user && user.role !== UserRole.CUSTOMER
+        ? AppointmentService.customerOnlyMessage(user.role, "book or top up in the chat")
+        : null,
   };
 };
 
@@ -1189,6 +1201,9 @@ export const promptFor = async (
   userId: string | undefined,
   wallet: WalletView,
 ): Promise<Block> => {
+  // Same rule as booking: only a customer account is offered a top-up.
+  if (wallet.notCustomer) return notice("info", wallet.notCustomer);
+
   const quote = await heldQuote(state, userId);
   const shortfallMinor = quote
     ? Math.max(quote.payload.dm - wallet.availableMinor, 0)
@@ -1224,8 +1239,12 @@ const handleBook = async (
     opening.push(loginRequired(COPY.loginToBook, ASSISTANT_PATH));
   }
 
-  if (wallet.isFrozen) {
-    const text = `Your wallet is on hold, so I cannot start a booking at ${salon.name} yet.`;
+  // An owner, admin or stylist would otherwise walk all the way to a time
+  // only for `quoteBooking` to refuse it, being offered a top-up on the way.
+  if (wallet.notCustomer || wallet.isFrozen) {
+    const text =
+      wallet.notCustomer ??
+      `Your wallet is on hold, so I cannot start a booking at ${salon.name} yet.`;
 
     return {
       text,
@@ -1634,8 +1653,9 @@ const handleChooseSlot = async (
     );
 
     // The top-up sits right under the card it unblocks. A frozen wallet cannot
-    // take a deposit whatever is in it, so it is not asked for money.
-    if (!wallet.isFrozen) {
+    // take a deposit whatever is in it, so it is not asked for money; nor is
+    // an account that cannot book.
+    if (!wallet.isFrozen && !wallet.notCustomer) {
       blocks.push(paymentPrompt(shortfallMinor, confirmToken !== null));
     }
   }
