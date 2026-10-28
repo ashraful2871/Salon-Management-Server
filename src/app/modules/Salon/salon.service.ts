@@ -116,7 +116,9 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
     sort,
     category,
     audience,
+    includeUnisex,
   } = query;
+  const exactAudience = includeUnisex === "false";
 
   // Only ADMIN/AGENT may pick a status (or see every status by omitting it).
   // Everyone else gets ACTIVE, whatever they send.
@@ -199,6 +201,7 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
       area,
       category,
       audience,
+      exactAudience,
     };
     const rows = await findNearbySalonIds(args);
 
@@ -246,7 +249,9 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
     });
   }
   if (audience) {
-    areaConditions.push({ audience: { in: [audience, "UNISEX"] } });
+    areaConditions.push({
+      audience: exactAudience ? audience : { in: [audience, "UNISEX"] },
+    });
   }
   if (areaConditions.length) {
     whereConditions.AND = areaConditions;

@@ -5,6 +5,7 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { formatBDT } from "../../utils/money";
 import { getSetting } from "../../utils/settings";
+import { AppointmentService } from "../Appointment/appointment.service";
 import { PaymentIntentService } from "../Payment/paymentIntent.service";
 import type { ProviderName } from "../Payment/providers/types";
 import {
@@ -174,6 +175,13 @@ const startTopup = (input: StartTopupInput) =>
     if (!(await getSetting("assistant.topupEnabled"))) {
       throw new ApiError(StatusCodes.SERVICE_UNAVAILABLE, COPY.topupPaused);
     }
+
+    // The booking rule, enforced here too: the chat no longer offers an owner
+    // or an admin a top-up, but an old card, or a direct call, still arrives.
+    await AppointmentService.assertCustomer(
+      input.userId,
+      "book or top up in the chat",
+    );
 
     const conversation = await openConversation(
       input.conversationId,

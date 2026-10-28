@@ -120,8 +120,10 @@ const salonListQuery = z
       .optional(),
     radiusKm: z.coerce.number().min(0.5).max(50).default(NEARBY_MAX_RADIUS_KM),
     sort: z.enum(["distance", "rating", "newest"]).optional(),
-    // LADIES / GENTS also return UNISEX salons, which serve both.
+    // LADIES / GENTS also return UNISEX salons, which serve both, unless
+    // includeUnisex=false (the gents parlour page lists gents-only salons).
     audience: z.enum(["LADIES", "GENTS"]).optional(),
+    includeUnisex: z.enum(["true", "false"]).optional(),
     category: z
       .enum([
         "HAIRCUT",

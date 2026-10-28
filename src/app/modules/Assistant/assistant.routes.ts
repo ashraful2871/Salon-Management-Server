@@ -119,10 +119,13 @@ router.post(
  * Opens a wallet top-up from the chat — the same `initiateTopup` the wallet
  * page uses — so it takes the wallet's own `paymentLimiter`, after `auth` so
  * the bucket is the account and not the Vercel server every call arrives from.
+ * A chat top-up exists only to book, so it follows the confirm route: any
+ * signed-in account gets through and `startTopup` refuses every role but
+ * CUSTOMER with the booking page's `CUSTOMER_ONLY` message.
  */
 router.post(
   "/payments/topup",
-  auth(UserRole.CUSTOMER, UserRole.SALON_OWNER, UserRole.ADMIN),
+  auth(),
   paymentLimiter,
   validated(AssistantValidation.startTopup),
   AssistantController.topup,

@@ -21,6 +21,8 @@ type NearbyArgs = {
   area?: string;
   category?: string;
   audience?: "LADIES" | "GENTS";
+  /** Only that audience's own salons, without the UNISEX ones. */
+  exactAudience?: boolean;
 };
 
 const originOf = (a: NearbyArgs) =>
@@ -47,7 +49,9 @@ const nearbyWhere = (a: NearbyArgs) => {
     );
   if (a.audience)
     conds.push(
-      Prisma.sql`s.audience IN (${a.audience}::"SalonAudience", 'UNISEX'::"SalonAudience")`,
+      a.exactAudience
+        ? Prisma.sql`s.audience = ${a.audience}::"SalonAudience"`
+        : Prisma.sql`s.audience IN (${a.audience}::"SalonAudience", 'UNISEX'::"SalonAudience")`,
     );
   if (a.city) conds.push(Prisma.sql`s.city ILIKE ${escapeLike(a.city)}`);
   if (a.division)

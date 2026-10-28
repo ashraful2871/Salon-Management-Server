@@ -453,6 +453,36 @@ const roleNoun = (role: UserRole) =>
   })[role] ?? "a non-customer account";
 
 /**
+ * Only customer accounts book, or top up in the chat to book. One sentence
+ * and one code (`CUSTOMER_ONLY`) for every path, so the booking page and the
+ * chat answer an owner or an admin the same way.
+ */
+const customerOnlyMessage = (role: UserRole, doing = "book appointments") =>
+  `Only customer accounts can ${doing}. You are signed in as ${roleNoun(role)}; sign in with a customer account to book.`;
+
+const customerOnlyError = (role: UserRole, doing?: string) =>
+  ApiError.withCode(
+    StatusCodes.FORBIDDEN,
+    customerOnlyMessage(role, doing),
+    "CUSTOMER_ONLY",
+  );
+
+/** Throws `CUSTOMER_ONLY` for any signed-in account that is not a customer. */
+const assertCustomer = async (userId: string, doing?: string) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true },
+  });
+
+  if (!user) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
+  }
+  if (user.role !== UserRole.CUSTOMER) {
+    throw customerOnlyError(user.role, doing);
+  }
+};
+
+/**
  * Every check a booking must pass, and what it will cost. No writes.
  *
  * Split out of `bookAppointment` so the in-chat assistant can quote a price
@@ -484,11 +514,7 @@ const quoteBooking = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
   }
   if (user.role !== UserRole.CUSTOMER) {
-    throw ApiError.withCode(
-      StatusCodes.FORBIDDEN,
-      `Only customer accounts can book appointments. You are signed in as ${roleNoun(user.role)}; sign in with a customer account to book.`,
-      "CUSTOMER_ONLY",
-    );
+    throw customerOnlyError(user.role);
   }
 
   // Verify slot first
@@ -1750,6 +1776,9 @@ export const AppointmentService = {
   // Exported for the assistant, which quotes a price in the chat and re-quotes
   // it at Confirm. Read-only: it never books.
   quoteBooking,
+  // The same customers-only rule for the chat's wallet and top-up.
+  assertCustomer,
+  customerOnlyMessage,
   bookWalkIn,
   getAllAppointments,
   getMyAppointments,
