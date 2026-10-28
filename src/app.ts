@@ -33,6 +33,8 @@ app.use(
       "https://salon-management-frontend-kappa.vercel.app",
       "https://salon-management-frontend-fawn.vercel.app",
       "https://salon.ashrafulash.com",
+      "https://www.styliobd.online",
+      "https://styliobd.online",
     ],
     credentials: true,
   }),
