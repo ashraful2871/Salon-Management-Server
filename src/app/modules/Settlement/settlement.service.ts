@@ -91,6 +91,8 @@ type EntryDraft = {
 
 type JournalInput = {
   appointmentId?: string | null;
+  /** A home visit's sets (Home Service); the journal id defaults to it. */
+  homeBookingId?: string | null;
   /** Groups several sets under one id (a dues payment's sets share its intent id). */
   journalId?: string;
   salonId: string | null;
@@ -121,11 +123,11 @@ export const writeJournal = async (
     // it is in, and it would poison every reconciliation run afterwards.
     throw new ApiError(
       StatusCodes.INTERNAL_SERVER_ERROR,
-      `Refusing to write an unbalanced ledger set (${input.kind}${input.appointmentId ? `, appointment ${input.appointmentId}` : ""}) - sums to ${sum}`,
+      `Refusing to write an unbalanced ledger set (${input.kind}${input.appointmentId ? `, appointment ${input.appointmentId}` : ""}${input.homeBookingId ? `, home visit ${input.homeBookingId}` : ""}) - sums to ${sum}`,
     );
   }
 
-  const journalId = input.journalId ?? input.appointmentId ?? randomUUID();
+  const journalId = input.journalId ?? input.appointmentId ?? input.homeBookingId ?? randomUUID();
   let ownerId = input.ownerId ?? null;
   if (!ownerId && input.salonId) {
     const salon = await db.salon.findUnique({
@@ -139,6 +141,7 @@ export const writeJournal = async (
     data: entries.map((entry) => ({
       journalId,
       appointmentId: input.appointmentId ?? null,
+      ...(input.homeBookingId ? { homeBookingId: input.homeBookingId } : {}),
       salonId: input.salonId,
       ownerId,
       account: entry.account,

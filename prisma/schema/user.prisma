@@ -42,6 +42,8 @@ model User {
   mfa                    UserMfa?
   notifications          Notification[]
   notificationPrefs      NotificationPref[]
+  homeBookings           HomeBooking[]
+  addresses              CustomerAddress[]
 
   @@index([status, suspendedUntil])
   @@index([createdAt])

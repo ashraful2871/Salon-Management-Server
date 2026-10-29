@@ -1,0 +1,295 @@
+// Home Service ("Hire an Expert"): a branch's verified staff visit the
+// customer's address. Timestamps are timestamptz so the overlap exclusion on
+// home_bookings can use tstzrange. Constraints Prisma cannot express (gender ↔
+// audience, money identity, no overlapping active bookings per expert) live in
+// the raw SQL of migration 20261029120000_home_service_model.
+
+/// One per branch. Off until the owner turns it on; the first turn-on is
+/// reviewed by an admin (`status`).
+model HomeServiceProfile {
+  id              String            @id @default(uuid())
+  salonId         String            @unique
+  isOn            Boolean           @default(false)
+  ladiesEnabled   Boolean           @default(false)
+  gentsEnabled    Boolean           @default(false)
+  status          HomeServiceStatus @default(DRAFT)
+  everApproved    Boolean           @default(false)
+  pausedUntil     DateTime?         @db.Timestamptz(3)
+  pauseReason     String?
+  suspendedReason String?
+  radiusKm        Float             @default(5)
+  travelFeeMinor  Int               @default(0)
+  minOrderMinor   Int               @default(50000)
+  travelBufferMin Int               @default(30)
+  /// "HH:mm", Asia/Dhaka wall clock.
+  dayStart        String            @default("09:00")
+  dayEnd          String            @default("20:00")
+  statusReason    String?
+  reviewedById    String?
+  reviewedAt      DateTime?         @db.Timestamptz(3)
+  createdAt       DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @db.Timestamptz(3)
+
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@map("home_service_profiles")
+}
+
+/// A staff member who visits homes. LADIES ⇔ FEMALE, GENTS ⇔ MALE (DB CHECK).
+model HomeExpert {
+  id               String             @id @default(uuid())
+  staffId          String             @unique
+  salonId          String
+  gender           Gender
+  audience         HomeAudience
+  verification     ExpertVerification @default(DRAFT)
+  /// Private Cloudinary public ids; only ever served as short-lived signed URLs.
+  idDocFrontId     String?
+  idDocBackId      String?
+  selfieId         String?
+  submittedAt      DateTime?          @db.Timestamptz(3)
+  verifiedById     String?
+  verifiedAt       DateTime?          @db.Timestamptz(3)
+  rejectReason     String?
+  headline         String?
+  languages        String[]
+  maxJobsPerDay    Int                @default(4)
+  isActive         Boolean            @default(true)
+  rating           Float              @default(0)
+  totalReviews     Int                @default(0)
+  completedJobs    Int                @default(0)
+  cancelledBySalon Int                @default(0)
+  removedAt        DateTime?          @db.Timestamptz(3)
+  createdAt        DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime           @updatedAt @db.Timestamptz(3)
+
+  staff     Staff                @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  salon     Salon                @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  offerings HomeExpertOffering[]
+  bookings  HomeBooking[]
+
+  @@index([salonId])
+  @@index([audience, verification, isActive])
+  @@map("home_experts")
+}
+
+/// The branch's home menu, per audience. Soft-deleted (`isDeleted`) so booking
+/// items keep their offering.
+model HomeServiceOffering {
+  id          String       @id @default(uuid())
+  salonId     String
+  audience    HomeAudience
+  category    HomeCategory
+  name        String
+  description String?
+  /// What the expert brings ("own wax, disposable sheets").
+  kitNote     String?
+  durationMin Int
+  priceMinor  Int
+  images      String[]
+  isActive    Boolean      @default(true)
+  isDeleted   Boolean      @default(false)
+  sortOrder   Int          @default(0)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(3)
+
+  salon        Salon                @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  experts      HomeExpertOffering[]
+  bookingItems HomeBookingItem[]
+
+  @@index([salonId, audience, isActive])
+  @@map("home_service_offerings")
+}
+
+model HomeExpertOffering {
+  expertId   String
+  offeringId String
+
+  expert   HomeExpert          @relation(fields: [expertId], references: [id], onDelete: Cascade)
+  offering HomeServiceOffering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+
+  @@id([expertId, offeringId])
+  @@index([offeringId])
+  @@map("home_expert_offerings")
+}
+
+/// One visit: one salon, one expert, 1–10 offerings of one audience. Money and
+/// policy are snapshotted at booking; later setting changes never touch it.
+/// The 4-digit start code is HMAC(id, HOME_START_CODE_SECRET), not stored.
+model HomeBooking {
+  id             String            @id @default(uuid())
+  code           String            @unique
+  customerId     String
+  salonId        String
+  expertId       String
+  audience       HomeAudience
+  /// Copy of the expert's audience; CHECK audience = expertAudience.
+  expertAudience HomeAudience
+  status         HomeBookingStatus @default(PENDING_PAYMENT)
+
+  startAt     DateTime  @db.Timestamptz(3)
+  endAt       DateTime  @db.Timestamptz(3)
+  /// startAt/endAt widened by the branch travel buffer; the overlap exclusion uses these.
+  blockFrom   DateTime  @db.Timestamptz(3)
+  blockTo     DateTime  @db.Timestamptz(3)
+  /// Asia/Dhaka calendar day of startAt.
+  serviceDate DateTime  @db.Date
+  expiresAt   DateTime? @db.Timestamptz(3)
+
+  addressLine      String
+  area             String?
+  landmark         String?
+  latitude         Float
+  longitude        Float
+  distanceKm       Float
+  recipientName    String
+  recipientIsWoman Boolean?
+  contactPhone     String
+  notes            String?
+
+  subtotalMinor         Int
+  travelFeeMinor        Int
+  totalMinor            Int
+  advancePercent        Int
+  advanceMinor          Int
+  advanceStatus         AdvanceStatus  @default(PENDING)
+  balanceMinor          Int
+  balanceMethod         BalanceMethod?
+  balanceCollectedMinor Int?
+  commissionBps         Int
+
+  policySnapshot   Json
+  disclaimerText   String
+  policyAcceptedAt DateTime? @db.Timestamptz(3)
+  /// The part of the advance kept on a customer cancel / no-show.
+  feeMinor         Int       @default(0)
+  refundedMinor    Int?
+  paymentIntentId  String?
+
+  startCodeTries Int              @default(0)
+  confirmedAt    DateTime?        @db.Timestamptz(3)
+  enRouteAt      DateTime?        @db.Timestamptz(3)
+  arrivedAt      DateTime?        @db.Timestamptz(3)
+  startedAt      DateTime?        @db.Timestamptz(3)
+  completedAt    DateTime?        @db.Timestamptz(3)
+  cancelledAt    DateTime?        @db.Timestamptz(3)
+  cancelledBy    CancelledBy?
+  cancelReason   String?
+  noShowParty    HomeNoShowParty?
+  noShowMarkedAt DateTime?        @db.Timestamptz(3)
+
+  appealedAt         DateTime?     @db.Timestamptz(3)
+  appealReason       String?
+  appealStatus       AppealStatus?
+  appealResolvedAt   DateTime?     @db.Timestamptz(3)
+  appealResolvedById String?
+
+  rescheduleCount Int       @default(0)
+  reminder24At    DateTime? @db.Timestamptz(3)
+  reminder2hAt    DateTime? @db.Timestamptz(3)
+  idempotencyKey  String?   @unique
+  isTest          Boolean   @default(false)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  // Restrict: a booking carries money, so its parents are never hard-deleted under it.
+  customer      User               @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  salon         Salon              @relation(fields: [salonId], references: [id], onDelete: Restrict)
+  expert        HomeExpert         @relation(fields: [expertId], references: [id], onDelete: Restrict)
+  items         HomeBookingItem[]
+  events        HomeBookingEvent[]
+  safetyReports HomeSafetyReport[]
+  ledgerEntries LedgerEntry[]
+
+  @@index([customerId, status])
+  @@index([salonId, serviceDate])
+  @@index([expertId, startAt])
+  @@index([status, startAt])
+  @@index([status, expiresAt])
+  @@map("home_bookings")
+}
+
+model HomeBookingItem {
+  id           String @id @default(uuid())
+  bookingId    String
+  offeringId   String
+  nameSnapshot String
+  priceMinor   Int
+  durationMin  Int
+
+  booking  HomeBooking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  offering HomeServiceOffering @relation(fields: [offeringId], references: [id], onDelete: Restrict)
+
+  @@index([bookingId])
+  @@map("home_booking_items")
+}
+
+/// Every status transition, append-only.
+model HomeBookingEvent {
+  id         String             @id @default(uuid())
+  bookingId  String
+  fromStatus HomeBookingStatus?
+  toStatus   HomeBookingStatus
+  actorId    String?
+  actorRole  String
+  reason     String?
+  createdAt  DateTime           @default(now()) @db.Timestamptz(3)
+
+  booking HomeBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, createdAt])
+  @@map("home_booking_events")
+}
+
+model CustomerAddress {
+  id          String   @id @default(uuid())
+  userId      String
+  label       String
+  addressLine String
+  area        String?
+  landmark    String?
+  latitude    Float
+  longitude   Float
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("customer_addresses")
+}
+
+model HomeSafetyReport {
+  id              String           @id @default(uuid())
+  bookingId       String
+  reporterId      String
+  /// "CUSTOMER" | "EXPERT" | "SALON".
+  reporterRole    String
+  kind            HomeSafetyKind
+  details         String
+  status          HomeReportStatus @default(OPEN)
+  handledById     String?
+  handledAt       DateTime?        @db.Timestamptz(3)
+  supportTicketId String?
+  createdAt       DateTime         @default(now()) @db.Timestamptz(3)
+
+  booking HomeBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([status, createdAt])
+  @@map("home_safety_reports")
+}
+
+/// A customer barred from booking home visits until `until`.
+model HomeCustomerBlock {
+  userId      String   @id
+  until       DateTime @db.Timestamptz(3)
+  reason      String
+  /// "NO_SHOWS" | "SAFETY" | "ADMIN".
+  source      String
+  createdById String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("home_customer_blocks")
+}

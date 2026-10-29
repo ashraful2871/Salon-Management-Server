@@ -7,5 +7,5 @@ datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
   directUrl  = env("DIRECT_URL")
-  extensions = [pgvector(map: "vector"), postgis]
+  extensions = [pgvector(map: "vector"), postgis, btree_gist]
 }

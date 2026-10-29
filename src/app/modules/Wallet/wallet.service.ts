@@ -281,6 +281,81 @@ const holdDeposit = (
     tx,
   );
 
+/**
+ * A home visit's advance, held for the platform until the visit settles.
+ * Its own key space (`homehold:`), so it can never collide with or settle an
+ * appointment's hold.
+ */
+const holdHomeAdvance = (
+  userId: string,
+  amountMinor: number,
+  homeBookingId: string,
+  tx?: Prisma.TransactionClient,
+) =>
+  mutate(
+    {
+      userId,
+      type: WalletTxType.DEPOSIT_HOLD,
+      amount: 0,
+      holdDelta: amountMinor,
+      description: "Home visit advance held",
+      referenceType: "HOME_BOOKING",
+      referenceId: homeBookingId,
+      idempotencyKey: `homehold:${homeBookingId}`,
+      metadata: { holdDeltaMinor: amountMinor },
+    },
+    tx,
+  );
+
+/**
+ * A home visit's balance paid from the wallet before the visit: held next to
+ * the advance, under the same reference, so `applyHomeHeld` settles both.
+ */
+const holdHomeBalance = (
+  userId: string,
+  amountMinor: number,
+  homeBookingId: string,
+  tx?: Prisma.TransactionClient,
+) =>
+  mutate(
+    {
+      userId,
+      type: WalletTxType.DEPOSIT_HOLD,
+      amount: 0,
+      holdDelta: amountMinor,
+      description: "Home visit balance held",
+      referenceType: "HOME_BOOKING",
+      referenceId: homeBookingId,
+      idempotencyKey: `homebalhold:${homeBookingId}`,
+      metadata: { holdDeltaMinor: amountMinor },
+    },
+    tx,
+  );
+
+/** A completed home visit: everything held for it leaves the wallet for the salon. */
+const applyHomeHeld = (
+  userId: string,
+  amountMinor: number,
+  homeBookingId: string,
+  description: string,
+  tx?: Prisma.TransactionClient,
+) =>
+  mutate(
+    {
+      userId,
+      type: WalletTxType.DEPOSIT_APPLIED,
+      amount: -amountMinor,
+      holdDelta: -amountMinor,
+      description,
+      referenceType: "HOME_BOOKING",
+      referenceId: homeBookingId,
+      idempotencyKey: `homeapply:${homeBookingId}`,
+      settlesHoldOf: homeBookingId,
+      metadata: { holdDeltaMinor: -amountMinor },
+    },
+    tx,
+  );
+
 const releaseDeposit = (
   userId: string,
   amountMinor: number,
@@ -535,6 +610,9 @@ export const WalletService = {
   getOrCreateWallet,
   availableOf,
   holdDeposit,
+  holdHomeAdvance,
+  holdHomeBalance,
+  applyHomeHeld,
   releaseDeposit,
   applyDeposit,
   forfeitDeposit,

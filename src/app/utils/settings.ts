@@ -23,15 +23,18 @@ export type SettingGroup =
   | "approvals"
   | "retention"
   | "system"
-  | "content";
+  | "content"
+  | "homeService";
 
-export type SettingKind = "int" | "number" | "boolean" | "announcement" | "list" | "text";
+export type SettingKind = "int" | "number" | "boolean" | "announcement" | "list" | "text" | "choice";
 
 type Entry<T> = {
   schema: z.ZodType<T>;
   kind: SettingKind;
   min?: number;
   max?: number;
+  /** The allowed values of a `choice`. */
+  options?: readonly string[];
   default: T;
   /** The env var read before the registry, parsed; undefined when unset. */
   env?: () => T | undefined;
@@ -80,6 +83,16 @@ const num = (min: number, max: number) =>
 const bool = () => ({ schema: z.boolean(), kind: "boolean" as const });
 const text = (max: number) => ({ schema: z.string().trim().max(max), kind: "text" as const });
 const envText = (name: string) => () => raw(name);
+const choice = <const T extends readonly [string, ...string[]]>(options: T) =>
+  ({ schema: z.enum(options), kind: "choice" as const, options });
+/** A Dhaka wall-clock time, "HH:MM". */
+const time = () => ({
+  schema: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/, "Use HH:MM")
+    .refine((t) => Number(t.slice(0, 2)) < 24 && Number(t.slice(3)) < 60, "Use a real time of day"),
+  kind: "text" as const,
+});
 
 const announcementSchema = z
   .object({
@@ -594,6 +607,311 @@ export const SETTINGS = {
     public: true,
     tier: 2,
   }),
+
+  /* ----------------------------------------------------------- home service */
+  // Launch: no fee anywhere, policy FREE. Kill switches are flags; the rest is
+  // group homeService (homeservice.policy, tier 3).
+
+  "homeService.enabled": def<boolean>({
+    ...bool(),
+    default: true,
+    group: "flags",
+    label: "Home Service",
+    help: "Kill switch: off hides Home Service everywhere and stops new home bookings.",
+    public: true,
+    tier: 2,
+  }),
+  "homeService.ladiesEnabled": def<boolean>({
+    ...bool(),
+    default: true,
+    group: "flags",
+    label: "Ladies at Home",
+    help: "Off hides the Ladies side and stops new Ladies home bookings.",
+    public: true,
+    tier: 2,
+  }),
+  "homeService.gentsEnabled": def<boolean>({
+    ...bool(),
+    default: true,
+    group: "flags",
+    label: "Gents at Home",
+    help: "Off hides the Gents side and stops new Gents home bookings.",
+    public: true,
+    tier: 2,
+  }),
+  "homeService.requireApproval": def<boolean>({
+    ...bool(),
+    default: true,
+    group: "homeService",
+    label: "Review a branch's first turn-on",
+    help: "On: a branch's first turn-on waits for an admin before customers can see it.",
+    tier: 3,
+  }),
+  "homeService.customerCancelPolicy": def<"FREE" | "WINDOW" | "NON_REFUNDABLE">({
+    ...choice(["FREE", "WINDOW", "NON_REFUNDABLE"]),
+    default: "FREE",
+    group: "homeService",
+    label: "Customer cancellation policy",
+    help: "What a customer gets back when they cancel; each booking keeps the policy in force when it was made.",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "homeService.nonRefundableGraceMinutes": def<number>({
+    ...int(0, 1440),
+    default: 0,
+    group: "homeService",
+    label: "Non-refundable grace (minutes)",
+    help: "Under Non-refundable, a customer can still cancel free this long after paying if the visit is far enough away.",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "homeService.disclaimer.free": def<string>({
+    ...text(400),
+    default: "",
+    group: "homeService",
+    label: "Disclaimer: Free cancellation",
+    help: "The text a customer ticks before paying under the Free policy; empty uses the generated text.",
+    public: true,
+    tier: 3,
+  }),
+  "homeService.disclaimer.window": def<string>({
+    ...text(400),
+    default: "",
+    group: "homeService",
+    label: "Disclaimer: Cancellation window",
+    help: "The text a customer ticks before paying under the Window policy; empty uses the generated text.",
+    public: true,
+    tier: 3,
+  }),
+  "homeService.disclaimer.nonRefundable": def<string>({
+    ...text(400),
+    default: "",
+    group: "homeService",
+    label: "Disclaimer: Non-refundable",
+    help: "The text a customer ticks before paying under the Non-refundable policy; empty uses the generated text.",
+    public: true,
+    tier: 3,
+  }),
+  "homeService.commissionPercent": def<number>({
+    ...num(0, 30),
+    default: 0,
+    group: "homeService",
+    label: "Home commission (%)",
+    help: "The platform's cut of a completed visit's services (never the travel fee), taken from the salon's share.",
+    approval: true,
+    tier: 3,
+  }),
+  "homeService.lateCancelPercent": def<number>({
+    ...num(0, 100),
+    default: 0,
+    group: "homeService",
+    label: "Late cancellation fee (% of advance)",
+    help: "Under the Window policy, what a customer loses for cancelling inside the free window.",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "homeService.noShowPercent": def<number>({
+    ...num(0, 100),
+    default: 0,
+    group: "homeService",
+    label: "Customer no-show fee (% of advance)",
+    help: "What a customer loses when the expert arrives and they are not there (Free and Window policies).",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "homeService.salonCancelCreditMinor": def<number>({
+    ...int(0, 100_000),
+    default: 0,
+    group: "homeService",
+    label: "Credit when the salon cancels (poisha)",
+    help: "Extra wallet credit a customer gets, paid by the salon, when the salon cancels or the expert does not show.",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "homeService.feeSalonSharePercent": def<number>({
+    ...int(0, 100),
+    default: 100,
+    group: "homeService",
+    label: "Salon's share of kept fees (%)",
+    help: "How much of a late-cancel or no-show fee goes to the booked salon; the rest stays with the platform.",
+    approval: true,
+    tier: 3,
+  }),
+  "homeService.travelFeeMaxMinor": def<number>({
+    ...int(0, 100_000),
+    default: 0,
+    group: "homeService",
+    label: "Highest travel fee a branch may charge (poisha)",
+    help: "Caps the travel fee branches add to a home visit; 0 means no branch can charge one.",
+    approval: true,
+    tier: 3,
+  }),
+  "homeService.advancePercent": def<number>({
+    ...int(10, 100),
+    default: 50,
+    group: "homeService",
+    label: "Advance (% of total)",
+    help: "The share of the visit total a customer pays up front; the rest is paid at the door.",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "homeService.paymentWindowMinutes": def<number>({
+    ...int(5, 60),
+    default: 15,
+    group: "homeService",
+    label: "Time to pay the advance (minutes)",
+    help: "How long a new home booking holds its time while the customer pays.",
+    tier: 3,
+  }),
+  "homeService.minOrderMinMinor": def<number>({
+    ...int(0, 1_000_000),
+    default: 20_000,
+    group: "homeService",
+    label: "Lowest minimum order a branch may set (poisha)",
+    help: "A branch's minimum home order can't be set below this.",
+    tier: 3,
+  }),
+  "homeService.minOrderMaxMinor": def<number>({
+    ...int(0, 5_000_000),
+    default: 200_000,
+    group: "homeService",
+    label: "Highest minimum order a branch may set (poisha)",
+    help: "A branch's minimum home order can't be set above this.",
+    tier: 3,
+  }),
+  "homeService.freeCancelHours": def<number>({
+    ...int(0, 72),
+    default: 3,
+    group: "homeService",
+    label: "Free cancellation window (hours)",
+    help: "Under the Window policy, a customer cancels free until this long before the visit.",
+    public: true,
+    tier: 3,
+  }),
+  "homeService.noShowWaitMinutes": def<number>({
+    ...int(5, 60),
+    default: 20,
+    group: "homeService",
+    label: "Expert waits before a no-show (minutes)",
+    help: "How long after arriving the expert must wait before marking the customer a no-show.",
+    tier: 3,
+  }),
+  "homeService.noShowBlockThreshold": def<number>({
+    ...int(1, 20),
+    default: 3,
+    group: "homeService",
+    label: "No-shows before a block",
+    help: "A customer with this many no-shows can't book Home Service for a while.",
+    tier: 3,
+  }),
+  "homeService.noShowBlockDays": def<number>({
+    ...int(1, 365),
+    default: 30,
+    group: "homeService",
+    label: "No-show block length (days)",
+    help: "How long a blocked customer waits before they can book Home Service again.",
+    tier: 3,
+  }),
+  "homeService.appealWindowHours": def<number>({
+    ...int(1, 720),
+    default: 48,
+    group: "homeService",
+    label: "Appeal window (hours)",
+    help: "How long after a cancel or no-show fee a customer can appeal it.",
+    public: true,
+    tier: 3,
+  }),
+  "homeService.bookingWindowDays": def<number>({
+    ...int(1, 30),
+    default: 7,
+    group: "homeService",
+    label: "Days customers can book ahead",
+    help: "Customers pick from today and the following days, this many in all.",
+    public: true,
+    tier: 3,
+  }),
+  "homeService.minLeadMinutes": def<number>({
+    ...int(0, 1440),
+    default: 120,
+    group: "homeService",
+    label: "Minimum notice (minutes)",
+    help: "The earliest start a customer can book is this long from now.",
+    public: true,
+    tier: 3,
+  }),
+  "homeService.slotStepMinutes": def<number>({
+    ...int(15, 60),
+    default: 30,
+    group: "homeService",
+    label: "Time grid (minutes)",
+    help: "The spacing of the start times customers can pick.",
+    tier: 3,
+  }),
+  "homeService.rescheduleCutoffHours": def<number>({
+    ...int(0, 72),
+    default: 3,
+    group: "homeService",
+    label: "Reschedule cut-off (hours)",
+    help: "A customer can move a visit until this long before it starts.",
+    public: true,
+    tier: 3,
+  }),
+  "homeService.maxRescheduleCount": def<number>({
+    ...int(0, 5),
+    default: 1,
+    group: "homeService",
+    label: "Reschedules per booking",
+    help: "How many times a customer can move one home visit.",
+    public: true,
+    tier: 3,
+  }),
+  "homeService.maxRadiusKm": def<number>({
+    ...int(1, 30),
+    default: 10,
+    group: "homeService",
+    label: "Largest service radius (km)",
+    help: "The farthest a branch can set its experts to travel.",
+    tier: 3,
+  }),
+  "homeService.dayStartBound": def<string>({
+    ...time(),
+    default: "08:00",
+    group: "homeService",
+    label: "Earliest visit start (HH:MM)",
+    help: "No branch can offer a home visit starting before this time.",
+    tier: 3,
+  }),
+  "homeService.dayEndBound": def<string>({
+    ...time(),
+    default: "21:00",
+    group: "homeService",
+    label: "Latest visit end (HH:MM)",
+    help: "No home visit can run past this time.",
+    tier: 3,
+  }),
+  "homeService.ladiesLastStart": def<string>({
+    ...time(),
+    default: "19:30",
+    group: "homeService",
+    label: "Latest Ladies start (HH:MM)",
+    help: "Ladies at Home visits can't start after this time.",
+    public: true,
+    tier: 3,
+  }),
+  "homeService.maxActivePerCustomer": def<number>({
+    ...int(1, 10),
+    default: 3,
+    group: "homeService",
+    label: "Active home bookings per customer",
+    help: "How many upcoming home visits one customer can hold at once.",
+    tier: 3,
+  }),
 };
 
 export type SettingKey = keyof typeof SETTINGS;
@@ -608,6 +926,7 @@ export const settingPermission = (key: SettingKey) => {
   const { group } = SETTINGS[key];
   if (group === "flags") return "flags.manage" as const;
   if (group === "content") return "content.manage" as const;
+  if (group === "homeService") return "homeservice.policy" as const;
   return "settings.manage" as const;
 };
 
@@ -696,6 +1015,14 @@ export const getSetting = async <K extends SettingKey>(key: K): Promise<SettingV
  * change made on another instance by up to one read. Before the first load it
  * answers from env/defaults - today's values.
  */
+/** The value plus its row version (0 = never saved), so a caller can tell whether it changed since it last read. */
+export const getSettingWithVersion = async <K extends SettingKey>(
+  key: K,
+): Promise<{ value: SettingValue<K>; version: number }> => {
+  if (stale()) await refresh();
+  return { value: resolve(key).value, version: rows.get(key)?.version ?? 0 };
+};
+
 export const getSettingSync = <K extends SettingKey>(key: K): SettingValue<K> => {
   if (stale()) void refresh();
   return resolve(key).value;
@@ -732,6 +1059,7 @@ export const describeSettings = async () => {
       approval: Boolean(entry.approval),
       tier: entry.tier,
       permission: settingPermission(key),
+      options: entry.options ?? null,
       version: row?.version ?? 0,
       updatedAt: row?.updatedAt ?? null,
       updatedById: row?.updatedById ?? null,

@@ -1214,3 +1214,63 @@ export const getTeamJoinedTemplate = (notice: {
      <p><strong>${escapeHtml(notice.memberName)}</strong> (${escapeHtml(notice.memberEmail)}) accepted the invitation and now works at <strong>${escapeHtml(notice.salonName)}</strong> as ${escapeHtml(branchRoleLabel(notice.role))}.</p>
      <p>You can change their role or remove them from the Team page at any time.</p>`,
   );
+
+/** To a salon owner when an admin decides a branch's Home Service or one of its experts. */
+export const getHomeServiceDecisionTemplate = (notice: {
+  kind: "branch_approved" | "branch_rejected" | "branch_suspended" | "expert_verified" | "expert_rejected";
+  ownerName: string;
+  salonName: string;
+  expertName?: string | null;
+  reason?: string | null;
+  link: string;
+  contactUrl: string;
+}) => {
+  const name = escapeHtml(notice.ownerName);
+  const salon = `<strong>${escapeHtml(notice.salonName)}</strong>`;
+  const expert = `<strong>${escapeHtml(notice.expertName ?? "Your expert")}</strong>`;
+  const reason = notice.reason ? `<p><strong>Reason:</strong> ${escapeHtml(notice.reason)}</p>` : "";
+  switch (notice.kind) {
+    case "branch_approved":
+      return moneyLayout(
+        "Home Service is live",
+        `<p>Hi ${name},</p>
+         <p>Home Service at ${salon} is approved. Customers can now book your verified experts for home visits.</p>
+         ${buttonLink(notice.link, "Open Home Service")}`
+      );
+    case "branch_rejected":
+      return moneyLayout(
+        "Home Service was not approved",
+        `<p>Hi ${name},</p>
+         <p>We could not approve Home Service at ${salon} yet.</p>
+         ${reason}
+         <p>Fix what is listed above and turn Home Service on again; it comes back to our review queue.</p>
+         ${buttonLink(notice.link, "Fix and turn on")}
+         ${contactLine(notice.contactUrl)}`
+      );
+    case "branch_suspended":
+      return moneyLayout(
+        "Home Service is suspended",
+        `<p>Hi ${name},</p>
+         <p>We have suspended Home Service at ${salon}. While it is suspended customers cannot book home visits from this branch.</p>
+         ${reason}
+         ${contactLine(notice.contactUrl)}`
+      );
+    case "expert_verified":
+      return moneyLayout(
+        "Home expert verified",
+        `<p>Hi ${name},</p>
+         <p>${expert} at ${salon} is verified and can now take home visits for the services linked to them.</p>
+         ${buttonLink(notice.link, "Open Home Service")}`
+      );
+    default:
+      return moneyLayout(
+        "Home expert not verified",
+        `<p>Hi ${name},</p>
+         <p>We could not verify ${expert} at ${salon}.</p>
+         ${reason}
+         <p>Update their documents and submit them again.</p>
+         ${buttonLink(notice.link, "Update documents")}
+         ${contactLine(notice.contactUrl)}`
+      );
+  }
+};
