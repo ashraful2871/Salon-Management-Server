@@ -8,6 +8,7 @@ import { buildAuditCtx } from "../Admin/admin.middleware";
 import * as Admin from "./home.admin";
 import * as Experts from "./home.expertSetup";
 import * as Owner from "./home.owner";
+import * as Public from "./home.public";
 
 const ctxOf = (req: Request) => buildAuditCtx(req, req.user!.role);
 const ok = <T>(res: Response, message: string, data: T, statusCode: number = StatusCodes.OK) =>
@@ -155,7 +156,41 @@ const adminExpertGender = catchAsync(async (req: Request, res: Response) => {
   ok(res, "Gender updated; the expert needs verifying again", await Admin.setExpertGender(req.auditCtx, id(req), req.body.gender, req.body.reason));
 });
 
+// ---------------------------------------------------------------- public reads
+
+const viewerOf = (req: Request) => (req.user?.userId ? { userId: String(req.user.userId) } : undefined);
+
+const publicCatalog = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Home Service catalog", await Public.getCatalog(viewerOf(req), req.query));
+});
+
+const publicExperts = catchAsync(async (req: Request, res: Response) => {
+  const { meta, data } = await Public.listExperts(viewerOf(req), req.query);
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Home experts", meta, data });
+});
+
+const publicExpert = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Home expert", await Public.getExpert(viewerOf(req), String(req.params.id), req.query));
+});
+
+const publicAvailability = catchAsync(async (req: Request, res: Response) => {
+  const data = await Public.getAvailability(viewerOf(req), req.query);
+  res.set("Cache-Control", "no-store");
+  ok(res, "Available times", data);
+});
+
+const publicAvailabilityDays = catchAsync(async (req: Request, res: Response) => {
+  const data = await Public.getAvailabilityDays(viewerOf(req), req.query);
+  res.set("Cache-Control", "no-store");
+  ok(res, "Available days", data);
+});
+
 export const HomeController = {
+  publicCatalog,
+  publicExperts,
+  publicExpert,
+  publicAvailability,
+  publicAvailabilityDays,
   getProfile,
   turnOn,
   turnOff,

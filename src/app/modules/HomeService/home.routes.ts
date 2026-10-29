@@ -1,6 +1,7 @@
 import express from "express";
 import auth from "../../middlewares/auth";
-import { adminSensitiveLimiter } from "../../middlewares/rateLimiter";
+import optionalAuth from "../../middlewares/optionalAuth";
+import { adminSensitiveLimiter, homePublicLimiter } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { BUSINESS_ROLES } from "../../utils/salonAccess";
 import { adminAuth, adminOnly, requireStepUp } from "../Admin/admin.middleware";
@@ -8,6 +9,14 @@ import { HomeController } from "./home.controller";
 import { HomeValidation } from "./home.validation";
 
 const router = express.Router();
+
+// Public reads: guests can browse. optionalAuth first, so a test customer sees test salons.
+const publicRead = [optionalAuth(), homePublicLimiter];
+router.get("/catalog", ...publicRead, HomeController.publicCatalog);
+router.get("/experts", ...publicRead, HomeController.publicExperts);
+router.get("/experts/:id", ...publicRead, HomeController.publicExpert);
+router.get("/availability", ...publicRead, HomeController.publicAvailability);
+router.get("/availability/days", ...publicRead, HomeController.publicAvailabilityDays);
 
 // Owner side. Settings and menu: homeservice.manage at the branch (salonAccess).
 router.get("/owner/profile", auth(...BUSINESS_ROLES), validateRequest(HomeValidation.salonQuery), HomeController.getProfile);

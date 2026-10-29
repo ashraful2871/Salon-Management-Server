@@ -377,3 +377,16 @@ export const adminSensitiveLimiter = rateLimit({
     message: "Too many sensitive actions. Try again in an hour.",
   },
 });
+
+/**
+ * Home Service public reads (catalog, experts, availability): 60 a minute per
+ * visitor. Keyed on clientIp, so per visitor only with INTERNAL_API_KEY set.
+ */
+export const homePublicLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many requests. Try again in a minute." },
+});

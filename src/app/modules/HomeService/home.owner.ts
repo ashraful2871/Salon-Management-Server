@@ -86,7 +86,7 @@ const loadPlatformCaps = async () => {
   };
 };
 
-const loadPolicyInForce = async () => {
+export const loadPolicyInForce = async () => {
   const [customerCancelPolicy, freeCancelHours, lateCancelPercent, noShowPercent, nonRefundableGraceMinutes, advancePercent] =
     await Promise.all([
       getSetting("homeService.customerCancelPolicy"),
