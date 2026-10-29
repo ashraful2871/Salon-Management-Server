@@ -1,3 +1,4 @@
+import { UserRole } from "@prisma/client";
 import express from "express";
 import auth from "../../middlewares/auth";
 import optionalAuth from "../../middlewares/optionalAuth";
@@ -150,6 +151,43 @@ router.post(
   paymentLimiter,
   validateRequest(HomeValidation.payBooking, { replaceBody: true }),
   HomeController.payBooking,
+);
+
+router.post(
+  "/bookings/:id/pay-balance",
+  auth(),
+  paymentLimiter,
+  validateRequest(HomeValidation.bookingId),
+  HomeController.payBalance,
+);
+
+// The expert runs the visit. Only the assigned expert's staff user sees a job (else 404).
+const expert = auth(UserRole.STAFF, UserRole.BRANCH_MANAGER);
+router.get("/jobs", expert, validateRequest(HomeValidation.myJobs), HomeController.myJobs);
+router.get("/jobs/:id", expert, validateRequest(HomeValidation.bookingId), HomeController.myJob);
+router.post("/jobs/:id/en-route", expert, validateRequest(HomeValidation.bookingId), HomeController.jobEnRoute);
+router.post("/jobs/:id/arrived", expert, validateRequest(HomeValidation.bookingId), HomeController.jobArrived);
+router.post("/jobs/:id/start", expert, validateRequest(HomeValidation.startJob, { replaceBody: true }), HomeController.jobStart);
+router.post(
+  "/jobs/:id/complete",
+  expert,
+  validateRequest(HomeValidation.completeJob, { replaceBody: true }),
+  HomeController.jobComplete,
+);
+
+// Bookings board: homeservice.bookings at the branch (salonAccess).
+router.get("/owner/bookings", auth(...BUSINESS_ROLES), validateRequest(HomeValidation.ownerBookings), HomeController.ownerBookings);
+router.post(
+  "/owner/bookings/:id/reassign",
+  auth(...BUSINESS_ROLES),
+  validateRequest(HomeValidation.reassign, { replaceBody: true }),
+  HomeController.ownerReassign,
+);
+router.post(
+  "/owner/bookings/:id/override-start",
+  auth(...BUSINESS_ROLES),
+  validateRequest(HomeValidation.overrideStart, { replaceBody: true }),
+  HomeController.ownerOverrideStart,
 );
 
 export const HomeServiceRoutes = router;

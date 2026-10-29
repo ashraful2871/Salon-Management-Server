@@ -26,3 +26,7 @@ export const expireUnpaidHomeBookings = async () => {
   }
   return { expired: rows.length };
 };
+
+// home.stale (IN_PROGRESS long past its end → COMPLETED + settled) and
+// home.notArrived (EXPERT_LATE_FLAG) live with the visit lifecycle.
+export { closeStaleVisits, flagLateExperts } from "./home.lifecycle";

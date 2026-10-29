@@ -43,3 +43,7 @@ export const priceCart = (
     commissionBps: Math.round(settings.commissionPercent * 100),
   };
 };
+
+/** Commission on a completed visit: the subtotal only (never the travel fee), at the snapshot rate. */
+export const homeCommissionMinor = (subtotalMinor: number, commissionBps: number) =>
+  Math.round((subtotalMinor * commissionBps) / 10_000);

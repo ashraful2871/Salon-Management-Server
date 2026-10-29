@@ -9,6 +9,7 @@ import { buildAuditCtx } from "../Admin/admin.middleware";
 import * as Admin from "./home.admin";
 import * as Booking from "./home.booking";
 import * as Experts from "./home.expertSetup";
+import * as Lifecycle from "./home.lifecycle";
 import * as Owner from "./home.owner";
 import * as Public from "./home.public";
 
@@ -222,7 +223,77 @@ const getBooking = catchAsync(async (req: Request, res: Response) => {
   ok(res, "Home visit", await Booking.getBooking(String(req.user!.userId), id(req)));
 });
 
+const payBalance = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Balance paid from your wallet", await Lifecycle.payBalance(actorOf(req), id(req)));
+});
+
+// ---------------------------------------------------------------- expert: my jobs
+
+const me = (req: Request) => String(req.user!.userId);
+
+const myJobs = catchAsync(async (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  const date = req.query.date ? String(req.query.date) : undefined;
+  ok(res, "My jobs", await Lifecycle.listMyJobs(me(req), date));
+});
+
+const myJob = catchAsync(async (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  ok(res, "Job", await Lifecycle.getMyJob(me(req), id(req)));
+});
+
+const jobEnRoute = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "On the way", await Lifecycle.setOff(me(req), id(req)));
+});
+
+const jobArrived = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Arrived", await Lifecycle.arrived(me(req), id(req)));
+});
+
+const jobStart = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Visit started", await Lifecycle.startJob(me(req), id(req), req.body.code));
+});
+
+const jobComplete = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Visit completed", await Lifecycle.completeJob(me(req), id(req), req.body));
+});
+
+// ---------------------------------------------------------------- owner: bookings board
+
+const ownerBookings = catchAsync(async (req: Request, res: Response) => {
+  const q = req.query as Record<string, string | undefined>;
+  const { meta, data } = await Lifecycle.listOwnerBookings(withAccessCache(req), {
+    salonId: q.salonId,
+    status: q.status as Lifecycle.BoardQuery["status"],
+    audience: q.audience as HomeAudience | undefined,
+    expertId: q.expertId,
+    from: q.from,
+    to: q.to,
+    page: Math.max(1, Number(q.page) || 1),
+  });
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Home visits", meta, data });
+});
+
+const ownerReassign = catchAsync(async (req: Request, res: Response) => {
+  const data = await Lifecycle.reassign(withAccessCache(req), ctxOf(req), id(req), req.body.expertId, req.body.reason);
+  ok(res, "Visit reassigned", data);
+});
+
+const ownerOverrideStart = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Visit started", await Lifecycle.overrideStart(withAccessCache(req), ctxOf(req), id(req), req.body.reason));
+});
+
 export const HomeController = {
+  payBalance,
+  myJobs,
+  myJob,
+  jobEnRoute,
+  jobArrived,
+  jobStart,
+  jobComplete,
+  ownerBookings,
+  ownerReassign,
+  ownerOverrideStart,
   quote,
   createBooking,
   payBooking,

@@ -211,6 +211,41 @@ const myBookings = z.object({
 
 const bookingId = z.object({ params: idParams });
 
+// ---------------------------------------------------------------- visit lifecycle
+
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
+
+const myJobs = z.object({ query: z.object({ date: day.optional() }).passthrough() });
+
+const startJob = z.object({ params: idParams, body: z.object({ code: z.string().regex(/^\d{4}$/, "Enter the 4-digit code") }) });
+
+const completeJob = z.object({
+  params: idParams,
+  body: z.object({
+    balanceMethod: z.enum(["CASH", "BKASH_TO_SALON", "WALLET", "NOT_COLLECTED"]),
+    collectedMinor: z.number().int().min(0).max(10_000_000),
+    note: z.string().trim().max(500).optional(),
+  }),
+});
+
+const ownerBookingsQuery = z
+  .object({
+    salonId: salonId.optional(),
+    status: z.enum(["PENDING_PAYMENT", "CONFIRMED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"]).optional(),
+    audience: z.nativeEnum(HomeAudience).optional(),
+    expertId: z.string().uuid().optional(),
+    from: day.optional(),
+    to: day.optional(),
+    page,
+  })
+  .passthrough();
+
+const ownerBookings = z.object({ query: ownerBookingsQuery });
+
+const reassign = z.object({ params: idParams, body: z.object({ expertId: z.string().uuid(), reason: requiredReason }) });
+
+const overrideStart = z.object({ params: idParams, body: z.object({ reason: requiredReason }) });
+
 export const HomeValidation = {
   salonQuery,
   turnOn,
@@ -239,7 +274,16 @@ export const HomeValidation = {
   payBooking,
   myBookings,
   bookingId,
+  myJobs,
+  startJob,
+  completeJob,
+  ownerBookings,
+  reassign,
+  overrideStart,
 };
+
+export type CompleteJobBody = z.infer<typeof completeJob>["body"];
+export type OwnerBookingsQuery = z.infer<typeof ownerBookingsQuery>;
 
 export type DocKind = z.infer<typeof docKind>;
 export type CreateExpertBody = z.infer<typeof createExpert>["body"];

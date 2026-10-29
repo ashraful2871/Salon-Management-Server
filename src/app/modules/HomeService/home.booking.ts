@@ -24,6 +24,7 @@ import { lockStaff } from "../Staff/staff.schedule";
 import { WalletService } from "../Wallet/wallet.service";
 import { availableFor, eligibleExperts, expertCanTake, loadCart, loadSlotSettings, windowDays } from "./home.availability";
 import { ACTIVE_BOOKING_STATUSES } from "./home.expertSetup";
+import { startCodeFor } from "./home.lifecycle";
 import { priceCart } from "./home.money";
 import { isBranchBookable, loadHomeFlags } from "./home.owner";
 import {
@@ -389,12 +390,12 @@ export const quote = async (actor: Actor, body: QuoteBody) => quoteView(await ru
 const B32 = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const newCode = () => `HS-${Array.from({ length: 4 }, () => B32[randomInt(B32.length)]).join("")}`;
 
-const isExclusionViolation = (e: unknown) => {
+export const isExclusionViolation = (e: unknown) => {
   const err = e as { code?: string; meta?: { code?: string }; message?: string };
   return err?.meta?.code === "23P01" || /23P01|exclusion constraint|home_bookings_no_overlap/i.test(err?.message ?? "");
 };
 /** Deadlock, write conflict (P2034) or a lock wait past `lock_timeout` (55P03): someone else got there. */
-const isContention = (e: unknown) => {
+export const isContention = (e: unknown) => {
   const err = e as { code?: string; message?: string };
   return err?.code === "P2034" || /40P01|deadlock detected|55P03|lock timeout/i.test(err?.message ?? "");
 };
@@ -404,7 +405,7 @@ const isUniqueOn = (e: unknown, field: string) => {
 };
 
 /** Unpaid bookings of this expert past their window → EXPIRED, under the expert's lock. */
-const expireStaleOf = async (tx: Tx, expertId: string) => {
+export const expireStaleOf = async (tx: Tx, expertId: string) => {
   const rows = await tx.$queryRaw<{ id: string }[]>`
     UPDATE home_bookings SET status = 'EXPIRED', "updatedAt" = now()
     WHERE "expertId" = ${expertId} AND status = 'PENDING_PAYMENT' AND "expiresAt" < now()
@@ -866,6 +867,7 @@ export const getBooking = async (userId: string, id: string) => {
       disclaimerText: true,
       policyAcceptedAt: true,
       confirmedAt: true,
+      balanceMethod: true,
       cancelledAt: true,
       cancelledBy: true,
       cancelReason: true,
@@ -902,7 +904,9 @@ export const getBooking = async (userId: string, id: string) => {
     cancelledBy: rest.cancelledBy,
     cancelReason: rest.cancelReason,
     timeline: events,
-    // Phase 7: the 4-digit code the customer reads out at the door.
-    startCode: null as string | null,
+    // The 4-digit code the customer reads out at the door (until the visit starts).
+    startCode: startCodeFor({ id: b.id, status: b.status }),
+    balanceMethod: rest.balanceMethod,
+    balanceHeldInApp: rest.balanceMethod === "WALLET",
   };
 };
