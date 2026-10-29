@@ -1,7 +1,7 @@
 import express from "express";
 import auth from "../../middlewares/auth";
 import optionalAuth from "../../middlewares/optionalAuth";
-import { adminSensitiveLimiter, homePublicLimiter } from "../../middlewares/rateLimiter";
+import { adminSensitiveLimiter, homePublicLimiter, paymentLimiter } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { BUSINESS_ROLES } from "../../utils/salonAccess";
 import { adminAuth, adminOnly, requireStepUp } from "../Admin/admin.middleware";
@@ -129,6 +129,27 @@ router.delete(
   auth(...BUSINESS_ROLES),
   validateRequest(HomeValidation.removeExpert),
   HomeController.removeExpert,
+);
+
+// Customer bookings. Any signed-in account reaches the service, which answers
+// a non-customer with HOME_SERVICE_CUSTOMER_ONLY (a bare role gate would
+// give a codeless "Forbidden!").
+router.post("/bookings/quote", auth(), homePublicLimiter, validateRequest(HomeValidation.quote, { replaceBody: true }), HomeController.quote);
+router.post(
+  "/bookings",
+  auth(),
+  homePublicLimiter,
+  validateRequest(HomeValidation.createBooking, { replaceBody: true }),
+  HomeController.createBooking,
+);
+router.get("/bookings/me", auth(), validateRequest(HomeValidation.myBookings), HomeController.myBookings);
+router.get("/bookings/:id", auth(), validateRequest(HomeValidation.bookingId), HomeController.getBooking);
+router.post(
+  "/bookings/:id/pay",
+  auth(),
+  paymentLimiter,
+  validateRequest(HomeValidation.payBooking, { replaceBody: true }),
+  HomeController.payBooking,
 );
 
 export const HomeServiceRoutes = router;

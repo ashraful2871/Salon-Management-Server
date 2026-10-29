@@ -95,7 +95,13 @@ export const sslCommerzProvider: SslCommerzProvider = {
       cus_country: "Bangladesh",
       shipping_method: "NO",
       product_name:
-        purpose === "WALLET_TOPUP" ? "Wallet Top-up" : purpose === "SALON_DUES" ? "Salon Dues" : "Salon Booking",
+        purpose === "WALLET_TOPUP"
+          ? "Wallet Top-up"
+          : purpose === "SALON_DUES"
+            ? "Salon Dues"
+            : purpose === "HOME_BOOKING"
+              ? "Home Service Advance"
+              : "Salon Booking",
       product_category: "Service",
       product_profile: "general",
     });

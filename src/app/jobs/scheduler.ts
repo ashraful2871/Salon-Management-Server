@@ -31,6 +31,7 @@ import {
 import prisma from "../shared/prisma";
 import { JobRunStatus, Prisma } from "@prisma/client";
 import { releaseJobLock, tryJobLock } from "./jobLock";
+import { expireUnpaidHomeBookings } from "../modules/HomeService/home.jobs";
 
 /**
  * Periodic money work, the AI search index repair, retention, and the health
@@ -255,6 +256,8 @@ export const JOBS: JobDef[] = [
   // Arrival is an explicit check-in at the counter, so nothing starts a booking
   // on the clock. Bookings nobody checked in become no-shows; ones that were
   // checked in but never completed are closed as completed instead.
+  // Home Service: an unpaid visit frees its time once the payment window ends.
+  { name: "home.expire", everyMs: MINUTE, safeToRunNow: true, run: expireUnpaidHomeBookings },
   { name: "deposit.autoNoShow", everyMs: NO_SHOW_INTERVAL_MS, safeToRunNow: false, run: () => AppointmentDeposit.autoMarkNoShows() },
   { name: "appointment.autoCloseStale", everyMs: STALE_CHECKOUT_INTERVAL_MS, safeToRunNow: false, run: () => AppointmentCheckout.autoCloseStaleCheckIns() },
   { name: "wallet.audit", everyMs: WALLET_AUDIT_INTERVAL_MS, safeToRunNow: true, run: auditWallets },

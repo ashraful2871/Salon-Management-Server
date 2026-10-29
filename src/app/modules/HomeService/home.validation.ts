@@ -164,6 +164,53 @@ const adminExpertGender = z.object({
   body: z.object({ gender: expertGender, reason: requiredReason }),
 });
 
+// ---------------------------------------------------------------- booking (customer)
+// Types and coarse caps only: the field-length, location and recipient rules
+// run in the booking checks, in their documented order and with their codes.
+
+const loose = (max: number) => z.string().max(max);
+
+const quoteFields = {
+  salonId,
+  audience: z.nativeEnum(HomeAudience),
+  offeringIds: z.array(z.string().uuid()).min(1).max(10),
+  expertId: z.union([z.literal("ANY"), z.string().uuid()]),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
+  startAt: z.string().datetime({ offset: true }),
+  lat: z.number(),
+  lng: z.number(),
+  addressLine: loose(1000),
+  area: loose(1000).optional(),
+  landmark: loose(1000).optional(),
+  recipientName: loose(1000),
+  recipientIsWoman: z.boolean().optional(),
+  contactPhone: loose(40),
+  notes: loose(2000).optional(),
+};
+
+const quote = z.object({ body: z.object(quoteFields) });
+
+const createBooking = z.object({
+  body: z.object({
+    ...quoteFields,
+    quoteHash: z.string().regex(/^[0-9a-f]{64}$/),
+    policyAccepted: z.boolean().default(false),
+    policyVersion: z.number().int().min(0),
+    lang: z.enum(["en", "bn"]).optional(),
+  }),
+});
+
+const payBooking = z.object({
+  params: idParams,
+  body: z.object({ method: z.enum(["WALLET", "BKASH", "SSLCOMMERZ"]) }),
+});
+
+const myBookings = z.object({
+  query: z.object({ tab: z.enum(["upcoming", "past"]).optional(), page }).passthrough(),
+});
+
+const bookingId = z.object({ params: idParams });
+
 export const HomeValidation = {
   salonQuery,
   turnOn,
@@ -187,6 +234,11 @@ export const HomeValidation = {
   adminWithReason,
   adminOptionalReason,
   adminExpertGender,
+  quote,
+  createBooking,
+  payBooking,
+  myBookings,
+  bookingId,
 };
 
 export type DocKind = z.infer<typeof docKind>;
@@ -201,3 +253,5 @@ export type ResumeBody = z.infer<typeof resume>["body"];
 export type UpdateProfileBody = z.infer<typeof updateProfile>["body"];
 export type CreateOfferingBody = z.infer<typeof createOffering>["body"];
 export type UpdateOfferingBody = z.infer<typeof updateOffering>["body"];
+export type QuoteBody = z.infer<typeof quote>["body"];
+export type CreateBookingBody = z.infer<typeof createBooking>["body"];

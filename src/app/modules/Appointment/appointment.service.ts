@@ -44,7 +44,7 @@ import { AppointmentDeposit } from "./appointment.deposit";
 import { AppointmentIdentity } from "./appointment.identity";
 import { attentionWhere, isAttentionKind } from "./appointment.attention";
 import { assertNotClosed } from "../Salon/salon.closure";
-import { assertStaffWorking } from "../Staff/staff.schedule";
+import { assertNoHomeVisit, assertStaffWorking, lockStaff } from "../Staff/staff.schedule";
 
 import { SITE_NAME } from "../../utils/brand";
 /**
@@ -395,6 +395,13 @@ const claimSlotAndCreate = async (
   input: ClaimSlotInput,
 ) => {
   await claimSlot(tx, input.slot, input.customerId);
+
+  // A chosen stylist may have been booked for a home visit since the early
+  // check: take the stylist lock the home booking takes and look again.
+  if (input.staffId) {
+    await lockStaff(tx, input.staffId);
+    await assertNoHomeVisit({ id: input.staffId }, input.slot.date, input.slot.startTime, input.slot.endTime, tx);
+  }
 
   // The commission rate in force now, kept on the booking so a later change
   // to the setting never reprices it.

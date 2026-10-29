@@ -32,6 +32,7 @@ import {
   settleDuesPayment,
 } from "../Settlement/settlement.dues";
 import { getOwnerBuckets } from "../Settlement/settlement.buckets";
+import { confirmPaidHomeBooking } from "../HomeService/home.booking";
 
 const MIN_TOPUP_MINOR = 10000; // BDT 100
 const MAX_TOPUP_MINOR = 5000000; // BDT 50,000
@@ -115,7 +116,7 @@ const startGatewaySession = async (
   intent: PaymentIntent,
   provider: ReturnType<typeof getProvider>,
   user: { name: string; email: string; phone: string | null },
-  purpose: "WALLET_TOPUP" | "SALON_DUES",
+  purpose: "WALLET_TOPUP" | "SALON_DUES" | "HOME_BOOKING",
 ) => {
   const amountMinor = intent.amountMinor;
   try {
@@ -222,6 +223,57 @@ const initiateDuesPayment = async (
   return startGatewaySession(intent, provider, user, "SALON_DUES");
 };
 
+/** The gateways' floor; a smaller home-visit shortfall is rounded up to it. */
+const MIN_HOME_TOPUP_MINOR = 1000; // BDT 10
+
+/**
+ * A home visit's advance the wallet cannot cover: the customer pays the
+ * shortfall at the gateway. It lands in the wallet as a top-up first, then
+ * `confirmPaidHomeBooking` holds the advance (see `creditSettledIntent`).
+ * The amount is the caller's (home.booking decides it), so nothing here
+ * trusts the client.
+ */
+const initiateHomeBookingPayment = async (
+  userId: string,
+  homeBookingId: string,
+  shortfallMinor: number,
+  providerName: ProviderName,
+) => {
+  const provider = getProvider(providerName);
+  if (!provider.isEnabled()) {
+    throw new ApiError(
+      StatusCodes.SERVICE_UNAVAILABLE,
+      `${provider.displayName} is not available right now`,
+    );
+  }
+
+  const amountMinor = Math.max(MIN_HOME_TOPUP_MINOR, Math.ceil(shortfallMinor / 100) * 100);
+  if (amountMinor > MAX_TOPUP_MINOR) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Payments over ${formatBDT(MAX_TOPUP_MINOR)} can't be made online`,
+    );
+  }
+
+  const user = await prisma.user.findFirst({ where: { id: userId, isDeleted: false } });
+  if (!user) throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
+  await WalletService.getOrCreateWallet(userId);
+
+  const intent = await prisma.paymentIntent.create({
+    data: {
+      transactionId: newTransactionId("HOME"),
+      userId,
+      purpose: IntentPurpose.HOME_BOOKING,
+      referenceId: homeBookingId,
+      amountMinor,
+      status: IntentStatus.INITIATED,
+      provider: provider.name,
+    },
+  });
+
+  return { intentId: intent.id, ...(await startGatewaySession(intent, provider, user, "HOME_BOOKING")) };
+};
+
 // ---------------------------------------------------------------------------
 // Settlement
 // ---------------------------------------------------------------------------
@@ -278,7 +330,12 @@ const creditSettledIntent = async (
 
     if (claim.count === 0) return false;
 
-    if (intent.purpose === IntentPurpose.WALLET_TOPUP) {
+    // A home visit's shortfall is a top-up like any other: the money lands in
+    // the wallet here, and the advance is held from it after this commits.
+    if (
+      intent.purpose === IntentPurpose.WALLET_TOPUP ||
+      intent.purpose === IntentPurpose.HOME_BOOKING
+    ) {
       await WalletService.mutate(
         {
           userId: intent.userId,
@@ -317,6 +374,14 @@ const creditSettledIntent = async (
   }, { maxWait: 10_000, timeout: 15_000 });
 
   if (credited) notifyTopupSuccess(intent, settled);
+  // Separate from the credit on purpose: the money is the customer's whatever
+  // happens to the booking (a late payment whose time is gone stays in the
+  // wallet). Idempotent, so a replayed IPN just re-reads the booking.
+  if (intent.purpose === IntentPurpose.HOME_BOOKING && intent.referenceId) {
+    await confirmPaidHomeBooking(intent.referenceId, intent.amountMinor).catch((error) =>
+      console.error(`[payment] home booking ${intent.referenceId} not confirmed after ${intent.transactionId}`, error),
+    );
+  }
   if (credited && intent.purpose === IntentPurpose.SALON_DUES && intent.referenceId) {
     await afterDuesChange(intent.referenceId);
   }
@@ -1175,6 +1240,7 @@ const getIntentStatus = async (userId: string, transactionId: string) => {
       userId: true,
       transactionId: true,
       purpose: true,
+      referenceId: true,
       amountMinor: true,
       status: true,
       provider: true,
@@ -1207,6 +1273,7 @@ const getIntentStatus = async (userId: string, transactionId: string) => {
 export const PaymentIntentService = {
   initiateTopup,
   initiateDuesPayment,
+  initiateHomeBookingPayment,
   processIpn,
   settleFromSuccessRedirect,
   resolveByTransactionId,

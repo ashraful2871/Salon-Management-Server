@@ -1,11 +1,13 @@
 import { HomeAudience } from "@prisma/client";
 import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
+import ApiError from "../../Error/error";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { withAccessCache } from "../../utils/salonAccess";
 import { buildAuditCtx } from "../Admin/admin.middleware";
 import * as Admin from "./home.admin";
+import * as Booking from "./home.booking";
 import * as Experts from "./home.expertSetup";
 import * as Owner from "./home.owner";
 import * as Public from "./home.public";
@@ -185,7 +187,47 @@ const publicAvailabilityDays = catchAsync(async (req: Request, res: Response) =>
   ok(res, "Available days", data);
 });
 
+// ---------------------------------------------------------------- customer bookings
+
+const actorOf = (req: Request): Booking.Actor => ({ userId: String(req.user!.userId), impersonating: Boolean(req.user?.imp) });
+
+const quote = catchAsync(async (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  ok(res, "Home visit quote", await Booking.quote(actorOf(req), req.body));
+});
+
+const createBooking = catchAsync(async (req: Request, res: Response) => {
+  const key = req.get("idempotency-key")?.trim();
+  if (!key || key.length > 100) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "An Idempotency-Key header (up to 100 characters) is required.");
+  }
+  const lang = req.body.lang ?? (/^bn\b/i.test(req.get("accept-language") ?? "") ? "bn" : "en");
+  const data = await Booking.createBooking(actorOf(req), req.body, key, lang);
+  ok(res, "Booking created. Pay the advance to confirm it.", data, StatusCodes.CREATED);
+});
+
+const payBooking = catchAsync(async (req: Request, res: Response) => {
+  const data = await Booking.payBooking(actorOf(req), id(req), req.body.method);
+  ok(res, data.status === "CONFIRMED" ? "Booking confirmed" : "Continue to payment", data);
+});
+
+const myBookings = catchAsync(async (req: Request, res: Response) => {
+  const tab = req.query.tab === "past" ? "past" : "upcoming";
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const { meta, data } = await Booking.listMyBookings(String(req.user!.userId), tab, page);
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "My home visits", meta, data });
+});
+
+const getBooking = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Home visit", await Booking.getBooking(String(req.user!.userId), id(req)));
+});
+
 export const HomeController = {
+  quote,
+  createBooking,
+  payBooking,
+  myBookings,
+  getBooking,
   publicCatalog,
   publicExperts,
   publicExpert,

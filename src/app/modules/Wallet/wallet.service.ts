@@ -281,6 +281,32 @@ const holdDeposit = (
     tx,
   );
 
+/**
+ * A home visit's advance, held for the platform until the visit settles.
+ * Its own key space (`homehold:`), so it can never collide with or settle an
+ * appointment's hold.
+ */
+const holdHomeAdvance = (
+  userId: string,
+  amountMinor: number,
+  homeBookingId: string,
+  tx?: Prisma.TransactionClient,
+) =>
+  mutate(
+    {
+      userId,
+      type: WalletTxType.DEPOSIT_HOLD,
+      amount: 0,
+      holdDelta: amountMinor,
+      description: "Home visit advance held",
+      referenceType: "HOME_BOOKING",
+      referenceId: homeBookingId,
+      idempotencyKey: `homehold:${homeBookingId}`,
+      metadata: { holdDeltaMinor: amountMinor },
+    },
+    tx,
+  );
+
 const releaseDeposit = (
   userId: string,
   amountMinor: number,
@@ -535,6 +561,7 @@ export const WalletService = {
   getOrCreateWallet,
   availableOf,
   holdDeposit,
+  holdHomeAdvance,
   releaseDeposit,
   applyDeposit,
   forfeitDeposit,

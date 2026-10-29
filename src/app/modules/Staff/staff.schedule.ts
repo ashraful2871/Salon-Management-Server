@@ -136,7 +136,56 @@ export const isStaffWorking = async (
   return checkWorking(rules.shiftsOf(staffId), rules.leaveOf(staffId), date, start, end);
 };
 
-/** 409 "{name} is off then" unless the stylist works that time. */
+/**
+ * The per-stylist lock shared by salon bookings and home visits: whoever puts
+ * a stylist on a time takes it, then checks the other side, inside one
+ * transaction. Released at commit.
+ */
+export const lockStaff = (tx: Prisma.TransactionClient, staffId: string) =>
+  tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('staff:' || ${staffId}))`;
+
+/**
+ * Whether the stylist has a live home visit overlapping a salon time
+ * (`date` + Dhaka "HH:mm"). The visit's block already carries the branch's
+ * travel buffer; an unpaid visit past its payment window does not count.
+ */
+export const homeVisitAt = async (staffId: string, date: Date, start: string, end?: string | null, db: Db = prisma) => {
+  const s = toMinutes(start);
+  if (s === null) return false;
+  let e = toMinutes(end) ?? s + 1;
+  if (e <= s) e += 24 * 60;
+  const day0 = dayStart(date.toISOString().slice(0, 10)).getTime();
+  const hit = await db.homeBooking.findFirst({
+    where: {
+      expert: { staffId },
+      status: { in: ["PENDING_PAYMENT", "CONFIRMED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS"] },
+      blockFrom: { lt: new Date(day0 + e * 60000) },
+      blockTo: { gt: new Date(day0 + s * 60000) },
+      OR: [{ status: { not: "PENDING_PAYMENT" } }, { expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+    select: { id: true },
+  });
+  return hit !== null;
+};
+
+const staffName = async (staff: { id: string; name?: string | null }, db: Db) =>
+  staff.name ??
+  (await db.staff.findUnique({ where: { id: staff.id }, select: { user: { select: { name: true } } } }))?.user.name ??
+  "This stylist";
+
+/** 409 "{name} is on a home visit then". */
+export const assertNoHomeVisit = async (
+  staff: { id: string; name?: string | null },
+  date: Date,
+  start: string,
+  end?: string | null,
+  db: Db = prisma,
+) => {
+  if (!(await homeVisitAt(staff.id, date, start, end, db))) return;
+  throw new ApiError(StatusCodes.CONFLICT, `${await staffName(staff, db)} is on a home visit then`);
+};
+
+/** 409 unless the stylist works that time and is not out on a home visit. */
 export const assertStaffWorking = async (
   staff: { id: string; name?: string | null },
   date: Date,
@@ -145,13 +194,8 @@ export const assertStaffWorking = async (
   db: Db = prisma,
 ) => {
   const check = await isStaffWorking(staff.id, date, start, end, db);
-  if (check.working) return;
-  const name =
-    staff.name ??
-    (await db.staff.findUnique({ where: { id: staff.id }, select: { user: { select: { name: true } } } }))?.user
-      .name ??
-    "This stylist";
-  throw new ApiError(StatusCodes.CONFLICT, `${name} is off then`);
+  if (!check.working) throw new ApiError(StatusCodes.CONFLICT, `${await staffName(staff, db)} is off then`);
+  await assertNoHomeVisit(staff, date, start, end, db);
 };
 
 /**
