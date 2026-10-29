@@ -15,6 +15,7 @@ const GROUP_ORDER: SettingGroup[] = [
   "money",
   "limits",
   "flags",
+  "homeService",
   "security",
   "approvals",
   "retention",

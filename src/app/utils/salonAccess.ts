@@ -30,7 +30,9 @@ export type OwnerPermission =
   | "policy.manage"
   | "money.view"
   | "branch.create"
-  | "activity.view";
+  | "activity.view"
+  | "homeservice.manage"
+  | "homeservice.bookings";
 
 export const OWNER_PERMISSIONS: OwnerPermission[] = [
   "bookings.view",
@@ -53,6 +55,8 @@ export const OWNER_PERMISSIONS: OwnerPermission[] = [
   "money.view",
   "branch.create",
   "activity.view",
+  "homeservice.manage",
+  "homeservice.bookings",
 ];
 
 /** What each team role may do at its branch. A STYLIST sees and works only their own bookings. */
@@ -72,8 +76,17 @@ export const ROLE_PERMISSIONS: Record<BranchRole, OwnerPermission[]> = {
     "reports.view",
     "branch.profile",
     "activity.view",
+    "homeservice.manage",
+    "homeservice.bookings",
   ],
-  RECEPTIONIST: ["bookings.view", "bookings.manage", "walkin.create", "close.manage", "customers.view"],
+  RECEPTIONIST: [
+    "bookings.view",
+    "bookings.manage",
+    "walkin.create",
+    "close.manage",
+    "customers.view",
+    "homeservice.bookings",
+  ],
   STYLIST: ["bookings.view", "bookings.manage"],
 };
 

@@ -36,18 +36,18 @@ const check = (name: string, ok: boolean, detail?: string) => {
 const EXPECTED: Record<string, string> = {
   SUPER_ADMIN: ALL_PERMISSIONS.join(" "),
   OPERATIONS:
-    "users.view users.view_pii users.manage users.role users.impersonate salons.view salons.review salons.manage bookings.view bookings.manage appeals.resolve finance.view finance.reconcile reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage system.view system.operate audit.view agents.manage",
+    "users.view users.view_pii users.manage users.role users.impersonate salons.view salons.review salons.manage bookings.view bookings.manage appeals.resolve finance.view finance.reconcile reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage system.view system.operate audit.view agents.manage homeservice.view homeservice.manage homeservice.experts_verify",
   FINANCE:
-    "users.view users.view_pii salons.view bookings.view finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export finance.payout_accounts analytics.view analytics.export settings.view system.view audit.view",
+    "users.view users.view_pii salons.view bookings.view finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export finance.payout_accounts analytics.view analytics.export settings.view system.view audit.view homeservice.view homeservice.policy",
   SUPPORT:
-    "users.view users.view_pii users.manage users.impersonate salons.view bookings.view bookings.manage appeals.resolve support.view support.reply support.assign",
+    "users.view users.view_pii users.manage users.impersonate salons.view bookings.view bookings.manage appeals.resolve support.view support.reply support.assign homeservice.view",
   MODERATOR: "users.view users.manage salons.view bookings.view reviews.moderate support.view",
   ANALYST:
-    "users.view salons.view bookings.view finance.view analytics.view analytics.export settings.view system.view",
+    "users.view salons.view bookings.view finance.view analytics.view analytics.export settings.view system.view homeservice.view",
 };
 
 const FULL_LIST =
-  "users.view users.view_pii users.manage users.role users.delete users.impersonate salons.view salons.review salons.manage salons.delete bookings.view bookings.manage appeals.resolve finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export finance.payout_accounts reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage settings.manage system.view system.operate audit.view agents.manage team.manage";
+  "users.view users.view_pii users.manage users.role users.delete users.impersonate salons.view salons.review salons.manage salons.delete bookings.view bookings.manage appeals.resolve finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export finance.payout_accounts reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage settings.manage system.view system.operate audit.view agents.manage team.manage homeservice.view homeservice.manage homeservice.experts_verify homeservice.policy";
 
 const sorted = (s: string | readonly string[]) =>
   [...(typeof s === "string" ? s.split(" ") : s)].sort().join(" ");
@@ -154,6 +154,28 @@ const guardChecks = async () => {
   check("setting out of bounds refused (400)", !commission.safeParse(31).success && !commission.safeParse(-1).success && commission.safeParse(10).success);
   const badDefaults = Object.entries(SETTINGS).filter(([, e]) => !(e as any).schema.safeParse((e as any).default).success);
   check("every setting default is within its own bounds", badDefaults.length === 0, badDefaults.map(([k]) => k).join(", "));
+
+  // Home Service: saving a homeService.* key needs homeservice.policy (FINANCE + SUPER_ADMIN only);
+  // the three kill switches are flags. Launch defaults charge no fee anywhere.
+  const { settingPermission } = await import("../app/utils/settings");
+  const homeKeys = (Object.keys(SETTINGS) as Array<keyof typeof SETTINGS>).filter((k) => k.startsWith("homeService."));
+  const SWITCHES = ["homeService.enabled", "homeService.ladiesEnabled", "homeService.gentsEnabled"];
+  const wrongPerm = homeKeys.filter(
+    (k) => settingPermission(k) !== (SWITCHES.includes(k) ? "flags.manage" : "homeservice.policy"),
+  );
+  check(`${homeKeys.length} homeService.* keys: homeservice.policy (switches: flags.manage)`, homeKeys.length === 34 && wrongPerm.length === 0, wrongPerm.join(", "));
+  const policyHolders = Object.entries(ADMIN_ROLE_PERMISSIONS).filter(([, p]) => p.includes("homeservice.policy")).map(([r]) => r);
+  check("only SUPER_ADMIN + FINANCE can save homeService.* keys", policyHolders.sort().join() === "FINANCE,SUPER_ADMIN", policyHolders.join());
+  const HOME_APPROVAL = "advancePercent commissionPercent customerCancelPolicy feeSalonSharePercent lateCancelPercent noShowPercent nonRefundableGraceMinutes salonCancelCreditMinor travelFeeMaxMinor";
+  const approvalKeys = homeKeys.filter((k) => (SETTINGS[k] as { approval?: boolean }).approval).map((k) => k.slice("homeService.".length));
+  check("homeService approval (four-eyes) keys as agreed", sorted(approvalKeys) === HOME_APPROVAL, approvalKeys.join(" "));
+  const FEES = ["commissionPercent", "lateCancelPercent", "noShowPercent", "salonCancelCreditMinor", "travelFeeMaxMinor"] as const;
+  check(
+    "homeService launch defaults: policy FREE, every fee 0",
+    SETTINGS["homeService.customerCancelPolicy"].default === "FREE" && FEES.every((k) => SETTINGS[`homeService.${k}`].default === 0),
+  );
+  const policy = SETTINGS["homeService.customerCancelPolicy"].schema;
+  check("choice refuses a value outside its options", policy.safeParse("WINDOW").success && !policy.safeParse("SOMETIMES").success);
 
   check(
     "junk /events dropped",
