@@ -2,6 +2,7 @@ import { AppealStatus, AppointmentStatus } from "@prisma/client";
 import prisma from "../../../shared/prisma";
 import { APPEAL_WINDOW_MS } from "../../Appointment/appointment.deposit";
 import { maskEmail } from "../admin.service";
+import { listPendingAppeals as listPendingHomeAppeals } from "../../HomeService/home.cancel";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -75,6 +76,7 @@ const listPending = async () => {
   return rows.map(({ customer, customerId, salonId, ...r }) => {
     const outcome = settled.get(salonId);
     return {
+      kind: "APPOINTMENT" as const,
       ...r,
       dueAt: r.appealedAt ? new Date(r.appealedAt.getTime() + APPEAL_WINDOW_MS) : null,
       customer: { ...customer, email: maskEmail(customer.email) },
@@ -88,4 +90,17 @@ const listPending = async () => {
   });
 };
 
-export const AdminAppealsService = { listPending };
+/**
+ * `kind`: APPOINTMENT (default, what the current queue screen renders), HOME
+ * (home visits, `kind: "HOME"` rows) or ALL. Home rows have their own shape
+ * and are decided through `PATCH /admin/home-service/bookings/:id/appeal`.
+ */
+const list = async (kind: "APPOINTMENT" | "HOME" | "ALL" = "APPOINTMENT") => {
+  const [salon, home] = await Promise.all([
+    kind === "HOME" ? [] : listPending(),
+    kind === "APPOINTMENT" ? [] : listPendingHomeAppeals(),
+  ]);
+  return [...salon, ...home];
+};
+
+export const AdminAppealsService = { listPending, list };

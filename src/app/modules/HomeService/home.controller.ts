@@ -8,6 +8,7 @@ import { withAccessCache } from "../../utils/salonAccess";
 import { buildAuditCtx } from "../Admin/admin.middleware";
 import * as Admin from "./home.admin";
 import * as Booking from "./home.booking";
+import * as Cancel from "./home.cancel";
 import * as Experts from "./home.expertSetup";
 import * as Lifecycle from "./home.lifecycle";
 import * as Owner from "./home.owner";
@@ -283,7 +284,67 @@ const ownerOverrideStart = catchAsync(async (req: Request, res: Response) => {
   ok(res, "Visit started", await Lifecycle.overrideStart(withAccessCache(req), ctxOf(req), id(req), req.body.reason));
 });
 
+// ---------------------------------------------------------------- ends, reschedule, appeals
+
+const cancelQuote = catchAsync(async (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  ok(res, "Cancellation quote", await Cancel.cancelQuote(String(req.user!.userId), id(req)));
+});
+
+const customerCancel = catchAsync(async (req: Request, res: Response) => {
+  const data = await Cancel.customerCancel(actorOf(req), id(req), req.body?.reason);
+  ok(res, "Booking cancelled", data);
+});
+
+const reschedule = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Visit moved", await Cancel.reschedule(actorOf(req), id(req), req.body));
+});
+
+const appeal = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Appeal sent. We'll decide within 48 hours.", await Cancel.appeal(actorOf(req), id(req), req.body.reason));
+});
+
+const jobNoShow = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Marked as not home", await Cancel.expertMarkNoShow(me(req), id(req)));
+});
+
+const jobAbort = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Visit stopped", await Cancel.expertAbort(me(req), id(req), req.body.kind, req.body.reason));
+});
+
+const ownerCancel = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Visit cancelled", await Cancel.ownerCancel(withAccessCache(req), ctxOf(req), id(req), req.body.reason));
+});
+
+const ownerExpertNoShow = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Marked as expert not arrived", await Cancel.ownerExpertNoShow(withAccessCache(req), ctxOf(req), id(req), req.body.reason));
+});
+
+const adminCancelBooking = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Visit cancelled", await Cancel.adminCancel(req.auditCtx, id(req), req.body.reason, req.body.salonAtFault));
+});
+
+const adminExpertNoShow = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Marked as expert not arrived", await Cancel.adminExpertNoShow(req.auditCtx, id(req), req.body.reason));
+});
+
+const adminResolveAppeal = catchAsync(async (req: Request, res: Response) => {
+  const data = await Cancel.resolveAppeal(req.auditCtx, id(req), req.body.approve, req.body.note);
+  ok(res, req.body.approve ? "Appeal upheld" : "Appeal rejected", data);
+});
+
 export const HomeController = {
+  cancelQuote,
+  customerCancel,
+  reschedule,
+  appeal,
+  jobNoShow,
+  jobAbort,
+  ownerCancel,
+  ownerExpertNoShow,
+  adminCancelBooking,
+  adminExpertNoShow,
+  adminResolveAppeal,
   payBalance,
   myJobs,
   myJob,

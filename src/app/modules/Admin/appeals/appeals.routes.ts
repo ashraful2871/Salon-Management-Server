@@ -16,8 +16,9 @@ router.get(
   "/",
   adminAuth("appeals.resolve"),
   adminOnly,
-  catchAsync(async (_req: Request, res: Response) => {
-    const data = await AdminAppealsService.listPending();
+  catchAsync(async (req: Request, res: Response) => {
+    const kind = req.query.kind === "HOME" || req.query.kind === "ALL" ? req.query.kind : "APPOINTMENT";
+    const data = await AdminAppealsService.list(kind);
     sendResponse(res, {
       statusCode: StatusCodes.OK,
       success: true,

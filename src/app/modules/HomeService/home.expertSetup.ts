@@ -15,6 +15,7 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { AuditCtx, auditTx, diff } from "../../utils/audit";
 import { AccessUser, assertSalonPermission } from "../../utils/salonAccess";
+import { rehomeExpertBookings } from "./home.cancel";
 import { allowedSidesOf } from "./home.owner";
 import type {
   CreateExpertBody,
@@ -483,19 +484,20 @@ export const submitExpert = async (user: AccessUser, ctx: AuditCtx, id: string) 
 /** DELETE /owner/experts/:id: soft remove. Documents go 90 days later (Phase 9 retention). */
 export const removeExpert = async (user: AccessUser, ctx: AuditCtx, id: string, reason?: string) => {
   const before = await managedExpert(user, id);
-  const upcoming = await prisma.homeBooking.count({
-    where: { expertId: id, status: { in: ACTIVE_BOOKING_STATUSES } },
+  // A visit already on its way finishes first; upcoming ones are moved or cancelled below.
+  const underWay = await prisma.homeBooking.count({
+    where: {
+      expertId: id,
+      status: { in: [HomeBookingStatus.EN_ROUTE, HomeBookingStatus.ARRIVED, HomeBookingStatus.IN_PROGRESS] },
+    },
   });
-  if (upcoming > 0) {
-    const e = new ApiError(
-      StatusCodes.CONFLICT,
-      `This expert has ${upcoming} upcoming home booking(s). Reassign or finish them first.`,
-    );
-    e.details = { upcoming };
+  if (underWay > 0) {
+    const e = new ApiError(StatusCodes.CONFLICT, `This expert has ${underWay} home visit(s) under way. Finish them first.`);
+    e.details = { underWay };
     throw e;
   }
 
-  return prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const { count } = await tx.homeExpert.updateMany({
       where: { id, removedAt: null },
       data: { removedAt: new Date(), isActive: false },
@@ -503,6 +505,13 @@ export const removeExpert = async (user: AccessUser, ctx: AuditCtx, id: string, 
     if (count === 0) throw conflict();
     const after = await tx.homeExpert.findUniqueOrThrow({ where: { id } });
     await auditExpert(tx, ctx, "homeService.expert_remove", before, after, { reason });
-    return { id };
   });
+  // The salon's choice, so a visit nobody else can take is a salon cancel (full refund + credit).
+  const upcoming = await rehomeExpertBookings(id, "SALON_CANCEL", {
+    ctx,
+    actorRole: user.role,
+    reason: reason?.trim() || "Expert removed by the salon",
+    action: "homeService.booking_salon_cancel",
+  });
+  return { id, upcoming };
 };
