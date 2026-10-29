@@ -246,6 +246,33 @@ const reassign = z.object({ params: idParams, body: z.object({ expertId: z.strin
 
 const overrideStart = z.object({ params: idParams, body: z.object({ reason: requiredReason }) });
 
+// ---------------------------------------------------------------- ends, reschedule, appeals
+
+const customerCancel = z.object({ params: idParams, body: z.object({ reason }).optional().default({}) });
+
+const reschedule = z.object({
+  params: idParams,
+  body: z.object({
+    date: day,
+    startAt: z.string().datetime({ offset: true }),
+    /** Omitted = the same expert; "ANY" = any free expert of the branch. */
+    expertId: z.union([z.literal("ANY"), z.string().uuid()]).optional(),
+  }),
+});
+
+const appeal = z.object({ params: idParams, body: z.object({ reason: z.string().trim().min(3).max(1000) }) });
+
+const jobAbort = z.object({ params: idParams, body: z.object({ kind: z.enum(["MISMATCH", "SAFETY"]), reason: requiredReason }) });
+
+const withReason = z.object({ params: idParams, body: z.object({ reason: requiredReason }) });
+
+const adminCancel = z.object({ params: idParams, body: z.object({ reason: requiredReason, salonAtFault: z.boolean() }) });
+
+const adminResolveAppeal = z.object({
+  params: idParams,
+  body: z.object({ approve: z.boolean(), note: z.string().trim().max(1000).optional() }),
+});
+
 export const HomeValidation = {
   salonQuery,
   turnOn,
@@ -280,8 +307,16 @@ export const HomeValidation = {
   ownerBookings,
   reassign,
   overrideStart,
+  customerCancel,
+  reschedule,
+  appeal,
+  jobAbort,
+  withReason,
+  adminCancel,
+  adminResolveAppeal,
 };
 
+export type RescheduleBody = z.infer<typeof reschedule>["body"];
 export type CompleteJobBody = z.infer<typeof completeJob>["body"];
 export type OwnerBookingsQuery = z.infer<typeof ownerBookingsQuery>;
 

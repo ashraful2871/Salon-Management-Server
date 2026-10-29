@@ -21,6 +21,7 @@ import {
   expertView,
   signedDocUrls,
 } from "./home.expertSetup";
+import { cancelBranchUpcoming, rehomeExpertBookings } from "./home.cancel";
 import { branchChecklist } from "./home.owner";
 
 /**
@@ -228,9 +229,15 @@ export const suspendProfile = async (ctx: AuditCtx | undefined, id: string, reas
     reason,
     data: () => ({ status: HomeServiceStatus.SUSPENDED, suspendedReason: reason, ...reviewedBy(ctx) }),
   });
-  // Phase 8: cancel the branch's upcoming home bookings with a full refund.
+  // Every upcoming visit of the branch ends with a full refund; visits under way go ahead.
+  const upcoming = await cancelBranchUpcoming(after.salonId, "SYSTEM_CANCEL", {
+    ctx,
+    actorRole: "ADMIN",
+    reason: `Home Service suspended: ${reason}`,
+    action: "homeService.booking_system_cancel",
+  });
   emailOwner(after.salonId, "branch_suspended", reason);
-  return after;
+  return { ...after, upcoming };
 };
 
 export const unsuspendProfile = async (ctx: AuditCtx | undefined, id: string, reason?: string) =>
@@ -385,8 +392,13 @@ export const suspendExpert = async (ctx: AuditCtx | undefined, id: string, reaso
     reason,
     data: { verification: ExpertVerification.SUSPENDED, rejectReason: reason },
   });
-  // Phase 8: reassign or cancel the expert's upcoming home bookings.
-  return expertView(after);
+  const upcoming = await rehomeExpertBookings(id, "SYSTEM_CANCEL", {
+    ctx,
+    actorRole: "ADMIN",
+    reason: `Expert suspended: ${reason}`,
+    action: "homeService.booking_system_cancel",
+  });
+  return { ...expertView(after), upcoming };
 };
 
 /** Admin-only correction: new gender and side, other-side links dropped, re-verification needed. */
@@ -408,6 +420,12 @@ export const setExpertGender = async (ctx: AuditCtx | undefined, id: string, gen
       await tx.homeExpertOffering.deleteMany({ where: { expertId: id, offering: { audience: { not: audience } } } });
     },
   });
-  // Phase 8: upcoming bookings on the old side need reassigning.
-  return expertView(after);
+  // Now SUSPENDED: the old side's upcoming visits go to another expert or end with a full refund.
+  const upcoming = await rehomeExpertBookings(id, "SYSTEM_CANCEL", {
+    ctx,
+    actorRole: "ADMIN",
+    reason: `Expert needs verifying again: ${reason}`,
+    action: "homeService.booking_system_cancel",
+  });
+  return { ...expertView(after), upcoming };
 };

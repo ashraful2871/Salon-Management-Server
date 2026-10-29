@@ -161,6 +161,23 @@ router.post(
   HomeController.payBalance,
 );
 
+// Ending early, moving, appealing (home.cancel). The customer's own booking, else 404.
+router.get("/bookings/:id/cancel-quote", auth(), validateRequest(HomeValidation.bookingId), HomeController.cancelQuote);
+router.post(
+  "/bookings/:id/cancel",
+  auth(),
+  validateRequest(HomeValidation.customerCancel, { replaceBody: true }),
+  HomeController.customerCancel,
+);
+router.post(
+  "/bookings/:id/reschedule",
+  auth(),
+  homePublicLimiter,
+  validateRequest(HomeValidation.reschedule, { replaceBody: true }),
+  HomeController.reschedule,
+);
+router.post("/bookings/:id/appeal", auth(), validateRequest(HomeValidation.appeal, { replaceBody: true }), HomeController.appeal);
+
 // The expert runs the visit. Only the assigned expert's staff user sees a job (else 404).
 const expert = auth(UserRole.STAFF, UserRole.BRANCH_MANAGER);
 router.get("/jobs", expert, validateRequest(HomeValidation.myJobs), HomeController.myJobs);
@@ -174,6 +191,8 @@ router.post(
   validateRequest(HomeValidation.completeJob, { replaceBody: true }),
   HomeController.jobComplete,
 );
+router.post("/jobs/:id/no-show", expert, validateRequest(HomeValidation.bookingId), HomeController.jobNoShow);
+router.post("/jobs/:id/abort", expert, validateRequest(HomeValidation.jobAbort, { replaceBody: true }), HomeController.jobAbort);
 
 // Bookings board: homeservice.bookings at the branch (salonAccess).
 router.get("/owner/bookings", auth(...BUSINESS_ROLES), validateRequest(HomeValidation.ownerBookings), HomeController.ownerBookings);
@@ -188,6 +207,18 @@ router.post(
   auth(...BUSINESS_ROLES),
   validateRequest(HomeValidation.overrideStart, { replaceBody: true }),
   HomeController.ownerOverrideStart,
+);
+router.post(
+  "/owner/bookings/:id/cancel",
+  auth(...BUSINESS_ROLES),
+  validateRequest(HomeValidation.withReason, { replaceBody: true }),
+  HomeController.ownerCancel,
+);
+router.post(
+  "/owner/bookings/:id/expert-no-show",
+  auth(...BUSINESS_ROLES),
+  validateRequest(HomeValidation.withReason, { replaceBody: true }),
+  HomeController.ownerExpertNoShow,
 );
 
 export const HomeServiceRoutes = router;
@@ -274,6 +305,31 @@ admin.post(
   validateRequest(HomeValidation.adminExpertGender, { replaceBody: true }),
   ...tier3,
   HomeController.adminExpertGender,
+);
+
+admin.post(
+  "/bookings/:id/cancel",
+  adminAuth("homeservice.manage"),
+  adminOnly,
+  validateRequest(HomeValidation.adminCancel, { replaceBody: true }),
+  ...tier3,
+  HomeController.adminCancelBooking,
+);
+admin.post(
+  "/bookings/:id/expert-no-show",
+  adminAuth("homeservice.manage"),
+  adminOnly,
+  validateRequest(HomeValidation.withReason, { replaceBody: true }),
+  ...tier3,
+  HomeController.adminExpertNoShow,
+);
+// Like salon appeals (PATCH /appointments/:id/appeal): appeals.resolve, no step-up.
+admin.patch(
+  "/bookings/:id/appeal",
+  adminAuth("appeals.resolve"),
+  adminOnly,
+  validateRequest(HomeValidation.adminResolveAppeal, { replaceBody: true }),
+  HomeController.adminResolveAppeal,
 );
 
 export const HomeServiceAdminRoutes = admin;

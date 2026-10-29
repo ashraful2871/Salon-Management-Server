@@ -524,10 +524,59 @@ const loadBoardBooking = async (user: AccessUser, id: string) => {
   return b;
 };
 
-const getBoardBooking = async (id: string) => {
+export const getBoardBooking = async (id: string) => {
   const b = await prisma.homeBooking.findUnique({ where: { id }, select: BOARD });
   if (!b) throw notFound();
   return boardView(b);
+};
+
+const slotTaken = () => fail(StatusCodes.CONFLICT, "This expert isn't free at that time.", "SLOT_TAKEN");
+
+/**
+ * Under the new expert's stylist lock, in the caller's transaction: a
+ * CONFIRMED visit moves to `target` when they are free and do every item
+ * (judged as of the original booking — lead time, window — with today's busy
+ * times), else SLOT_TAKEN. The overlap exclusion backs it up. Reassign and an
+ * expert leaving (home.cancel) both use it.
+ */
+export const moveToExpertTx = async (
+  tx: Tx,
+  b: { id: string; expertId: string; startAt: Date; blockFrom: Date; blockTo: Date; createdAt: Date; offeringIds: string[] },
+  target: { id: string; staffId: string; audience: HomeAudience },
+  event: { actorId: string | null; actorRole: string; reason: string },
+) => {
+  await lockStaff(tx, target.staffId);
+  await expireStaleOf(tx, target.id);
+  const clash = await tx.homeBooking.findFirst({
+    where: { expertId: target.id, status: { in: ACTIVE_BOOKING_STATUSES }, blockFrom: { lt: b.blockTo }, blockTo: { gt: b.blockFrom } },
+    select: { id: true },
+  });
+  if (clash) throw slotTaken();
+  const { ok } = await expertCanTake({
+    expertId: target.id,
+    offeringIds: b.offeringIds,
+    startAt: b.startAt,
+    now: b.createdAt,
+    excludeBookingId: b.id,
+    db: tx,
+  });
+  if (!ok) throw slotTaken();
+
+  const n = await tx.homeBooking.updateMany({
+    where: { id: b.id, status: HomeBookingStatus.CONFIRMED, expertId: b.expertId },
+    data: { expertId: target.id, expertAudience: target.audience, startCodeTries: 0 },
+  });
+  if (!n.count) throw invalidState();
+  await tx.homeBookingEvent.create({
+    data: {
+      bookingId: b.id,
+      fromStatus: HomeBookingStatus.CONFIRMED,
+      toStatus: HomeBookingStatus.CONFIRMED,
+      actorId: event.actorId,
+      actorRole: event.actorRole,
+      reason: event.reason,
+    },
+  });
 };
 
 /**
@@ -556,48 +605,14 @@ export const reassign = async (user: AccessUser, ctx: AuditCtx, id: string, expe
     );
   }
 
-  const taken = () => fail(StatusCodes.CONFLICT, "This expert isn't free at that time.", "SLOT_TAKEN");
   try {
     await prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`;
-        await lockStaff(tx, target.staffId);
-        await expireStaleOf(tx, target.id);
-        const clash = await tx.homeBooking.findFirst({
-          where: {
-            expertId: target.id,
-            status: { in: ACTIVE_BOOKING_STATUSES },
-            blockFrom: { lt: b.blockTo },
-            blockTo: { gt: b.blockFrom },
-          },
-          select: { id: true },
-        });
-        if (clash) throw taken();
-        // Judged as of the original booking (lead time, window), with today's busy times.
-        const { ok } = await expertCanTake({
-          expertId: target.id,
-          offeringIds: b.items.map((i) => i.offeringId),
-          startAt: b.startAt,
-          now: b.createdAt,
-          excludeBookingId: b.id,
-          db: tx,
-        });
-        if (!ok) throw taken();
-
-        const n = await tx.homeBooking.updateMany({
-          where: { id, status: HomeBookingStatus.CONFIRMED, expertId: b.expertId },
-          data: { expertId: target.id, expertAudience: target.audience, startCodeTries: 0 },
-        });
-        if (!n.count) throw invalidState();
-        await tx.homeBookingEvent.create({
-          data: {
-            bookingId: id,
-            fromStatus: HomeBookingStatus.CONFIRMED,
-            toStatus: HomeBookingStatus.CONFIRMED,
-            actorId: ctx.actorUserId,
-            actorRole: user.role,
-            reason: `Reassigned to ${target.staff.user.name}: ${reason}`,
-          },
+        await moveToExpertTx(tx, { ...b, offeringIds: b.items.map((i) => i.offeringId) }, target, {
+          actorId: ctx.actorUserId,
+          actorRole: user.role,
+          reason: `Reassigned to ${target.staff.user.name}: ${reason}`,
         });
         await auditTx(tx, ctx, {
           action: "homeService.booking_reassign",
@@ -612,7 +627,7 @@ export const reassign = async (user: AccessUser, ctx: AuditCtx, id: string, expe
       { maxWait: 10_000, timeout: 20_000 },
     );
   } catch (e) {
-    if (isExclusionViolation(e) || isContention(e)) throw taken();
+    if (isExclusionViolation(e) || isContention(e)) throw slotTaken();
     throw e;
   }
   return getBoardBooking(id);
@@ -693,7 +708,8 @@ export const closeStaleVisits = async () => {
 
 /**
  * `home.notArrived`: an expert not there 45 min after the start gets one
- * EXPERT_LATE_FLAG event. Nothing else changes; Phase 8 decides the no-show.
+ * EXPERT_LATE_FLAG event. Nothing else changes; the owner or an admin marks
+ * the no-show (`expert-no-show`, home.cancel).
  */
 export const flagLateExperts = async () => {
   const rows = await prisma.homeBooking.findMany({

@@ -16,6 +16,7 @@ import prisma from "../../shared/prisma";
 import { AuditCtx, auditTx, diff } from "../../utils/audit";
 import { AccessUser, assertOwnerOf, assertSalonPermission, grantAt } from "../../utils/salonAccess";
 import { getSetting } from "../../utils/settings";
+import { cancelBranchUpcoming } from "./home.cancel";
 import type {
   CreateOfferingBody,
   PauseBody,
@@ -353,17 +354,11 @@ export const turnOn = async (user: AccessUser, ctx: AuditCtx, body: TurnOnBody) 
 
 export const turnOff = async (user: AccessUser, ctx: AuditCtx, body: TurnOffBody) => {
   const salon = await ownBranch(user, body.salonId);
-  if (body.upcoming === "CANCEL") {
-    // Phase 8: cancel upcoming home bookings with a full refund, then turn off.
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      "Cancelling upcoming home bookings on turn-off is available after Phase 8. Choose KEEP for now.",
-    );
-  }
   const before = await prisma.homeServiceProfile.findUnique({ where: { salonId: salon.id } });
   if (!before) return virtualProfile(salon.id);
 
-  return prisma.$transaction(async (tx) => {
+  // Off first, so nothing new is booked while the upcoming visits are cancelled.
+  const after = await prisma.$transaction(async (tx) => {
     const after = await tx.homeServiceProfile.update({
       where: { salonId: salon.id },
       data: {
@@ -375,6 +370,16 @@ export const turnOff = async (user: AccessUser, ctx: AuditCtx, body: TurnOffBody
     await auditProfile(tx, ctx, "homeService.turn_off", before, after, body.reason ?? `upcoming: ${body.upcoming}`);
     return after;
   });
+  if (body.upcoming !== "CANCEL") return after;
+
+  // Each visit in its own transaction, full refund (+ the salon's credit); visits under way go ahead.
+  const r = await cancelBranchUpcoming(salon.id, "SALON_CANCEL", {
+    ctx,
+    actorRole: user.role,
+    reason: body.reason?.trim() || "Home Service turned off by the salon",
+    action: "homeService.booking_salon_cancel",
+  });
+  return { ...after, cancelled: r.cancelled, refundedMinor: r.refundedMinor, notCancelled: r.failed.length, underWay: r.underWay };
 };
 
 export const pause = async (user: AccessUser, ctx: AuditCtx, body: PauseBody) => {
