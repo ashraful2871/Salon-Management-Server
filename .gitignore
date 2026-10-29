@@ -5,6 +5,8 @@ uploads/*
 !uploads/.gitkeep
 .vercel
 .env*.local
+# Neon branch URL for Home Service migrations (npm run home:check)
+.env.homebranch
 
 # Claude Code: personal overrides only; .claude/settings.json is shared
 .claude/settings.local.json

@@ -30,6 +30,10 @@ interface Config {
     uploadPreset: string;
     turnstileSecret: string;
   };
+  homeService: {
+    startCodeSecret: string | undefined;
+    docsPreset: string;
+  };
   sslcz: {
     storeId: string;
     storePasswd: string;
@@ -180,6 +184,15 @@ const config = {
     concurrency: Number(env("HAIR_TRYON_CONCURRENCY") || 2),
     uploadPreset: env("CLOUDINARY_HAIR_UPLOAD_PRESET") || "hair_tryon_original",
     turnstileSecret: env("TURNSTILE_SECRET_KEY"),
+  },
+  /**
+   * Home Service. `startCodeSecret` keys the HMAC behind the start code a
+   * customer reads to the expert; `docsPreset` is the signed, authenticated
+   * Cloudinary preset for expert NID/selfie uploads.
+   */
+  homeService: {
+    startCodeSecret: env("HOME_START_CODE_SECRET") || undefined,
+    docsPreset: env("CLOUDINARY_HOME_DOCS_PRESET") || "home_expert_docs",
   },
   /**
    * Email. `provider` pins the transport ("resend" | "smtp"); left empty, the

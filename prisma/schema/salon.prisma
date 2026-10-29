@@ -79,6 +79,10 @@ model Salon {
   invitations     SalonInvitation[]
   closures        SalonClosure[]
   dailyCloses     DailyClose[]
+  homeProfile     HomeServiceProfile?
+  homeOfferings   HomeServiceOffering[]
+  homeBookings    HomeBooking[]
+  homeExperts     HomeExpert[]
 
   @@index([latitude, longitude])
   @@index([status, isDeleted], map: "salons_status_is_deleted_idx") // already exists in DB; declaring it stops Prisma from dropping it

@@ -20,6 +20,7 @@ model Staff {
   reviews       Review[]
   shifts        StaffShift[]
   timeOff       StaffTimeOff[]
+  homeExpert    HomeExpert?
 
   @@map("staff")
 }

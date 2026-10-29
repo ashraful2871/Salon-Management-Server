@@ -34,15 +34,18 @@ model LedgerEntry {
   amountMinor   Int // signed
   description   String
   payoutId      String?
+  homeBookingId String?
   createdAt     DateTime      @default(now())
 
   appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   salon       Salon?       @relation(fields: [salonId], references: [id], onDelete: SetNull)
   payout      Payout?      @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  homeBooking HomeBooking? @relation(fields: [homeBookingId], references: [id], onDelete: SetNull)
 
   @@index([salonId, createdAt])
   @@index([payoutId])
   @@index([appointmentId])
+  @@index([homeBookingId])
   @@index([journalId])
   @@index([ownerId, createdAt])
   @@index([account, payoutId, createdAt])
