@@ -20,6 +20,7 @@ import { AssistantRoutes } from "../modules/Assistant/assistant.routes";
 import { ContactRoutes } from "../modules/Contact/contact.routes";
 import { AnalyticsRoutes } from "../modules/Analytics/analytics.routes";
 import { HairTryOnRoutes } from "../modules/HairTryOn/hairTryOn.routes";
+import { HomeServiceRoutes } from "../modules/HomeService/home.routes";
 import { AdminRoutes } from "../modules/Admin/admin.routes";
 import { InvitationRoutes } from "../modules/Admin/invitations/invitation.routes";
 import { SettingsRoutes } from "../modules/Settings/settings.routes";
@@ -112,6 +113,10 @@ const moduleRoutes = [
   {
     path: "/hairstyle",
     route: HairTryOnRoutes,
+  },
+  {
+    path: "/home-service",
+    route: HomeServiceRoutes,
   },
   {
     path: "/admin",

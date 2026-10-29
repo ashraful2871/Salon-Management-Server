@@ -19,6 +19,7 @@ import { AdminSystemRoutes } from "./system/system.routes";
 import { AdminContentRoutes } from "./content/content.routes";
 import { AdminImpersonationRoutes } from "./impersonation/impersonation.routes";
 import { rejectImpersonation } from "../../utils/impersonation";
+import { HomeServiceAdminRoutes } from "../HomeService/home.routes";
 import { AdminAgentsController } from "./agents/agents.controller";
 import { AdminController } from "./admin.controller";
 import { AdminValidation } from "./admin.validation";
@@ -55,6 +56,7 @@ router.use("/support", AdminSupportRoutes);
 router.use("/analytics", AdminAnalyticsRoutes);
 router.use("/system", AdminSystemRoutes);
 router.use("/content", AdminContentRoutes);
+router.use("/home-service", HomeServiceAdminRoutes);
 router.get("/areas", adminAuth("agents.manage"), adminOnly, AdminAgentsController.areas);
 
 // Results and inbox items are filtered by the caller's permissions inside.
