@@ -1,4 +1,4 @@
-import { HomeAudience, HomeCategory } from "@prisma/client";
+import { HomeAudience, HomeCategory, HomeReportStatus, HomeSafetyKind } from "@prisma/client";
 import { z } from "zod";
 
 /**
@@ -273,6 +273,44 @@ const adminResolveAppeal = z.object({
   body: z.object({ approve: z.boolean(), note: z.string().trim().max(1000).optional() }),
 });
 
+// ---------------------------------------------------------------- safety, reviews
+
+const safetyReport = z.object({
+  params: idParams,
+  body: z.object({
+    kind: z.nativeEnum(HomeSafetyKind),
+    details: z.string().trim().min(10, "Tell us a little more (10 characters or more)").max(2000),
+  }),
+});
+
+const adminReports = z.object({
+  query: z
+    .object({ status: z.nativeEnum(HomeReportStatus).optional(), page: z.coerce.number().int().min(1).optional() })
+    .passthrough(),
+});
+
+const adminReportStatus = z.object({
+  params: idParams,
+  body: z.object({
+    status: z.nativeEnum(HomeReportStatus),
+    note: z.string().trim().min(3).max(1000),
+    blockCustomer: z.object({ days: z.number().int().min(1).max(365) }).optional(),
+  }),
+});
+
+const createReview = z.object({
+  params: idParams,
+  body: z.object({
+    rating: z.number().int().min(1).max(5),
+    comment: z.string().trim().max(1000).optional(),
+  }),
+});
+
+const expertReviews = z.object({
+  params: idParams,
+  query: z.object({ page: z.coerce.number().int().min(1).optional() }).passthrough(),
+});
+
 export const HomeValidation = {
   salonQuery,
   turnOn,
@@ -314,6 +352,11 @@ export const HomeValidation = {
   withReason,
   adminCancel,
   adminResolveAppeal,
+  safetyReport,
+  adminReports,
+  adminReportStatus,
+  createReview,
+  expertReviews,
 };
 
 export type RescheduleBody = z.infer<typeof reschedule>["body"];
@@ -334,3 +377,6 @@ export type CreateOfferingBody = z.infer<typeof createOffering>["body"];
 export type UpdateOfferingBody = z.infer<typeof updateOffering>["body"];
 export type QuoteBody = z.infer<typeof quote>["body"];
 export type CreateBookingBody = z.infer<typeof createBooking>["body"];
+export type SafetyReportBody = z.infer<typeof safetyReport>["body"];
+export type AdminReportStatusBody = z.infer<typeof adminReportStatus>["body"];
+export type CreateReviewBody = z.infer<typeof createReview>["body"];

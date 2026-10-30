@@ -19,6 +19,7 @@ import {
   windowDays,
 } from "./home.availability";
 import { isBranchBookable, loadHomeFlags, loadPolicyInForce } from "./home.owner";
+import { listExpertReviews } from "./home.reviews";
 
 /**
  * What guests and customers see before booking: the catalog and experts near
@@ -464,7 +465,11 @@ export const getExpert = async (viewer: Viewer, id: string, q: Query) => {
   const branch = await bookableBranch(expert.salonId, audience, includeTest).catch(() => {
     throw ApiError.withCode(StatusCodes.NOT_FOUND, "This expert isn't available.", "EXPERT_UNAVAILABLE");
   });
-  const [reach, policy] = await Promise.all([reachOf(branch, point), loadPolicyInForce()]);
+  const [reach, policy, reviews] = await Promise.all([
+    reachOf(branch, point),
+    loadPolicyInForce(),
+    listExpertReviews(expert.id, Number(str(q.reviewPage)) || 1),
+  ]);
   const disclaimer = await getSetting(DISCLAIMER_KEY[policy.customerCancelPolicy]);
 
   const menu = expert.offerings
@@ -491,7 +496,17 @@ export const getExpert = async (viewer: Viewer, id: string, q: Query) => {
     distanceKm: reach.distanceKm,
     servesYou: reach.servesYou,
     policy: { ...policy, disclaimer },
+    // PUBLISHED home reviews, paged with ?reviewPage (GET /experts/:id/reviews pages them alone).
+    reviews,
   };
+};
+
+/** GET /experts/:id/reviews?page: only for an expert the public can see. */
+export const getExpertReviews = async (id: string, q: Query) => {
+  const expertId = idOf(id, "id");
+  const e = await prisma.homeExpert.findFirst({ where: { id: expertId, removedAt: null }, select: { id: true } });
+  if (!e) throw ApiError.withCode(StatusCodes.NOT_FOUND, "This expert isn't available.", "EXPERT_UNAVAILABLE");
+  return listExpertReviews(e.id, Number(str(q.page)) || 1);
 };
 
 // ---------------------------------------------------------------------------

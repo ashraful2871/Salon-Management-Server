@@ -26,6 +26,7 @@ import { WalletService } from "../Wallet/wallet.service";
 import { eligibleExperts, expertCanTake } from "./home.availability";
 import { Actor, expireStaleOf, getBooking, isContention, isExclusionViolation } from "./home.booking";
 import { getBoardBooking, moveToExpertTx, moveTx } from "./home.lifecycle";
+import { homeNotice } from "./home.notify";
 import { isBranchBookable, loadHomeFlags } from "./home.owner";
 import type { HomePolicy } from "./home.policy";
 import type { RescheduleBody } from "./home.validation";
@@ -399,8 +400,12 @@ export const endVisitTx = async (tx: Tx, args: EndArgs) => {
   };
 };
 
-export const endVisit = (args: EndArgs) =>
-  prisma.$transaction((tx) => endVisitTx(tx, args), { maxWait: 10_000, timeout: 20_000 });
+/** Every end goes through here, so every end tells the customer, the expert and the branch (after the commit). */
+export const endVisit = async (args: EndArgs) => {
+  const r = await prisma.$transaction((tx) => endVisitTx(tx, args), { maxWait: 10_000, timeout: 20_000 });
+  homeNotice(r.bookingId, { kind: "ended", outcome: r.outcome, balanceReleasedMinor: r.balanceReleasedMinor });
+  return r;
+};
 
 /** One end per booking, each in its own transaction; a failure is counted, not thrown. */
 const endMany = async (ids: string[], make: (id: string) => EndArgs) => {
@@ -900,6 +905,7 @@ export const rehomeExpertBookings = async (expertId: string, fallback: "SALON_CA
           { maxWait: 10_000, timeout: 20_000 },
         );
         moved = true;
+        homeNotice(b.id, { kind: "reassigned", fromExpertId: expertId });
         break;
       } catch (e) {
         if (e instanceof ApiError || isExclusionViolation(e) || isContention(e)) continue;
@@ -985,7 +991,13 @@ export const reverseFeeTx = async (tx: Tx, id: string) => {
   return { refundedMinor: b.feeMinor, salonShareMinor, platformShareMinor };
 };
 
-export const resolveAppeal = async (ctx: AuditCtx | undefined, id: string, approve: boolean, note?: string) =>
+export const resolveAppeal = async (ctx: AuditCtx | undefined, id: string, approve: boolean, note?: string) => {
+  const r = await resolveAppealTx(ctx, id, approve, note);
+  homeNotice(id, { kind: "appeal", approved: approve, refundedMinor: r.refundedMinor });
+  return r;
+};
+
+const resolveAppealTx = async (ctx: AuditCtx | undefined, id: string, approve: boolean, note?: string) =>
   prisma.$transaction(async (tx) => {
     const b = await tx.homeBooking.findUnique({
       where: { id },

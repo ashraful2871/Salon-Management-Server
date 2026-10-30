@@ -33,6 +33,8 @@ interface Config {
   homeService: {
     startCodeSecret: string | undefined;
     docsPreset: string;
+    /** Shown by the in-visit Help button (and in safety emails). */
+    supportPhone: string;
   };
   sslcz: {
     storeId: string;
@@ -193,6 +195,8 @@ const config = {
   homeService: {
     startCodeSecret: env("HOME_START_CODE_SECRET") || undefined,
     docsPreset: env("CLOUDINARY_HOME_DOCS_PRESET") || "home_expert_docs",
+    // Same number as the frontend's lib/site.ts until SUPPORT_PHONE is set.
+    supportPhone: env("SUPPORT_PHONE") || "01759030544",
   },
   /**
    * Email. `provider` pins the transport ("resend" | "smtp"); left empty, the

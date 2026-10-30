@@ -6,7 +6,7 @@ import prisma from "../../../shared/prisma";
 import { AuditCtx, auditTx } from "../../../utils/audit";
 import { sendEmail } from "../../../utils/emailSender";
 import { getReviewHiddenTemplate } from "../../../utils/emailTemplates";
-import { recomputeSalonRating, recomputeStaffRating } from "../../Review/review.service";
+import { recomputeHomeExpertRating, recomputeSalonRating, recomputeStaffRating } from "../../Review/review.service";
 import { parseListQuery } from "../admin.query";
 import { maskEmail } from "../admin.service";
 import { REVIEW_REASON_LABELS, ReviewModeration } from "./reviews.validation";
@@ -104,6 +104,7 @@ const moderate = async (ctx: AuditCtx | undefined, adminUserId: string, id: stri
       status: true,
       salonId: true,
       staffId: true,
+      homeExpertId: true,
       hiddenReason: true,
       salon: { select: { name: true, rating: true, totalReviews: true } },
       customer: { select: { name: true, email: true } },
@@ -129,6 +130,7 @@ const moderate = async (ctx: AuditCtx | undefined, adminUserId: string, id: stri
     });
     const salon = await recomputeSalonRating(tx, review.salonId);
     if (review.staffId) await recomputeStaffRating(tx, review.staffId);
+    if (review.homeExpertId) await recomputeHomeExpertRating(tx, review.homeExpertId);
 
     await auditTx(tx, ctx, {
       action: hide ? "review.hide" : "review.restore",

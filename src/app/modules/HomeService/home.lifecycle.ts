@@ -14,6 +14,7 @@ import { expertCanTake } from "./home.availability";
 import { Actor, expireStaleOf, getBooking, isContention, isExclusionViolation } from "./home.booking";
 import { ACTIVE_BOOKING_STATUSES } from "./home.expertSetup";
 import { homeCommissionMinor } from "./home.money";
+import { homeNotice, notifyHomeBooking } from "./home.notify";
 import type { CompleteJobBody, OwnerBookingsQuery } from "./home.validation";
 
 /**
@@ -291,6 +292,7 @@ export const setOff = async (userId: string, id: string) => {
       data: { enRouteAt: new Date() },
     }),
   );
+  homeNotice(id, { kind: "en_route" });
   return getMyJob(userId, id);
 };
 
@@ -305,6 +307,7 @@ export const arrived = async (userId: string, id: string) => {
       data: { arrivedAt: new Date() },
     }),
   );
+  homeNotice(id, { kind: "arrived" });
   return getMyJob(userId, id);
 };
 
@@ -381,6 +384,7 @@ export const completeJob = async (userId: string, id: string, body: CompleteJobB
     },
     { maxWait: 10_000, timeout: 20_000 },
   );
+  homeNotice(id, { kind: "completed" });
   return getMyJob(userId, id);
 };
 
@@ -630,6 +634,7 @@ export const reassign = async (user: AccessUser, ctx: AuditCtx, id: string, expe
     if (isExclusionViolation(e) || isContention(e)) throw slotTaken();
     throw e;
   }
+  homeNotice(id, { kind: "reassigned", fromExpertId: b.expertId });
   return getBoardBooking(id);
 };
 
@@ -698,6 +703,7 @@ export const closeStaleVisits = async () => {
         { maxWait: 10_000, timeout: 20_000 },
       );
       closed++;
+      await notifyHomeBooking(b.id, { kind: "completed" });
     } catch (e) {
       // Completed by the expert in the meantime, or one bad row: the next run retries.
       if (!(e instanceof ApiError)) console.error(`[jobs] home.stale: ${b.id}`, e);

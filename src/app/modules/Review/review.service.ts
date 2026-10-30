@@ -40,6 +40,13 @@ export const recomputeStaffRating = async (tx: Prisma.TransactionClient, staffId
   return data;
 };
 
+/** Home expert `rating` / `totalReviews` from the PUBLISHED reviews of their home visits. */
+export const recomputeHomeExpertRating = async (tx: Prisma.TransactionClient, homeExpertId: string) => {
+  const data = await ratingOf(tx, { homeExpertId });
+  await tx.homeExpert.update({ where: { id: homeExpertId }, data });
+  return data;
+};
+
 const createReview = async (userId: string, payload: any) => {
   // Verify appointment exists and is completed
   const appointment = await prisma.appointment.findUnique({

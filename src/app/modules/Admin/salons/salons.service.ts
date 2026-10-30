@@ -386,6 +386,7 @@ const listReviews = async (id: string, query: ListQuery) => {
         comment: true,
         createdAt: true,
         appointmentId: true,
+        homeBookingId: true,
         customer: { select: { id: true, name: true } },
       },
     }),
