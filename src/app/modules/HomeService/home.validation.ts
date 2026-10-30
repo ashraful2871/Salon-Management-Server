@@ -311,7 +311,57 @@ const expertReviews = z.object({
   query: z.object({ page: z.coerce.number().int().min(1).optional() }).passthrough(),
 });
 
+// ---------------------------------------------------------------- saved addresses
+// The same lengths the booking checks apply to a visit's address.
+
+const addressFields = {
+  label: z.string().trim().min(1).max(30),
+  addressLine: z.string().trim().min(5).max(200),
+  area: z.string().trim().max(80).nullable().optional(),
+  landmark: z.string().trim().max(120).nullable().optional(),
+  latitude: z.number().finite(),
+  longitude: z.number().finite(),
+  isDefault: z.boolean().optional(),
+};
+
+const createAddress = z.object({ body: z.object(addressFields) });
+
+const updateAddress = z.object({
+  params: idParams,
+  body: z
+    .object({
+      label: addressFields.label.optional(),
+      addressLine: addressFields.addressLine.optional(),
+      area: addressFields.area,
+      landmark: addressFields.landmark,
+      latitude: addressFields.latitude.optional(),
+      longitude: addressFields.longitude.optional(),
+      isDefault: addressFields.isDefault,
+    })
+    .refine((b) => Object.values(b).some((v) => v !== undefined), { message: "Nothing to change" })
+    .refine((b) => (b.latitude === undefined) === (b.longitude === undefined), { message: "Send latitude and longitude together" }),
+});
+
+// ---------------------------------------------------------------- admin bookings explorer
+
+const adminBookings = z.object({
+  query: z
+    .object({
+      status: ownerBookingsQuery.shape.status,
+      audience: z.nativeEnum(HomeAudience).optional(),
+      salonId: salonId.optional(),
+      q: z.string().trim().max(100).optional(),
+      from: day.optional(),
+      to: day.optional(),
+      page,
+    })
+    .passthrough(),
+});
+
 export const HomeValidation = {
+  createAddress,
+  updateAddress,
+  adminBookings,
   salonQuery,
   turnOn,
   turnOff,
@@ -359,7 +409,9 @@ export const HomeValidation = {
   expertReviews,
 };
 
-export type RescheduleBody = z.infer<typeof reschedule>["body"];
+export type AddressBody = z.infer<typeof createAddress>["body"];
+export type AdminBookingsQuery = z.infer<typeof adminBookings>["query"];
+export type RescheduleBody =z.infer<typeof reschedule>["body"];
 export type CompleteJobBody = z.infer<typeof completeJob>["body"];
 export type OwnerBookingsQuery = z.infer<typeof ownerBookingsQuery>;
 

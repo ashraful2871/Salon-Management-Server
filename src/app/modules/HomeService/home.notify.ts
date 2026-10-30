@@ -25,7 +25,7 @@ import { hmacCode } from "./home.lifecycle";
 /** Frontend paths. Phases 12–14 build these pages. */
 export const HOME_PATHS = {
   customerBooking: (id: string) => `/home-service/booking/${id}`,
-  expertJob: (id?: string) => (id ? `/dashboard/home-jobs?id=${id}` : "/dashboard/home-jobs"),
+  expertJob: (id?: string) => (id ? `/dashboard/my-jobs?id=${id}` : "/dashboard/my-jobs"),
   ownerBoard: (salonId: string) => `/dashboard/home-service/bookings?salonId=${salonId}`,
   ownerHome: (salonId: string) => `/dashboard/home-service?salonId=${salonId}`,
 };

@@ -6,6 +6,7 @@ import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { withAccessCache } from "../../utils/salonAccess";
 import { buildAuditCtx } from "../Admin/admin.middleware";
+import * as Addresses from "./home.addresses";
 import * as Admin from "./home.admin";
 import * as Booking from "./home.booking";
 import * as Cancel from "./home.cancel";
@@ -368,7 +369,41 @@ const publicExpertReviews = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Expert reviews", meta, data: items });
 });
 
+// ---------------------------------------------------------------- saved addresses
+
+const listAddresses = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Saved addresses", await Addresses.listAddresses(String(req.user!.userId)));
+});
+
+const createAddress = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Address saved", await Addresses.createAddress(actorOf(req), req.body), StatusCodes.CREATED);
+});
+
+const updateAddress = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Address updated", await Addresses.updateAddress(actorOf(req), id(req), req.body));
+});
+
+const deleteAddress = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Address removed", await Addresses.deleteAddress(actorOf(req), id(req)));
+});
+
+// ---------------------------------------------------------------- admin: bookings explorer
+
+const adminBookings = catchAsync(async (req: Request, res: Response) => {
+  page(res, "Home visits", await Admin.listBookings(req.query));
+});
+
+const adminBooking = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Home visit", await Admin.getBooking(id(req)));
+});
+
 export const HomeController = {
+  listAddresses,
+  createAddress,
+  updateAddress,
+  deleteAddress,
+  adminBookings,
+  adminBooking,
   customerReport,
   jobReport,
   requestHelp,

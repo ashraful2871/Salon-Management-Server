@@ -21,6 +21,7 @@ import {
 } from "./home.expertSetup";
 import { cancelBranchUpcoming, rehomeExpertBookings } from "./home.cancel";
 import { branchChecklist } from "./home.owner";
+import type { AdminBookingsQuery } from "./home.validation";
 
 /**
  * Back office for Home Service, under /admin/home-service: the branch approval
@@ -388,4 +389,144 @@ export const setExpertGender = async (ctx: AuditCtx | undefined, id: string, gen
     action: "homeService.booking_system_cancel",
   });
   return { ...expertView(after), upcoming };
+};
+
+// ---------------------------------------------------------------------------
+// Bookings explorer (read-only; ends go through home.cancel)
+// ---------------------------------------------------------------------------
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const bookingSearch = (q: string): Prisma.HomeBookingWhereInput => {
+  if (/^HS-/i.test(q)) return { code: { startsWith: q.toUpperCase() } };
+  if (UUID.test(q)) return { id: q };
+  if (q.includes("@")) return { customer: { email: { contains: q.toLowerCase(), mode: "insensitive" } } };
+  if (/^\+?[\d\s-]{6,}$/.test(q)) return { contactPhone: { contains: q.replace(/[\s-]/g, "").replace(/^\+?88/, "") } };
+  return { OR: [{ customer: { name: { contains: q, mode: "insensitive" } } }, { recipientName: { contains: q, mode: "insensitive" } }] };
+};
+
+const EXPLORER_SELECT = {
+  id: true,
+  code: true,
+  status: true,
+  audience: true,
+  startAt: true,
+  endAt: true,
+  area: true,
+  totalMinor: true,
+  advanceMinor: true,
+  advanceStatus: true,
+  feeMinor: true,
+  refundedMinor: true,
+  cancelledBy: true,
+  noShowParty: true,
+  appealStatus: true,
+  isTest: true,
+  createdAt: true,
+  salon: { select: { id: true, name: true } },
+  customer: { select: { id: true, name: true, email: true } },
+  expert: { select: { id: true, staff: { select: { user: { select: { name: true } } } } } },
+  items: { select: { nameSnapshot: true } },
+} satisfies Prisma.HomeBookingSelect;
+
+type ExplorerRow = Prisma.HomeBookingGetPayload<{ select: typeof EXPLORER_SELECT }>;
+
+const explorerView = ({ expert, items, ...b }: ExplorerRow) => ({
+  ...b,
+  expert: { id: expert.id, name: expert.staff.user.name },
+  services: items.map((i) => i.nameSnapshot),
+});
+
+/** GET /admin/home-service/bookings: every visit (unpaid ones included), newest start first. */
+export const listBookings = async (query: AdminBookingsQuery) => {
+  const page = pageOf(query.page);
+  const q = query.q?.trim();
+  const where: Prisma.HomeBookingWhereInput = {
+    ...(query.status ? { status: query.status } : {}),
+    ...(query.audience ? { audience: query.audience } : {}),
+    ...(query.salonId ? { salonId: query.salonId } : {}),
+    ...(query.from || query.to
+      ? {
+          serviceDate: {
+            ...(query.from ? { gte: new Date(`${query.from}T00:00:00Z`) } : {}),
+            ...(query.to ? { lte: new Date(`${query.to}T00:00:00Z`) } : {}),
+          },
+        }
+      : {}),
+    ...(q ? bookingSearch(q) : {}),
+  };
+  const [total, rows] = await Promise.all([
+    prisma.homeBooking.count({ where }),
+    prisma.homeBooking.findMany({
+      where,
+      select: EXPLORER_SELECT,
+      orderBy: [{ startAt: "desc" }, { id: "asc" }],
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+    }),
+  ]);
+  return { meta: pageMeta(page, total), data: rows.map(explorerView) };
+};
+
+/** GET /admin/home-service/bookings/:id: the whole visit, its timeline, reports and ledger lines. */
+export const getBooking = async (id: string) => {
+  const b = await prisma.homeBooking.findUnique({
+    where: { id },
+    select: {
+      ...EXPLORER_SELECT,
+      serviceDate: true,
+      expiresAt: true,
+      addressLine: true,
+      landmark: true,
+      latitude: true,
+      longitude: true,
+      distanceKm: true,
+      recipientName: true,
+      recipientIsWoman: true,
+      contactPhone: true,
+      notes: true,
+      subtotalMinor: true,
+      travelFeeMinor: true,
+      advancePercent: true,
+      balanceMinor: true,
+      balanceMethod: true,
+      balanceCollectedMinor: true,
+      commissionBps: true,
+      policySnapshot: true,
+      disclaimerText: true,
+      policyAcceptedAt: true,
+      paymentIntentId: true,
+      startCodeTries: true,
+      confirmedAt: true,
+      enRouteAt: true,
+      arrivedAt: true,
+      startedAt: true,
+      completedAt: true,
+      cancelledAt: true,
+      cancelReason: true,
+      noShowMarkedAt: true,
+      appealedAt: true,
+      appealReason: true,
+      appealResolvedAt: true,
+      rescheduleCount: true,
+      customer: { select: { id: true, name: true, email: true, phone: true } },
+      items: { select: { offeringId: true, nameSnapshot: true, priceMinor: true, durationMin: true } },
+      events: { select: { fromStatus: true, toStatus: true, actorRole: true, reason: true, createdAt: true }, orderBy: { createdAt: "asc" } },
+      safetyReports: { select: { id: true, kind: true, status: true, reporterRole: true, createdAt: true }, orderBy: { createdAt: "asc" } },
+      ledgerEntries: {
+        select: { id: true, journalId: true, account: true, amountMinor: true, description: true, createdAt: true },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      },
+    },
+  });
+  if (!b) throw notFound();
+  const { expert, items, ...rest } = b;
+  return {
+    ...rest,
+    serviceDate: rest.serviceDate.toISOString().slice(0, 10),
+    expert: { id: expert.id, name: expert.staff.user.name },
+    items: items.map((i) => ({ offeringId: i.offeringId, name: i.nameSnapshot, priceMinor: i.priceMinor, durationMin: i.durationMin })),
+    services: items.map((i) => i.nameSnapshot),
+    ledgerSumMinor: rest.ledgerEntries.reduce((s, l) => s + l.amountMinor, 0),
+  };
 };

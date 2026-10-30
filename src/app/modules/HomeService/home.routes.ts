@@ -197,6 +197,12 @@ router.post(
   HomeController.createReview,
 );
 
+// Saved addresses: a convenience for the booking form; a booking keeps its own copy.
+router.get("/addresses", auth(UserRole.CUSTOMER), HomeController.listAddresses);
+router.post("/addresses", auth(UserRole.CUSTOMER), validateRequest(HomeValidation.createAddress), HomeController.createAddress);
+router.patch("/addresses/:id", auth(UserRole.CUSTOMER), validateRequest(HomeValidation.updateAddress), HomeController.updateAddress);
+router.delete("/addresses/:id", auth(UserRole.CUSTOMER), validateRequest(HomeValidation.bookingId), HomeController.deleteAddress);
+
 // The expert runs the visit. Only the assigned expert's staff user sees a job (else 404).
 const expert = auth(UserRole.STAFF, UserRole.BRANCH_MANAGER);
 router.get("/jobs", expert, validateRequest(HomeValidation.myJobs), HomeController.myJobs);
@@ -333,6 +339,8 @@ admin.post(
   HomeController.adminExpertGender,
 );
 
+admin.get("/bookings", adminAuth("homeservice.view"), adminOnly, validateRequest(HomeValidation.adminBookings), HomeController.adminBookings);
+admin.get("/bookings/:id", adminAuth("homeservice.view"), adminOnly, validateRequest(HomeValidation.bookingId), HomeController.adminBooking);
 admin.post(
   "/bookings/:id/cancel",
   adminAuth("homeservice.manage"),
