@@ -8,7 +8,7 @@ import { sendEmail } from "../../../utils/emailSender";
 import { getSupportReplyTemplate } from "../../../utils/emailTemplates";
 import { ADMIN_ROLE_PERMISSIONS } from "../admin.permissions";
 import { parseListQuery } from "../admin.query";
-import { TicketReply, TicketUpdate } from "./support.validation";
+import { TICKET_CATEGORIES, TICKET_PRIORITIES, TicketReply, TicketUpdate } from "./support.validation";
 
 type Query = Record<string, string | undefined>;
 
@@ -248,6 +248,37 @@ const update = async (ctx: AuditCtx | undefined, id: string, body: TicketUpdate)
   return { ...withSla(updated), assigneeName: updated.assigneeId ? (names.get(updated.assigneeId) ?? null) : null };
 };
 
+export type NewTicket = {
+  source: "CONTACT_FORM" | "DASHBOARD" | "ADMIN";
+  name: string;
+  email: string;
+  userId?: string | null;
+  appointmentId?: string | null;
+  subject: string;
+  category: (typeof TICKET_CATEGORIES)[number];
+  priority?: (typeof TICKET_PRIORITIES)[number];
+  /** The first message, from the requester (CUSTOMER) or the system. */
+  body: string;
+  authorType?: "CUSTOMER" | "SYSTEM";
+};
+
+/** Opens a ticket with its first message, for flows other than the contact form (the in-visit Help button). */
+const createTicket = (t: NewTicket, db: Prisma.TransactionClient = prisma) =>
+  db.supportTicket.create({
+    data: {
+      source: t.source,
+      name: t.name,
+      email: t.email,
+      userId: t.userId ?? null,
+      appointmentId: t.appointmentId ?? null,
+      subject: t.subject.slice(0, 200),
+      category: t.category,
+      priority: t.priority ?? "NORMAL",
+      messages: { create: { authorType: t.authorType ?? "CUSTOMER", authorId: t.userId ?? null, body: t.body } },
+    },
+    select: { id: true, number: true },
+  });
+
 /** Job support.autoclose (daily): RESOLVED for more than 7 days → CLOSED. */
 const autoClose = async () => {
   const { count } = await prisma.supportTicket.updateMany({
@@ -258,4 +289,4 @@ const autoClose = async () => {
   return { closed: count };
 };
 
-export const AdminSupportService = { list, getTicket, assignees, reply, update, autoClose };
+export const AdminSupportService = { list, getTicket, assignees, reply, update, autoClose, createTicket };

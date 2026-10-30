@@ -67,6 +67,7 @@ model HomeExpert {
   salon     Salon                @relation(fields: [salonId], references: [id], onDelete: Cascade)
   offerings HomeExpertOffering[]
   bookings  HomeBooking[]
+  reviews   Review[]
 
   @@index([salonId])
   @@index([audience, verification, isActive])
@@ -200,6 +201,7 @@ model HomeBooking {
   events        HomeBookingEvent[]
   safetyReports HomeSafetyReport[]
   ledgerEntries LedgerEntry[]
+  review        Review?
 
   @@index([customerId, status])
   @@index([salonId, serviceDate])
@@ -271,6 +273,8 @@ model HomeSafetyReport {
   status          HomeReportStatus @default(OPEN)
   handledById     String?
   handledAt       DateTime?        @db.Timestamptz(3)
+  /// The admin's note on the last status change (also in the audit row).
+  handlerNote     String?
   supportTicketId String?
   createdAt       DateTime         @default(now()) @db.Timestamptz(3)
 

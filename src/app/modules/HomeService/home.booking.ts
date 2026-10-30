@@ -26,6 +26,7 @@ import { availableFor, eligibleExperts, expertCanTake, loadCart, loadSlotSetting
 import { ACTIVE_BOOKING_STATUSES } from "./home.expertSetup";
 import { startCodeFor } from "./home.lifecycle";
 import { priceCart } from "./home.money";
+import { homeNotice } from "./home.notify";
 import { isBranchBookable, loadHomeFlags } from "./home.owner";
 import {
   buildDisclaimer,
@@ -629,8 +630,8 @@ export const confirmPaidHomeBooking = async (
   if (!head) throw new ApiError(StatusCodes.NOT_FOUND, "Booking not found");
   const credited = creditedMinor > 0 ? { walletCreditedMinor: creditedMinor } : {};
 
-  return prisma.$transaction(
-    async (tx) => {
+  const result = await prisma.$transaction(
+    async (tx): Promise<ConfirmResult & { confirmedNow?: true }> => {
       await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`;
       await lockStaff(tx, head.expert.staffId);
       const b = await tx.homeBooking.findUnique({
@@ -702,10 +703,14 @@ export const confirmPaidHomeBooking = async (
           reason: late ? "Paid after the payment window" : null,
         },
       });
-      return { status: HomeBookingStatus.CONFIRMED, ...credited };
+      return { status: HomeBookingStatus.CONFIRMED, ...credited, confirmedNow: true };
     },
     { maxWait: 10_000, timeout: 20_000 },
   );
+  // Only the call that moved it tells anyone (a repeat finds it already paid).
+  const { confirmedNow, ...out } = result;
+  if (confirmedNow) homeNotice(bookingId, { kind: "confirmed" });
+  return out;
 };
 
 export const payBooking = async (actor: Actor, id: string, method: "WALLET" | ProviderName) => {

@@ -16,6 +16,7 @@ const publicRead = [optionalAuth(), homePublicLimiter];
 router.get("/catalog", ...publicRead, HomeController.publicCatalog);
 router.get("/experts", ...publicRead, HomeController.publicExperts);
 router.get("/experts/:id", ...publicRead, HomeController.publicExpert);
+router.get("/experts/:id/reviews", ...publicRead, validateRequest(HomeValidation.expertReviews), HomeController.publicExpertReviews);
 router.get("/availability", ...publicRead, HomeController.publicAvailability);
 router.get("/availability/days", ...publicRead, HomeController.publicAvailabilityDays);
 
@@ -178,6 +179,24 @@ router.post(
 );
 router.post("/bookings/:id/appeal", auth(), validateRequest(HomeValidation.appeal, { replaceBody: true }), HomeController.appeal);
 
+// Safety and reviews (home.safety, home.reviews). The customer's own booking, else 404.
+router.post(
+  "/bookings/:id/report",
+  auth(),
+  homePublicLimiter,
+  validateRequest(HomeValidation.safetyReport, { replaceBody: true }),
+  HomeController.customerReport,
+);
+// No limiter: someone asking for help mid-visit is never refused; a repeat within 15 min reuses the ticket.
+router.post("/bookings/:id/help", auth(), validateRequest(HomeValidation.bookingId), HomeController.requestHelp);
+router.post(
+  "/bookings/:id/review",
+  auth(),
+  homePublicLimiter,
+  validateRequest(HomeValidation.createReview, { replaceBody: true }),
+  HomeController.createReview,
+);
+
 // The expert runs the visit. Only the assigned expert's staff user sees a job (else 404).
 const expert = auth(UserRole.STAFF, UserRole.BRANCH_MANAGER);
 router.get("/jobs", expert, validateRequest(HomeValidation.myJobs), HomeController.myJobs);
@@ -193,6 +212,13 @@ router.post(
 );
 router.post("/jobs/:id/no-show", expert, validateRequest(HomeValidation.bookingId), HomeController.jobNoShow);
 router.post("/jobs/:id/abort", expert, validateRequest(HomeValidation.jobAbort, { replaceBody: true }), HomeController.jobAbort);
+router.post(
+  "/jobs/:id/report",
+  expert,
+  homePublicLimiter,
+  validateRequest(HomeValidation.safetyReport, { replaceBody: true }),
+  HomeController.jobReport,
+);
 
 // Bookings board: homeservice.bookings at the branch (salonAccess).
 router.get("/owner/bookings", auth(...BUSINESS_ROLES), validateRequest(HomeValidation.ownerBookings), HomeController.ownerBookings);
@@ -330,6 +356,17 @@ admin.patch(
   adminOnly,
   validateRequest(HomeValidation.adminResolveAppeal, { replaceBody: true }),
   HomeController.adminResolveAppeal,
+);
+
+// Safety reports (home.safety).
+admin.get("/reports", adminAuth("homeservice.manage"), adminOnly, validateRequest(HomeValidation.adminReports), HomeController.adminReports);
+admin.post(
+  "/reports/:id/status",
+  adminAuth("homeservice.manage"),
+  adminOnly,
+  validateRequest(HomeValidation.adminReportStatus, { replaceBody: true }),
+  ...tier3,
+  HomeController.adminReportStatus,
 );
 
 export const HomeServiceAdminRoutes = admin;

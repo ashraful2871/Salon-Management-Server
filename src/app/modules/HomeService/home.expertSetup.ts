@@ -80,17 +80,20 @@ const inspectDoc = async (publicId: string) => {
   }
 };
 
+/** True when Cloudinary took the delete (gone or already gone), so the ids may be forgotten. */
 const deleteDocs = async (publicIds: string[]) => {
-  if (!publicIds.length) return;
+  if (!publicIds.length) return true;
   try {
     await cloudinary.api.delete_resources(publicIds, {
       type: "authenticated",
       resource_type: "image",
       invalidate: true,
     });
+    return true;
   } catch (err) {
     // Never log the ids themselves.
     console.error(`[home] failed to delete ${publicIds.length} expert document(s)`, (err as Error)?.message ?? err);
+    return false;
   }
 };
 

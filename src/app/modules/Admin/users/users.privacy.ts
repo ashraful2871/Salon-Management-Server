@@ -5,7 +5,7 @@ import ApiError from "../../../Error/error";
 import prisma from "../../../shared/prisma";
 import { audit, auditTx, AuditCtx } from "../../../utils/audit";
 import { dhakaToday, toCalendarDate } from "../../Assistant/assistant.availability";
-import { recomputeSalonRating, recomputeStaffRating } from "../../Review/review.service";
+import { recomputeHomeExpertRating, recomputeSalonRating, recomputeStaffRating } from "../../Review/review.service";
 import type { AdminContext } from "../admin.middleware";
 
 /**
@@ -271,7 +271,7 @@ const anonymize = async (
     // Keep the star value on the row, drop the words, hide it.
     const published = await tx.review.findMany({
       where: { customerId: id, status: "PUBLISHED" },
-      select: { salonId: true, staffId: true },
+      select: { salonId: true, staffId: true, homeExpertId: true },
     });
     const reviews = await tx.review.updateMany({
       where: { customerId: id },
@@ -307,6 +307,9 @@ const anonymize = async (
     for (const salonId of new Set(rated.map((r) => r.salonId))) await recomputeSalonRating(prisma, salonId);
     for (const staffId of new Set(rated.flatMap((r) => (r.staffId ? [r.staffId] : [])))) {
       await recomputeStaffRating(prisma, staffId);
+    }
+    for (const expertId of new Set(rated.flatMap((r) => (r.homeExpertId ? [r.homeExpertId] : [])))) {
+      await recomputeHomeExpertRating(prisma, expertId);
     }
   } catch (error) {
     console.error("[privacy] rating recompute after anonymize failed:", error);

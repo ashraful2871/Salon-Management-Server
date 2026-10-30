@@ -32,6 +32,17 @@ export const NOTIFY_EVENTS = [
   "team.removed",
   "salon.status",
   "close.difference",
+  // Home Service (modules/HomeService/home.notify.ts sends all of them).
+  "home.booking.confirmed",
+  "home.booking.cancelled",
+  "home.booking.reassigned",
+  "home.booking.no_show",
+  "home.booking.completed",
+  "home.booking.reminder",
+  "home.booking.on_the_way",
+  "home.expert.verified",
+  "home.expert.rejected",
+  "home.branch.reviewed",
 ] as const;
 
 export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
@@ -73,6 +84,19 @@ export const EVENT_INFO: Record<NotifyEvent, EventInfo> = {
   "team.removed": { label: "Someone left your team", group: "Business", email: false, inApp: true, ownerOnly: true },
   "salon.status": { label: "Branch approved, suspended or reactivated", group: "Business", email: true, inApp: true, ownerOnly: true },
   "close.difference": { label: "Till short or over by ৳100 or more at closing", group: "Money", email: true, inApp: true, ownerOnly: true },
+  // Home visits: the bell for the branch and the expert. The customer's own
+  // emails (confirmation, reminders, receipt, refund) are transactional and
+  // sent directly; the customer gets a bell row for "on the way" / "arrived".
+  "home.booking.confirmed": { label: "Home visit booked", group: "Bookings", email: false, inApp: true, ownerOnly: false },
+  "home.booking.cancelled": { label: "Home visit cancelled", group: "Bookings", email: false, inApp: true, ownerOnly: false },
+  "home.booking.reassigned": { label: "Home visit moved to another expert", group: "Bookings", email: false, inApp: true, ownerOnly: false },
+  "home.booking.no_show": { label: "Home visit no-show or appeal decided", group: "Bookings", email: false, inApp: true, ownerOnly: false },
+  "home.booking.completed": { label: "Home visit completed", group: "Bookings", email: false, inApp: true, ownerOnly: false },
+  "home.booking.reminder": { label: "Home visit coming up (expert)", group: "Bookings", email: false, inApp: true, ownerOnly: false },
+  "home.booking.on_the_way": { label: "Expert on the way or arrived (customer)", group: "Bookings", email: false, inApp: true, ownerOnly: false },
+  "home.expert.verified": { label: "Home expert verified", group: "Business", email: true, inApp: true, ownerOnly: true },
+  "home.expert.rejected": { label: "Home expert not verified", group: "Business", email: true, inApp: true, ownerOnly: true },
+  "home.branch.reviewed": { label: "Home Service approved, rejected or suspended", group: "Business", email: true, inApp: true, ownerOnly: true },
 };
 
 export const BOOKING_EMAIL_MODES = ["EVERY", "DIGEST", "NONE"] as const;

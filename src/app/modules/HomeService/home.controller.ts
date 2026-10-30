@@ -13,6 +13,8 @@ import * as Experts from "./home.expertSetup";
 import * as Lifecycle from "./home.lifecycle";
 import * as Owner from "./home.owner";
 import * as Public from "./home.public";
+import * as Reviews from "./home.reviews";
+import * as Safety from "./home.safety";
 
 const ctxOf = (req: Request) => buildAuditCtx(req, req.user!.role);
 const ok = <T>(res: Response, message: string, data: T, statusCode: number = StatusCodes.OK) =>
@@ -333,7 +335,47 @@ const adminResolveAppeal = catchAsync(async (req: Request, res: Response) => {
   ok(res, req.body.approve ? "Appeal upheld" : "Appeal rejected", data);
 });
 
+// ---------------------------------------------------------------- safety, help, reviews
+
+const customerReport = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Report sent. Our team will look into it.", await Safety.customerReport(actorOf(req), id(req), req.body), StatusCodes.CREATED);
+});
+
+const jobReport = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Report sent. Our team will look into it.", await Safety.expertReport(me(req), id(req), req.body), StatusCodes.CREATED);
+});
+
+const requestHelp = catchAsync(async (req: Request, res: Response) => {
+  const data = await Safety.requestHelp(actorOf(req), id(req));
+  ok(res, `Help is on the way. Call ${data.supportPhone} if you need us now.`, data, data.reused ? StatusCodes.OK : StatusCodes.CREATED);
+});
+
+const adminReports = catchAsync(async (req: Request, res: Response) => {
+  const { meta, data } = await Safety.listReports(req.query);
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Safety reports", meta, data });
+});
+
+const adminReportStatus = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Report updated", await Safety.setReportStatus(req.auditCtx, id(req), req.body));
+});
+
+const createReview = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Thanks for your review", await Reviews.createHomeReview(actorOf(req), id(req), req.body), StatusCodes.CREATED);
+});
+
+const publicExpertReviews = catchAsync(async (req: Request, res: Response) => {
+  const { meta, items } = await Public.getExpertReviews(String(req.params.id), req.query);
+  sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Expert reviews", meta, data: items });
+});
+
 export const HomeController = {
+  customerReport,
+  jobReport,
+  requestHelp,
+  adminReports,
+  adminReportStatus,
+  createReview,
+  publicExpertReviews,
   cancelQuote,
   customerCancel,
   reschedule,

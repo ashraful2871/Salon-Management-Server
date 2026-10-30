@@ -7,12 +7,10 @@ import {
   Prisma,
 } from "@prisma/client";
 import { StatusCodes } from "http-status-codes";
-import config from "../../../config";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { AuditCtx, auditTx, diff } from "../../utils/audit";
-import { sendEmail } from "../../utils/emailSender";
-import { getHomeServiceDecisionTemplate } from "../../utils/emailTemplates";
+import { notifyHomeDecision } from "./home.notify";
 import {
   audienceOf,
   auditExpert,
@@ -42,44 +40,6 @@ const pageMeta = (page: number, total: number) => ({
   total,
   totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
 });
-
-// ---------------------------------------------------------------------------
-// Owner emails (sendEmail never throws; a mail problem never fails the decision)
-// ---------------------------------------------------------------------------
-
-type DecisionKind = Parameters<typeof getHomeServiceDecisionTemplate>[0]["kind"];
-
-const SUBJECTS: Record<DecisionKind, (salon: string, expert: string) => string> = {
-  branch_approved: (s) => `Home Service at ${s} is live`,
-  branch_rejected: (s) => `Home Service at ${s} was not approved`,
-  branch_suspended: (s) => `Home Service at ${s} is suspended`,
-  expert_verified: (s, e) => `${e} is verified for home visits at ${s}`,
-  expert_rejected: (s, e) => `${e} was not verified for home visits at ${s}`,
-};
-
-const emailOwner = (salonId: string, kind: DecisionKind, reason?: string | null, expertName?: string | null) => {
-  void (async () => {
-    try {
-      const salon = await prisma.salon.findUnique({
-        where: { id: salonId },
-        select: { name: true, owner: { select: { user: { select: { name: true, email: true } } } } },
-      });
-      if (!salon?.owner?.user?.email) return;
-      const html = getHomeServiceDecisionTemplate({
-        kind,
-        ownerName: salon.owner.user.name,
-        salonName: salon.name,
-        expertName,
-        reason,
-        link: `${config.frontend_url}/dashboard/home-service?salonId=${salonId}`,
-        contactUrl: `${config.frontend_url}/contact`,
-      });
-      await sendEmail(salon.owner.user.email, SUBJECTS[kind](salon.name, expertName ?? "Your expert"), html);
-    } catch (err) {
-      console.error(`[home] owner email ${kind} failed`, (err as Error)?.message ?? err);
-    }
-  })();
-};
 
 // ---------------------------------------------------------------------------
 // Branch profiles
@@ -205,7 +165,7 @@ export const approveProfile = async (ctx: AuditCtx | undefined, id: string, reas
     reason,
     data: () => ({ status: HomeServiceStatus.ACTIVE, everApproved: true, statusReason: null, ...reviewedBy(ctx) }),
   });
-  emailOwner(after.salonId, "branch_approved");
+  notifyHomeDecision(after.salonId, "branch_approved");
   return after;
 };
 
@@ -217,7 +177,7 @@ export const rejectProfile = async (ctx: AuditCtx | undefined, id: string, reaso
     reason,
     data: () => ({ status: HomeServiceStatus.REJECTED, statusReason: reason, isOn: false, ...reviewedBy(ctx) }),
   });
-  emailOwner(after.salonId, "branch_rejected", reason);
+  notifyHomeDecision(after.salonId, "branch_rejected", reason);
   return after;
 };
 
@@ -236,7 +196,7 @@ export const suspendProfile = async (ctx: AuditCtx | undefined, id: string, reas
     reason: `Home Service suspended: ${reason}`,
     action: "homeService.booking_system_cancel",
   });
-  emailOwner(after.salonId, "branch_suspended", reason);
+  notifyHomeDecision(after.salonId, "branch_suspended", reason);
   return { ...after, upcoming };
 };
 
@@ -370,7 +330,7 @@ export const verifyExpert = async (ctx: AuditCtx | undefined, id: string, reason
       if (staff) await tx.user.updateMany({ where: { id: staff.userId, gender: null }, data: { gender: e.gender } });
     },
   });
-  emailOwner(after.salonId, "expert_verified", null, await staffNameOf(after.staffId));
+  notifyHomeDecision(after.salonId, "expert_verified", null, await staffNameOf(after.staffId));
   return expertView(after);
 };
 
@@ -381,7 +341,7 @@ export const rejectExpert = async (ctx: AuditCtx | undefined, id: string, reason
     reason,
     data: { verification: ExpertVerification.REJECTED, rejectReason: reason },
   });
-  emailOwner(after.salonId, "expert_rejected", reason, await staffNameOf(after.staffId));
+  notifyHomeDecision(after.salonId, "expert_rejected", reason, await staffNameOf(after.staffId));
   return expertView(after);
 };
 

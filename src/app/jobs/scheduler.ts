@@ -31,7 +31,13 @@ import {
 import prisma from "../shared/prisma";
 import { JobRunStatus, Prisma } from "@prisma/client";
 import { releaseJobLock, tryJobLock } from "./jobLock";
-import { closeStaleVisits, expireUnpaidHomeBookings, flagLateExperts } from "../modules/HomeService/home.jobs";
+import {
+  closeStaleVisits,
+  expireUnpaidHomeBookings,
+  flagLateExperts,
+  runHomeRetention,
+  sendHomeReminders,
+} from "../modules/HomeService/home.jobs";
 
 /**
  * Periodic money work, the AI search index repair, retention, and the health
@@ -262,6 +268,10 @@ export const JOBS: JobDef[] = [
   // expert not there 45 min after the start is flagged (no-shows are Phase 8).
   { name: "home.stale", everyMs: 5 * MINUTE, safeToRunNow: false, run: closeStaleVisits },
   { name: "home.notArrived", everyMs: 5 * MINUTE, safeToRunNow: false, run: flagLateExperts },
+  // 24 h and 2 h reminders for CONFIRMED home visits, each claimed by its stamp.
+  { name: "home.reminders", everyMs: 5 * MINUTE, safeToRunNow: false, run: () => sendHomeReminders() },
+  // Old addresses scrubbed, removed experts' ID documents deleted, ended blocks dropped.
+  { name: "home.retention", everyMs: 24 * HOUR, safeToRunNow: false, run: () => runHomeRetention() },
   { name: "deposit.autoNoShow", everyMs: NO_SHOW_INTERVAL_MS, safeToRunNow: false, run: () => AppointmentDeposit.autoMarkNoShows() },
   { name: "appointment.autoCloseStale", everyMs: STALE_CHECKOUT_INTERVAL_MS, safeToRunNow: false, run: () => AppointmentCheckout.autoCloseStaleCheckIns() },
   { name: "wallet.audit", everyMs: WALLET_AUDIT_INTERVAL_MS, safeToRunNow: true, run: auditWallets },

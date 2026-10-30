@@ -47,20 +47,23 @@ const REVIEW_SELECT = {
   salon: { select: { id: true, name: true } },
   staff: { select: { id: true, user: { select: { name: true } } } },
   appointment: { select: { appointmentDate: true, service: { select: { name: true } } } },
+  // A home-visit review has no appointment (exactly one of the two is set).
+  homeBooking: { select: { startAt: true, items: { select: { nameSnapshot: true } } } },
 } satisfies Prisma.ReviewSelect;
 
 type ReviewRow = Prisma.ReviewGetPayload<{ select: typeof REVIEW_SELECT }>;
 
 const toItem = (row: ReviewRow, now: number) => {
-  const { staff, appointment, ...rest } = row;
+  const { staff, appointment, homeBooking, ...rest } = row;
   const hidden = row.status === ReviewStatus.HIDDEN;
   return {
     ...rest,
     comment: hidden ? null : row.comment,
     hiddenReason: hidden ? row.hiddenReason : null,
     staff: staff ? { id: staff.id, name: staff.user.name } : null,
-    serviceName: appointment.service?.name ?? null,
-    visitDate: appointment.appointmentDate,
+    kind: homeBooking ? ("HOME" as const) : ("SALON" as const),
+    serviceName: appointment?.service?.name ?? (homeBooking?.items.map((i) => i.nameSnapshot).join(", ") || null),
+    visitDate: appointment?.appointmentDate ?? homeBooking?.startAt ?? null,
     canReply: !hidden && !row.ownerReply,
     canEditReply:
       !hidden && !!row.ownerRepliedAt && now - row.ownerRepliedAt.getTime() < REPLY_EDIT_WINDOW_MS,

@@ -1274,3 +1274,55 @@ export const getHomeServiceDecisionTemplate = (notice: {
       );
   }
 };
+
+/**
+ * Every customer email about a home visit: confirmation (with the start code
+ * and the policy they accepted), reminders, the receipt, cancellations with
+ * the refund, a new expert, a no-show and an appeal decision. Every value is
+ * plain text and escaped here; `lines` are paragraphs.
+ */
+export const getHomeVisitTemplate = (notice: {
+  heading: string;
+  name: string;
+  lines: string[];
+  rows?: [label: string, value: string][];
+  /** One value shown large (the start code). */
+  highlight?: { label: string; value: string; note?: string } | null;
+  /** The cancellation policy text the customer ticked, verbatim. */
+  disclaimer?: string | null;
+  cta?: { label: string; url: string } | null;
+  footnote?: string | null;
+}) => {
+  const rows = (notice.rows ?? [])
+    .map(
+      ([label, value]) => `
+    <tr>
+      <td style="padding:10px 0;color:#7f8c8d;font-size:13px;border-bottom:1px solid #eef1f3;">${escapeHtml(label)}</td>
+      <td style="padding:10px 0;text-align:right;font-size:13px;color:#2c3e50;border-bottom:1px solid #eef1f3;">${escapeHtml(value)}</td>
+    </tr>`,
+    )
+    .join("");
+  const highlight = notice.highlight
+    ? `<div style="margin:20px 0;padding:16px;border:1px solid #eef1f3;border-radius:8px;text-align:center;">
+         <div style="font-size:13px;color:#7f8c8d;">${escapeHtml(notice.highlight.label)}</div>
+         <div style="font-size:30px;font-weight:700;letter-spacing:6px;font-family:'Courier New',monospace;color:#2c3e50;">${escapeHtml(notice.highlight.value)}</div>
+         ${notice.highlight.note ? `<div style="font-size:12px;color:#7f8c8d;">${escapeHtml(notice.highlight.note)}</div>` : ""}
+       </div>`
+    : "";
+  const disclaimer = notice.disclaimer?.trim()
+    ? `<div style="margin:20px 0;padding:14px 16px;background:#f8f9fa;border-left:3px solid #2c3e50;font-size:13px;color:#2c3e50;">
+         <div style="font-weight:600;margin-bottom:6px;">The cancellation policy you accepted</div>
+         ${escapeHtml(notice.disclaimer.trim()).replace(/\r?\n/g, "<br>")}
+       </div>`
+    : "";
+  return moneyLayout(
+    escapeHtml(notice.heading),
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     ${notice.lines.map((l) => `<p>${escapeHtml(l)}</p>`).join("")}
+     ${highlight}
+     ${rows ? `<table style="width:100%;border-collapse:collapse;border-top:1px solid #eef1f3;margin:18px 0;">${rows}</table>` : ""}
+     ${disclaimer}
+     ${notice.cta ? buttonLink(notice.cta.url, notice.cta.label) : ""}
+     ${notice.footnote ? `<p style="color:#7f8c8d;font-size:12px;">${escapeHtml(notice.footnote)}</p>` : ""}`,
+  );
+};
