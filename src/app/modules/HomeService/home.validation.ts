@@ -231,6 +231,7 @@ const completeJob = z.object({
 const ownerBookingsQuery = z
   .object({
     salonId: salonId.optional(),
+    tab: z.enum(["today", "upcoming", "past"]).optional(),
     status: z.enum(["PENDING_PAYMENT", "CONFIRMED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"]).optional(),
     audience: z.nativeEnum(HomeAudience).optional(),
     expertId: z.string().uuid().optional(),

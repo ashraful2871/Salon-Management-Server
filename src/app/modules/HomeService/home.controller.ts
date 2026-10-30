@@ -268,6 +268,7 @@ const ownerBookings = catchAsync(async (req: Request, res: Response) => {
   const q = req.query as Record<string, string | undefined>;
   const { meta, data } = await Lifecycle.listOwnerBookings(withAccessCache(req), {
     salonId: q.salonId,
+    tab: q.tab as Lifecycle.BoardQuery["tab"],
     status: q.status as Lifecycle.BoardQuery["status"],
     audience: q.audience as HomeAudience | undefined,
     expertId: q.expertId,
@@ -276,6 +277,10 @@ const ownerBookings = catchAsync(async (req: Request, res: Response) => {
     page: Math.max(1, Number(q.page) || 1),
   });
   sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Home visits", meta, data });
+});
+
+const ownerReassignCandidates = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Free experts", await Lifecycle.reassignCandidates(withAccessCache(req), id(req)));
 });
 
 const ownerReassign = catchAsync(async (req: Request, res: Response) => {
@@ -430,6 +435,7 @@ export const HomeController = {
   jobStart,
   jobComplete,
   ownerBookings,
+  ownerReassignCandidates,
   ownerReassign,
   ownerOverrideStart,
   quote,
