@@ -6,6 +6,7 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { AuditCtx, auditTx } from "../../utils/audit";
 import { AccessUser, assertSalonPermission, scopeSalonIds } from "../../utils/salonAccess";
+import { getSetting } from "../../utils/settings";
 import { addDays, dhakaDay, isDay } from "../Analytics/analytics.days";
 import { writeJournal } from "../Settlement/settlement.service";
 import { lockStaff } from "../Staff/staff.schedule";
@@ -194,6 +195,7 @@ const JOB = {
   balanceMinor: true,
   balanceMethod: true,
   startCodeTries: true,
+  arrivedAt: true,
   salon: { select: { id: true, name: true } },
   items: { select: { nameSnapshot: true, durationMin: true } },
 } satisfies Prisma.HomeBookingSelect;
@@ -207,7 +209,7 @@ const addressOpen = (b: { status: HomeBookingStatus; startAt: Date }, now: Date)
   ACTIVE_BOOKING_STATUSES.includes(b.status) &&
   (b.status !== HomeBookingStatus.CONFIRMED || now.getTime() >= b.startAt.getTime() - ADDRESS_REVEAL_MS);
 
-const jobView = (b: JobRow, now = new Date()) => {
+const jobView = (b: JobRow, noShowWaitMinutes: number, now = new Date()) => {
   const open = addressOpen(b, now);
   const paidInApp = b.balanceMethod === BalanceMethod.WALLET;
   return {
@@ -227,6 +229,11 @@ const jobView = (b: JobRow, now = new Date()) => {
     startCodeTriesLeft: Math.max(0, MAX_START_TRIES - b.startCodeTries),
     canSetOffFrom: new Date(b.startAt.getTime() - EN_ROUTE_FROM_MS),
     addressRevealAt: new Date(b.startAt.getTime() - ADDRESS_REVEAL_MS),
+    /** From when the expert can mark the customer as not home (`expertMarkNoShow`). */
+    noShowFrom:
+      b.status === HomeBookingStatus.ARRIVED && b.arrivedAt
+        ? new Date(b.arrivedAt.getTime() + noShowWaitMinutes * MIN_MS)
+        : null,
     address: open
       ? { addressLine: b.addressLine, landmark: b.landmark, latitude: b.latitude, longitude: b.longitude, notes: b.notes }
       : null,
@@ -249,23 +256,31 @@ export const listMyJobs = async (userId: string, date?: string) => {
   }
   const from = date ?? today;
   const to = date ?? last;
-  const rows = await prisma.homeBooking.findMany({
-    where: {
-      status: { notIn: UNPAID },
-      expert: { staff: { userId } },
-      serviceDate: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T00:00:00Z`) },
-    },
-    select: JOB,
-    orderBy: [{ startAt: "asc" }, { id: "asc" }],
-  });
+  const [rows, expert, wait] = await Promise.all([
+    prisma.homeBooking.findMany({
+      where: {
+        status: { notIn: UNPAID },
+        expert: { staff: { userId } },
+        serviceDate: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T00:00:00Z`) },
+      },
+      select: JOB,
+      orderBy: [{ startAt: "asc" }, { id: "asc" }],
+    }),
+    prisma.homeExpert.findFirst({ where: { staff: { userId }, removedAt: null }, select: { id: true } }),
+    getSetting("homeService.noShowWaitMinutes"),
+  ]);
   const now = new Date();
-  return { from, to, jobs: rows.map((r) => jobView(r, now)) };
+  // Someone removed as an expert still sees the visits they have left to finish.
+  return { from, to, isExpert: !!expert || rows.length > 0, jobs: rows.map((r) => jobView(r, wait, now)) };
 };
 
 export const getMyJob = async (userId: string, id: string) => {
-  const b = await prisma.homeBooking.findFirst({ where: myJobWhere(userId, id), select: JOB });
+  const [b, wait] = await Promise.all([
+    prisma.homeBooking.findFirst({ where: myJobWhere(userId, id), select: JOB }),
+    getSetting("homeService.noShowWaitMinutes"),
+  ]);
   if (!b) throw notFound();
-  return jobView(b);
+  return jobView(b, wait);
 };
 
 const loadMyJob = async (userId: string, id: string) => {
