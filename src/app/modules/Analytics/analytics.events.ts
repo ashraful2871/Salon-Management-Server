@@ -25,6 +25,17 @@ export const EVENT_ALLOW_LIST = {
   assistant_opened: [{ key: "entry", values: ["launcher", "other"] }],
   hair_tryon_opened: [],
   signup_started: [{ key: "method", values: ["email", "google"] }],
+  // Home Service: the landing is "all", every later step names its side.
+  home_view: [{ key: "audience", values: ["all", "ladies", "gents"] }],
+  home_side_select: [{ key: "audience", values: ["ladies", "gents"] }],
+  home_expert_view: [{ key: "audience", values: ["ladies", "gents"] }],
+  home_quote: [{ key: "audience", values: ["ladies", "gents"] }],
+  home_booking_created: [{ key: "audience", values: ["ladies", "gents"] }],
+  home_booking_paid: [
+    { key: "audience", values: ["ladies", "gents"] },
+    { key: "method", values: ["wallet", "bkash", "sslcommerz"] },
+  ],
+  home_out_of_area: [{ key: "audience", values: ["ladies", "gents"] }],
 } as const satisfies Record<string, readonly DimRule[]>;
 
 export type EventName = keyof typeof EVENT_ALLOW_LIST;
