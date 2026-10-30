@@ -218,6 +218,37 @@ const liveOffering = (audience: HomeAudience): Prisma.HomeServiceOfferingWhereIn
 });
 
 // ---------------------------------------------------------------------------
+// Salon detail flag
+// ---------------------------------------------------------------------------
+
+/**
+ * Which sides of this branch a customer can book at home now: the branch is
+ * bookable (`isBranchBookable`) and has a verified expert with a live offering
+ * on that side. One profile read; the expert counts only when the branch is on.
+ */
+export const homeSidesOf = async (salon: { id: string } & Parameters<typeof isBranchBookable>[1]) => {
+  const none = { ladies: false, gents: false };
+  const profile = await prisma.homeServiceProfile.findUnique({
+    where: { salonId: salon.id },
+    select: { isOn: true, ladiesEnabled: true, gentsEnabled: true, status: true, pausedUntil: true },
+  });
+  if (!profile?.isOn) return none;
+  const flags = await loadHomeFlags();
+  const now = new Date();
+  const side = async (audience: HomeAudience) =>
+    isBranchBookable(profile, salon, audience, flags, now) &&
+    (await prisma.homeExpert.count({
+      where: {
+        salonId: salon.id,
+        ...eligibleExpertWhere(audience),
+        offerings: { some: { offering: liveOffering(audience) } },
+      },
+    })) > 0;
+  const [ladies, gents] = await Promise.all([side(HomeAudience.LADIES), side(HomeAudience.GENTS)]);
+  return { ladies, gents };
+};
+
+// ---------------------------------------------------------------------------
 // GET /catalog
 // ---------------------------------------------------------------------------
 
@@ -225,7 +256,7 @@ export const getCatalog = async (viewer: Viewer, q: Query) => {
   const audience = audienceOf(q);
   const point = pointOf(q, true);
   const branches = await servingBranches(point, audience, await viewerIsTest(viewer));
-  if (!branches.length) return { audience, outOfArea: true, categories: [], offerings: [] };
+  if (!branches.length) return { audience, outOfArea: true, expertCount: 0, categories: [], offerings: [] };
 
   // Only what someone can actually book: an offering with a verified expert.
   const rows = await prisma.homeServiceOffering.findMany({
@@ -234,12 +265,28 @@ export const getCatalog = async (viewer: Viewer, q: Query) => {
       ...liveOffering(audience),
       experts: { some: { expert: eligibleExpertWhere(audience) } },
     },
-    select: { name: true, category: true, durationMin: true, priceMinor: true, salonId: true, images: true },
+    select: {
+      name: true,
+      category: true,
+      durationMin: true,
+      priceMinor: true,
+      salonId: true,
+      images: true,
+      experts: { where: { expert: eligibleExpertWhere(audience) }, select: { expertId: true } },
+    },
   });
 
   const offerings = new Map<
     string,
-    { name: string; category: HomeCategory; minPriceMinor: number; durationMin: number; image: string | null; salonIds: Set<string> }
+    {
+      name: string;
+      category: HomeCategory;
+      minPriceMinor: number;
+      durationMin: number;
+      image: string | null;
+      salonIds: Set<string>;
+      expertIds: Set<string>;
+    }
   >();
   for (const r of rows) {
     const key = `${r.category}:${r.name.trim().toLowerCase()}`;
@@ -252,33 +299,52 @@ export const getCatalog = async (viewer: Viewer, q: Query) => {
         durationMin: r.durationMin,
         image: r.images[0] ?? null,
         salonIds: new Set([r.salonId]),
+        expertIds: new Set(r.experts.map((e) => e.expertId)),
       });
     } else {
       o.minPriceMinor = Math.min(o.minPriceMinor, r.priceMinor);
       o.durationMin = Math.min(o.durationMin, r.durationMin);
       o.image ??= r.images[0] ?? null;
       o.salonIds.add(r.salonId);
+      for (const e of r.experts) o.expertIds.add(e.expertId);
+    }
+  }
+
+  // Per category: how many services and how many distinct experts (what the
+  // experts list filtered to that category counts), plus the totals.
+  const categories = new Map<
+    HomeCategory,
+    { category: HomeCategory; count: number; minPriceMinor: number; expertIds: Set<string> }
+  >();
+  const allExperts = new Set<string>();
+  for (const o of offerings.values()) {
+    for (const id of o.expertIds) allExperts.add(id);
+    const c = categories.get(o.category);
+    if (!c) {
+      categories.set(o.category, {
+        category: o.category,
+        count: 1,
+        minPriceMinor: o.minPriceMinor,
+        expertIds: new Set(o.expertIds),
+      });
+    } else {
+      c.count += 1;
+      c.minPriceMinor = Math.min(c.minPriceMinor, o.minPriceMinor);
+      for (const id of o.expertIds) c.expertIds.add(id);
     }
   }
 
   const list = [...offerings.values()]
-    .map(({ salonIds, ...o }) => ({ ...o, salonCount: salonIds.size }))
+    .map(({ salonIds, expertIds, ...o }) => ({ ...o, salonCount: salonIds.size, expertCount: expertIds.size }))
     .sort((a, b) => b.salonCount - a.salonCount || a.minPriceMinor - b.minPriceMinor);
-
-  const categories = new Map<HomeCategory, { category: HomeCategory; count: number; minPriceMinor: number }>();
-  for (const o of list) {
-    const c = categories.get(o.category);
-    if (!c) categories.set(o.category, { category: o.category, count: 1, minPriceMinor: o.minPriceMinor });
-    else {
-      c.count += 1;
-      c.minPriceMinor = Math.min(c.minPriceMinor, o.minPriceMinor);
-    }
-  }
 
   return {
     audience,
     outOfArea: false,
-    categories: [...categories.values()].sort((a, b) => b.count - a.count),
+    expertCount: allExperts.size,
+    categories: [...categories.values()]
+      .map(({ expertIds, ...c }) => ({ ...c, expertCount: expertIds.size }))
+      .sort((a, b) => b.count - a.count || b.expertCount - a.expertCount),
     offerings: list,
   };
 };

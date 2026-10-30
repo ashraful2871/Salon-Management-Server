@@ -3,6 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { scheduleReindex } from "../AI-Suggestion/ai.indexer";
+import { homeSidesOf } from "../HomeService/home.public";
 import { countNearbySalons, findNearbySalonIds } from "./salon.geo";
 import { upcomingClosures } from "./salon.closure";
 import { SalonListQuery } from "./salon.validation";
@@ -495,8 +496,10 @@ const getSalonById = async (
     throw new ApiError(StatusCodes.NOT_FOUND, "Salon not found");
   }
 
-  // Holidays and special hours in the next 60 days, for the public page.
-  return { ...withPauseFlag(salon), upcomingClosures: await upcomingClosures(salon.id) };
+  // Holidays and special hours in the next 60 days, and which Home Service
+  // sides this branch can be booked for, for the public page.
+  const [closures, homeService] = await Promise.all([upcomingClosures(salon.id), homeSidesOf(salon)]);
+  return { ...withPauseFlag(salon), upcomingClosures: closures, homeService };
 };
 
 const updateSalon = async (user: AccessUser, salonId: string, payload: any) => {

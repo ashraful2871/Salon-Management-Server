@@ -38,7 +38,9 @@
     "admin:reset-mfa": "ts-node-dev --transpile-only ./src/scripts/adminResetMfa.ts",
     "wallet:fix-drift": "ts-node-dev --transpile-only ./src/scripts/walletFixDrift.ts",
     "payouts:release-failed": "ts-node-dev --transpile-only ./src/scripts/releaseFailedPayouts.ts",
-    "analytics:backfill": "ts-node-dev --transpile-only ./src/scripts/analyticsBackfill.ts"
+    "analytics:backfill": "ts-node-dev --transpile-only ./src/scripts/analyticsBackfill.ts",
+    "seed:home": "ts-node-dev --transpile-only ./src/scripts/seedHomeService.ts",
+    "dev:home": "ts-node-dev -r ./src/scripts/homeBranchEnv.ts --respawn --transpile-only ./src/server.ts"
   },
   "keywords": [
     "salon",

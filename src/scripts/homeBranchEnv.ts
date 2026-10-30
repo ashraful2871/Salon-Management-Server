@@ -11,6 +11,8 @@ import path from "path";
 
 const file = path.join(process.cwd(), ".env.homebranch");
 let target = "the .env database";
+/** True once DATABASE_URL points at the test branch; a writing script refuses otherwise. */
+export let onHomeBranch = false;
 
 if (!process.argv.includes("--env-db") && fs.existsSync(file)) {
   const env = dotenv.parse(fs.readFileSync(file));
@@ -20,6 +22,7 @@ if (!process.argv.includes("--env-db") && fs.existsSync(file)) {
     process.env.DATABASE_URL = url;
     process.env.DIRECT_URL = url;
     target = `Neon test branch (${host})`;
+    onHomeBranch = true;
   }
 }
 
