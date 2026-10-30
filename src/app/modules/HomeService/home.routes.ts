@@ -228,6 +228,12 @@ router.post(
 
 // Bookings board: homeservice.bookings at the branch (salonAccess).
 router.get("/owner/bookings", auth(...BUSINESS_ROLES), validateRequest(HomeValidation.ownerBookings), HomeController.ownerBookings);
+router.get(
+  "/owner/bookings/:id/eligible-experts",
+  auth(...BUSINESS_ROLES),
+  validateRequest(HomeValidation.bookingId),
+  HomeController.ownerReassignCandidates,
+);
 router.post(
   "/owner/bookings/:id/reassign",
   auth(...BUSINESS_ROLES),

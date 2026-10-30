@@ -6,11 +6,12 @@ import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { AuditCtx, auditTx } from "../../utils/audit";
 import { AccessUser, assertSalonPermission, scopeSalonIds } from "../../utils/salonAccess";
+import { getSetting } from "../../utils/settings";
 import { addDays, dhakaDay, isDay } from "../Analytics/analytics.days";
 import { writeJournal } from "../Settlement/settlement.service";
 import { lockStaff } from "../Staff/staff.schedule";
 import { WalletService } from "../Wallet/wallet.service";
-import { expertCanTake } from "./home.availability";
+import { availableFor, expertCanTake } from "./home.availability";
 import { Actor, expireStaleOf, getBooking, isContention, isExclusionViolation } from "./home.booking";
 import { ACTIVE_BOOKING_STATUSES } from "./home.expertSetup";
 import { homeCommissionMinor } from "./home.money";
@@ -194,6 +195,7 @@ const JOB = {
   balanceMinor: true,
   balanceMethod: true,
   startCodeTries: true,
+  arrivedAt: true,
   salon: { select: { id: true, name: true } },
   items: { select: { nameSnapshot: true, durationMin: true } },
 } satisfies Prisma.HomeBookingSelect;
@@ -207,7 +209,7 @@ const addressOpen = (b: { status: HomeBookingStatus; startAt: Date }, now: Date)
   ACTIVE_BOOKING_STATUSES.includes(b.status) &&
   (b.status !== HomeBookingStatus.CONFIRMED || now.getTime() >= b.startAt.getTime() - ADDRESS_REVEAL_MS);
 
-const jobView = (b: JobRow, now = new Date()) => {
+const jobView = (b: JobRow, noShowWaitMinutes: number, now = new Date()) => {
   const open = addressOpen(b, now);
   const paidInApp = b.balanceMethod === BalanceMethod.WALLET;
   return {
@@ -227,6 +229,11 @@ const jobView = (b: JobRow, now = new Date()) => {
     startCodeTriesLeft: Math.max(0, MAX_START_TRIES - b.startCodeTries),
     canSetOffFrom: new Date(b.startAt.getTime() - EN_ROUTE_FROM_MS),
     addressRevealAt: new Date(b.startAt.getTime() - ADDRESS_REVEAL_MS),
+    /** From when the expert can mark the customer as not home (`expertMarkNoShow`). */
+    noShowFrom:
+      b.status === HomeBookingStatus.ARRIVED && b.arrivedAt
+        ? new Date(b.arrivedAt.getTime() + noShowWaitMinutes * MIN_MS)
+        : null,
     address: open
       ? { addressLine: b.addressLine, landmark: b.landmark, latitude: b.latitude, longitude: b.longitude, notes: b.notes }
       : null,
@@ -249,23 +256,31 @@ export const listMyJobs = async (userId: string, date?: string) => {
   }
   const from = date ?? today;
   const to = date ?? last;
-  const rows = await prisma.homeBooking.findMany({
-    where: {
-      status: { notIn: UNPAID },
-      expert: { staff: { userId } },
-      serviceDate: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T00:00:00Z`) },
-    },
-    select: JOB,
-    orderBy: [{ startAt: "asc" }, { id: "asc" }],
-  });
+  const [rows, expert, wait] = await Promise.all([
+    prisma.homeBooking.findMany({
+      where: {
+        status: { notIn: UNPAID },
+        expert: { staff: { userId } },
+        serviceDate: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T00:00:00Z`) },
+      },
+      select: JOB,
+      orderBy: [{ startAt: "asc" }, { id: "asc" }],
+    }),
+    prisma.homeExpert.findFirst({ where: { staff: { userId }, removedAt: null }, select: { id: true } }),
+    getSetting("homeService.noShowWaitMinutes"),
+  ]);
   const now = new Date();
-  return { from, to, jobs: rows.map((r) => jobView(r, now)) };
+  // Someone removed as an expert still sees the visits they have left to finish.
+  return { from, to, isExpert: !!expert || rows.length > 0, jobs: rows.map((r) => jobView(r, wait, now)) };
 };
 
 export const getMyJob = async (userId: string, id: string) => {
-  const b = await prisma.homeBooking.findFirst({ where: myJobWhere(userId, id), select: JOB });
+  const [b, wait] = await Promise.all([
+    prisma.homeBooking.findFirst({ where: myJobWhere(userId, id), select: JOB }),
+    getSetting("homeService.noShowWaitMinutes"),
+  ]);
   if (!b) throw notFound();
-  return jobView(b);
+  return jobView(b, wait);
 };
 
 const loadMyJob = async (userId: string, id: string) => {
@@ -475,13 +490,24 @@ const boardView = (b: BoardRow) => ({
 
 export type BoardQuery = OwnerBookingsQuery;
 
+/** Today is every visit of the day; a future visit that ended early counts as past, like the customer's list. */
+const boardTab = (tab: BoardQuery["tab"]): Prisma.HomeBookingWhereInput => {
+  if (!tab) return {};
+  const today = new Date(`${dhakaDay(new Date())}T00:00:00Z`);
+  if (tab === "today") return { serviceDate: today };
+  if (tab === "upcoming") return { serviceDate: { gt: today }, status: { in: ACTIVE_BOOKING_STATUSES } };
+  return { OR: [{ serviceDate: { lt: today } }, { serviceDate: { gt: today }, status: { notIn: ACTIVE_BOOKING_STATUSES } }] };
+};
+
 export const listOwnerBookings = async (user: AccessUser, q: BoardQuery) => {
   const page = q.page ?? 1;
   const salonIds = await scopeSalonIds(user, "homeservice.bookings", q.salonId);
-  if (salonIds && salonIds.length === 0) return { meta: { page, limit: PAGE_SIZE, total: 0 }, data: [] };
+  if (salonIds && salonIds.length === 0) return { meta: { page, limit: PAGE_SIZE, total: 0, heldMinor: 0 }, data: [] };
 
+  const scope = salonIds ? { salonId: { in: salonIds } } : {};
   const where: Prisma.HomeBookingWhereInput = {
-    ...(salonIds ? { salonId: { in: salonIds } } : {}),
+    ...scope,
+    AND: [boardTab(q.tab)],
     status: q.status ? q.status : { notIn: UNPAID },
     ...(q.audience ? { audience: q.audience } : {}),
     ...(q.expertId ? { expertId: q.expertId } : {}),
@@ -494,17 +520,22 @@ export const listOwnerBookings = async (user: AccessUser, q: BoardQuery) => {
         }
       : {}),
   };
-  const [total, rows] = await Promise.all([
+  const [total, rows, held] = await Promise.all([
     prisma.homeBooking.count({ where }),
     prisma.homeBooking.findMany({
       where,
       select: BOARD,
-      orderBy: [{ startAt: "asc" }, { id: "asc" }],
+      orderBy: [{ startAt: q.tab === "past" ? "desc" : "asc" }, { id: "asc" }],
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
     }),
+    // The whole branch, whatever the filters: what the board's money note quotes.
+    prisma.homeBooking.aggregate({
+      where: { ...scope, advanceStatus: AdvanceStatus.HELD, status: { in: ACTIVE_BOOKING_STATUSES } },
+      _sum: { advanceMinor: true },
+    }),
   ]);
-  return { meta: { page, limit: PAGE_SIZE, total }, data: rows.map(boardView) };
+  return { meta: { page, limit: PAGE_SIZE, total, heldMinor: held._sum.advanceMinor ?? 0 }, data: rows.map(boardView) };
 };
 
 const loadBoardBooking = async (user: AccessUser, id: string) => {
@@ -636,6 +667,33 @@ export const reassign = async (user: AccessUser, ctx: AuditCtx, id: string, expe
   }
   homeNotice(id, { kind: "reassigned", fromExpertId: b.expertId });
   return getBoardBooking(id);
+};
+
+/** Who could take a CONFIRMED visit: the same checks as `moveToExpertTx`, for everyone at once. */
+export const reassignCandidates = async (user: AccessUser, id: string) => {
+  const b = await loadBoardBooking(user, id);
+  if (b.status !== HomeBookingStatus.CONFIRMED) throw invalidState("Only a confirmed visit that hasn't started can be reassigned.");
+
+  const day = dhakaDay(b.startAt);
+  const { byDay } = await availableFor({
+    offeringIds: b.items.map((i) => i.offeringId),
+    days: [day],
+    now: b.createdAt,
+    excludeBookingId: b.id,
+  });
+  const free = byDay.get(day)?.find((s) => s.startAt.getTime() === b.startAt.getTime())?.expertIds ?? [];
+  const experts = await prisma.homeExpert.findMany({
+    where: { id: { in: free.filter((expertId) => expertId !== b.expertId) } },
+    select: { id: true, rating: true, completedJobs: true, staff: { select: { user: { select: { name: true, profilePhoto: true } } } } },
+    orderBy: { rating: "desc" },
+  });
+  return experts.map((e) => ({
+    id: e.id,
+    name: e.staff.user.name,
+    photo: e.staff.user.profilePhoto,
+    rating: e.rating,
+    completedJobs: e.completedJobs,
+  }));
 };
 
 /** ARRIVED → IN_PROGRESS without the code (the customer can't find it, or it locked). */

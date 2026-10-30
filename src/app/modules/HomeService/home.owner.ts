@@ -17,6 +17,7 @@ import { AuditCtx, auditTx, diff } from "../../utils/audit";
 import { AccessUser, assertOwnerOf, assertSalonPermission, grantAt } from "../../utils/salonAccess";
 import { getSetting } from "../../utils/settings";
 import { cancelBranchUpcoming } from "./home.cancel";
+import { currentPolicy, disclaimersOf, policySnapshotOf } from "./home.policy";
 import type {
   CreateOfferingBody,
   PauseBody,
@@ -37,6 +38,8 @@ import type {
 const SIDES = [HomeAudience.LADIES, HomeAudience.GENTS] as const;
 const PAUSE_MAX_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** The owner's Policy tab quotes the customer's words; a real one names the booking's own advance. */
+const SAMPLE_ADVANCE_MINOR = 50_000;
 
 const notFound = () => new ApiError(StatusCodes.NOT_FOUND, "Not found");
 
@@ -64,17 +67,27 @@ export const loadHomeFlags = async (): Promise<HomeFlags> => {
 };
 
 const loadPlatformCaps = async () => {
-  const [flags, maxRadiusKm, travelFeeMaxMinor, minOrderMinMinor, minOrderMaxMinor, dayStartBound, dayEndBound, ladiesLastStart] =
-    await Promise.all([
-      loadHomeFlags(),
-      getSetting("homeService.maxRadiusKm"),
-      getSetting("homeService.travelFeeMaxMinor"),
-      getSetting("homeService.minOrderMinMinor"),
-      getSetting("homeService.minOrderMaxMinor"),
-      getSetting("homeService.dayStartBound"),
-      getSetting("homeService.dayEndBound"),
-      getSetting("homeService.ladiesLastStart"),
-    ]);
+  const [
+    flags,
+    maxRadiusKm,
+    travelFeeMaxMinor,
+    minOrderMinMinor,
+    minOrderMaxMinor,
+    dayStartBound,
+    dayEndBound,
+    ladiesLastStart,
+    commissionPercent,
+  ] = await Promise.all([
+    loadHomeFlags(),
+    getSetting("homeService.maxRadiusKm"),
+    getSetting("homeService.travelFeeMaxMinor"),
+    getSetting("homeService.minOrderMinMinor"),
+    getSetting("homeService.minOrderMaxMinor"),
+    getSetting("homeService.dayStartBound"),
+    getSetting("homeService.dayEndBound"),
+    getSetting("homeService.ladiesLastStart"),
+    getSetting("homeService.commissionPercent"),
+  ]);
   return {
     ...flags,
     maxRadiusKm,
@@ -84,6 +97,7 @@ const loadPlatformCaps = async () => {
     dayStartBound,
     dayEndBound,
     ladiesLastStart,
+    commissionPercent,
   };
 };
 
@@ -224,10 +238,11 @@ export const getOwnerProfile = async (user: AccessUser, salonId: string) => {
   await assertSalonPermission(user, salonId, "homeservice.manage");
   const salon = await loadSalon(salonId);
   const allowedSides = allowedSidesOf(salon.audience);
-  const [row, platform, policyInForce, grant] = await Promise.all([
+  const [row, platform, policyInForce, policy, grant] = await Promise.all([
     prisma.homeServiceProfile.findUnique({ where: { salonId } }),
     loadPlatformCaps(),
     loadPolicyInForce(),
+    currentPolicy(),
     grantAt(user, salonId),
   ]);
   const profile = row ? { ...row, exists: true } : virtualProfile(salonId);
@@ -241,6 +256,11 @@ export const getOwnerProfile = async (user: AccessUser, salonId: string) => {
     checklist,
     platform,
     policyInForce,
+    policy: {
+      ...policySnapshotOf(policy),
+      sampleAdvanceMinor: SAMPLE_ADVANCE_MINOR,
+      disclaimer: disclaimersOf(policy, SAMPLE_ADVANCE_MINOR),
+    },
     bookable: Object.fromEntries(SIDES.map((s) => [s, isBranchBookable(row, salon, s, platform)])),
     canSwitch: grant?.role === "OWNER",
   };
