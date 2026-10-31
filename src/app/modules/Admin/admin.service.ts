@@ -378,6 +378,67 @@ const inbox = async (admin: AdminContext): Promise<InboxItem[]> => {
     );
   }
 
+  // Home Service queues; the sidebar badges read these same keys.
+  if (has("homeservice.manage")) {
+    items.push(
+      prisma.homeServiceProfile
+        .aggregate({ where: { status: "PENDING_REVIEW" }, _count: { _all: true }, _min: { updatedAt: true } })
+        .then((agg) => ({
+          key: "home.branches.pending",
+          count: agg._count._all,
+          oldestAt: agg._min.updatedAt,
+          tone: "warning" as const,
+          href: "/dashboard/admin/home-service/approvals",
+        })),
+      prisma.homeSafetyReport
+        .aggregate({ where: { status: "OPEN" }, _count: { _all: true }, _min: { createdAt: true } })
+        .then((agg) => ({
+          key: "home.reports.open",
+          count: agg._count._all,
+          oldestAt: agg._min.createdAt,
+          tone: "danger" as const,
+          href: "/dashboard/admin/home-service/safety",
+        })),
+    );
+  }
+
+  if (has("homeservice.experts_verify")) {
+    items.push(
+      prisma.homeExpert
+        .aggregate({
+          where: { verification: "PENDING", removedAt: null },
+          _count: { _all: true },
+          _min: { submittedAt: true },
+        })
+        .then((agg) => ({
+          key: "home.experts.pending",
+          count: agg._count._all,
+          oldestAt: agg._min.submittedAt,
+          tone: "warning" as const,
+          href: "/dashboard/admin/home-service/experts",
+        })),
+    );
+  }
+
+  if (has("appeals.resolve")) {
+    items.push(
+      prisma.homeBooking
+        .aggregate({ where: { appealStatus: "PENDING" }, _count: { _all: true }, _min: { appealedAt: true } })
+        .then((agg) => {
+          const oldest = agg._min.appealedAt;
+          const dueAt = oldest ? new Date(oldest.getTime() + 48 * HOUR) : null;
+          return {
+            key: "home.appeals.pending",
+            count: agg._count._all,
+            oldestAt: oldest,
+            dueAt,
+            tone: dueAt && dueAt.getTime() < now ? ("danger" as const) : ("warning" as const),
+            href: "/dashboard/admin/appeals",
+          };
+        }),
+    );
+  }
+
   if (has("finance.refunds")) {
     // Mirrors getAdminTopups: a refund entry whose status is not COMPLETED or
     // FAILED (missing counts too) is UNKNOWN.

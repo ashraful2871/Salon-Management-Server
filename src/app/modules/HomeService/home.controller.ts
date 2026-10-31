@@ -328,6 +328,14 @@ const ownerExpertNoShow = catchAsync(async (req: Request, res: Response) => {
   ok(res, "Marked as expert not arrived", await Cancel.ownerExpertNoShow(withAccessCache(req), ctxOf(req), id(req), req.body.reason));
 });
 
+const adminPolicy = catchAsync(async (_req: Request, res: Response) => {
+  ok(res, "Home Service policy", await Admin.policySettings());
+});
+
+const adminPolicyHistory = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Setting history", await Admin.policyHistory(String(req.params.key)));
+});
+
 const adminCancelBooking = catchAsync(async (req: Request, res: Response) => {
   ok(res, "Visit cancelled", await Cancel.adminCancel(req.auditCtx, id(req), req.body.reason, req.body.salonAtFault));
 });
@@ -413,6 +421,8 @@ export const HomeController = {
   jobReport,
   requestHelp,
   adminReports,
+  adminPolicy,
+  adminPolicyHistory,
   adminReportStatus,
   createReview,
   publicExpertReviews,
