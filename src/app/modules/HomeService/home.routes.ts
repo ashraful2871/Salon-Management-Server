@@ -372,6 +372,10 @@ admin.patch(
   HomeController.adminResolveAppeal,
 );
 
+// Fees & policy: reads only. Saves go through PATCH /admin/settings/:key.
+admin.get("/policy", adminAuth("homeservice.view"), adminOnly, HomeController.adminPolicy);
+admin.get("/policy/:key/history", adminAuth("homeservice.view"), adminOnly, HomeController.adminPolicyHistory);
+
 // Safety reports (home.safety).
 admin.get("/reports", adminAuth("homeservice.manage"), adminOnly, validateRequest(HomeValidation.adminReports), HomeController.adminReports);
 admin.post(

@@ -10,6 +10,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { AuditCtx, auditTx, diff } from "../../utils/audit";
+import { AdminSettingsService } from "../Admin/settings/settings.service";
 import { notifyHomeDecision } from "./home.notify";
 import {
   audienceOf,
@@ -389,6 +390,28 @@ export const setExpertGender = async (ctx: AuditCtx | undefined, id: string, gen
     action: "homeService.booking_system_cancel",
   });
   return { ...expertView(after), upcoming };
+};
+
+// ---------------------------------------------------------------------------
+// Fees & policy (reads; saves go through PATCH /admin/settings/:key)
+// ---------------------------------------------------------------------------
+
+const isHomeKey = (key: string) => key.startsWith("homeService.");
+
+/**
+ * GET /admin/home-service/policy: the homeService group and the home switches.
+ * Its own read because the page is homeservice.view, which SUPPORT holds
+ * without settings.view (and GET /admin/settings also lists env status).
+ */
+export const policySettings = async () => {
+  const { groups } = await AdminSettingsService.listSettings();
+  return { settings: groups.flatMap((g) => g.settings).filter((s) => isHomeKey(s.key)) };
+};
+
+/** GET /admin/home-service/policy/:key/history */
+export const policyHistory = async (key: string) => {
+  if (!isHomeKey(key)) throw notFound();
+  return AdminSettingsService.getHistory(key);
 };
 
 // ---------------------------------------------------------------------------
