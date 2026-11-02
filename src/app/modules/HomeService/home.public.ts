@@ -3,6 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { getSetting } from "../../utils/settings";
+import { incrementMetrics } from "../Analytics/analytics.capture";
 import { addDays, dhakaDay, isDay } from "../Analytics/analytics.days";
 import { SALON_GEOG } from "../Salon/salon.geo";
 import { BD_BOUNDS } from "../Salon/salon.validation";
@@ -252,11 +253,42 @@ export const homeSidesOf = async (salon: { id: string } & Parameters<typeof isBr
 // GET /catalog
 // ---------------------------------------------------------------------------
 
+/**
+ * Coverage gaps (admin analytics): one count per out-of-area look, under the
+ * area of the nearest salon. The `home_out_of_area` event can't carry an area:
+ * event values are a fixed list, and these come from `salons`, so nothing
+ * free-form enters. Fire and forget; a closed side is not a gap.
+ */
+const countOutOfArea = (point: Point, audience: HomeAudience) => {
+  const work = async () => {
+    const flags = await loadHomeFlags();
+    if (!flags.enabled || !(audience === HomeAudience.LADIES ? flags.ladiesEnabled : flags.gentsEnabled)) return;
+    const origin = Prisma.sql`ST_SetSRID(ST_MakePoint(${point.lng}::float8, ${point.lat}::float8), 4326)::geography`;
+    const [nearest] = await prisma.$queryRaw<{ area: string }[]>`
+      SELECT s.area FROM salons s
+      WHERE s."isDeleted" = false AND s.status = 'ACTIVE' AND s."isTest" = false
+        AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+      ORDER BY ${SALON_GEOG} <-> ${origin}
+      LIMIT 1`;
+    if (!nearest) return;
+    incrementMetrics([
+      { metric: "home.outOfArea" },
+      { metric: "home.outOfArea", dimension: `area:${nearest.area.trim()}` },
+      { metric: "home.outOfArea", dimension: `audience:${audience.toLowerCase()}` },
+    ]);
+  };
+  void work().catch((err) => console.error("[analytics] home out-of-area count failed", err));
+};
+
 export const getCatalog = async (viewer: Viewer, q: Query) => {
   const audience = audienceOf(q);
   const point = pointOf(q, true);
-  const branches = await servingBranches(point, audience, await viewerIsTest(viewer));
-  if (!branches.length) return { audience, outOfArea: true, expertCount: 0, categories: [], offerings: [] };
+  const isTest = await viewerIsTest(viewer);
+  const branches = await servingBranches(point, audience, isTest);
+  if (!branches.length) {
+    if (!isTest) countOutOfArea(point, audience);
+    return { audience, outOfArea: true, expertCount: 0, categories: [], offerings: [] };
+  }
 
   // Only what someone can actually book: an offering with a verified expert.
   const rows = await prisma.homeServiceOffering.findMany({

@@ -9,6 +9,17 @@ import { getSettingWithVersion } from "../../utils/settings";
  * its own `policySnapshot`; nothing here ever reprices an existing one.
  */
 
+/** The settings that decide what a cancel or no-show keeps. */
+export const POLICY_MONEY_KEYS = [
+  "homeService.customerCancelPolicy",
+  "homeService.freeCancelHours",
+  "homeService.lateCancelPercent",
+  "homeService.noShowPercent",
+  "homeService.nonRefundableGraceMinutes",
+  "homeService.salonCancelCreditMinor",
+  "homeService.feeSalonSharePercent",
+] as const;
+
 export type HomePolicyName = "FREE" | "WINDOW" | "NON_REFUNDABLE";
 export type DisclaimerLang = "en" | "bn";
 

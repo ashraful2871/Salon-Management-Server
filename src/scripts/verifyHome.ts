@@ -1,10 +1,13 @@
 /**
- * Checks for Home Service money (Phase 8; Phase 16 adds the access matrix).
+ * Checks for Home Service: money (Phase 8), then access, gender, window and
+ * races (Phase 16, `verifyHome.access.ts`).
  *
  *   npm run verify:home            # on the test branch from .env.homebranch
- *   npm run verify:home -- --env-db
+ *   npm run verify:home -- --env-db   # rolled-back part only, reports INCOMPLETE
  *
- * Everything runs inside ONE transaction that is always rolled back: an isTest
+ * The access matrix and the races need committed rows, so they run only on the
+ * test branch: on any other database they are skipped and the run exits 2,
+ * never green. The rest runs inside ONE transaction that is always rolled back: an isTest
  * owner, salon, female expert, Ladies offering and a customer with a funded
  * wallet are seeded, home visits are booked (advance held), ended through
  * `endVisitTx` — the same path the routes use — and settled. Settings are
@@ -14,7 +17,7 @@
  *
  * Exits 1 on any FAIL.
  */
-import "./homeBranchEnv"; // first: picks the database
+import { onHomeBranch } from "./homeBranchEnv"; // first: picks the database
 import "../config";
 import { randomUUID } from "crypto";
 import {
@@ -35,6 +38,10 @@ import { getSetting } from "../app/utils/settings";
 import { WalletService } from "../app/modules/Wallet/wallet.service";
 import { currentPolicy, HomePolicy, policySnapshotOf } from "../app/modules/HomeService/home.policy";
 import { EndEvent, endVisitTx, reverseFeeTx } from "../app/modules/HomeService/home.cancel";
+import { settleHomeCompletedTx } from "../app/modules/HomeService/home.lifecycle";
+import { addDays, dayStart, dhakaDay } from "../app/modules/Analytics/analytics.days";
+import { getHomeAdvances, getHomeDailyMoney, getHomeOutcomes } from "../app/modules/Settlement/settlement.earnings";
+import { checkCoverage, checkWindow, runLive } from "./verifyHome.access";
 
 const rows: Array<{ check: string; ok: boolean; detail: string }> = [];
 const check = (name: string, ok: boolean, detail = "") => rows.push({ check: name, ok, detail });
@@ -355,10 +362,112 @@ const run = async (tx: Prisma.TransactionClient) => {
     GROUP BY "journalId" HAVING SUM("amountMinor") <> 0`;
   check("every home journal (incl. fixtures) sums to 0", unbalanced.length === 0, `${unbalanced.length} unbalanced`);
 
+  // ------------------------------------------------------------ gender in raw SQL
+  /** The constraint that refused `sql`, or null when it was accepted. Undone either way. */
+  const refusedBy = async (sql: Prisma.Sql) => {
+    await tx.$executeRaw`SAVEPOINT verify_home_sql`;
+    try {
+      await tx.$executeRaw(sql);
+      await tx.$executeRaw`ROLLBACK TO SAVEPOINT verify_home_sql`;
+      return null;
+    } catch (error) {
+      await tx.$executeRaw`ROLLBACK TO SAVEPOINT verify_home_sql`;
+      return String(error instanceof Error ? error.message : error);
+    }
+  };
+  const maleUser = await tx.user.create({
+    data: { email: `verify-home-male-${tag}@seed.example.com`, name: "Verify Male", role: UserRole.STAFF, gender: Gender.MALE, isTest: true },
+  });
+  const maleStaff = await tx.staff.create({ data: { userId: maleUser.id, salonId: salon.id } });
+  const insertExpert = (gender: string, audience: string) => Prisma.sql`
+    INSERT INTO home_experts (id, "staffId", "salonId", gender, audience, languages, "updatedAt")
+    VALUES (${randomUUID()}, ${maleStaff.id}, ${salon.id}, ${gender}::"Gender", ${audience}::"HomeAudience", '{}', now())`;
+  const genderRule = "home_experts_gender_audience";
+  check("raw SQL · FEMALE + GENTS expert refused", (await refusedBy(insertExpert("FEMALE", "GENTS")))?.includes(genderRule) === true);
+  check("raw SQL · MALE + LADIES expert refused", (await refusedBy(insertExpert("MALE", "LADIES")))?.includes(genderRule) === true);
+  check("raw SQL · MALE + GENTS expert accepted (the rule, not a broken insert)", (await refusedBy(insertExpert("MALE", "GENTS"))) === null);
+  const mismatch = await book({ status: HomeBookingStatus.CONFIRMED, snapshot: launch });
+  check(
+    "raw SQL · a booking's audience can't differ from its expert's",
+    (await refusedBy(Prisma.sql`UPDATE home_bookings SET "expertAudience" = 'GENTS' WHERE id = ${mismatch}`))?.includes("home_bookings_audience_match") === true,
+  );
+  const [overlapOf] = await tx.$queryRaw<Array<{ blockFrom: Date; blockTo: Date }>>`SELECT "blockFrom", "blockTo" FROM home_bookings WHERE id = ${mismatch}`;
+  const overlapping = await book({ status: HomeBookingStatus.CONFIRMED, snapshot: launch });
+  check(
+    "raw SQL · overlapping active visits of one expert refused",
+    (
+      await refusedBy(
+        Prisma.sql`UPDATE home_bookings SET "blockFrom" = ${overlapOf.blockFrom}::timestamptz, "blockTo" = ${overlapOf.blockTo}::timestamptz WHERE id = ${overlapping}`,
+      )
+    )?.includes("home_bookings_no_overlap") === true,
+  );
+
+  // ------------------------------------------------------------ report money
+  // A visit at each edge of one Dhaka day, one just before it, 10% commission.
+  const day = addDays(dhakaDay(), -2);
+  const edge = dayStart(day).getTime();
+  const completed = async (completedAt: Date) => {
+    const id = await book({ status: HomeBookingStatus.CONFIRMED, snapshot: launch });
+    await tx.homeBooking.update({
+      where: { id },
+      data: { status: HomeBookingStatus.COMPLETED, completedAt, commissionBps: 1000, subtotalMinor: 120000, travelFeeMinor: 10000 },
+    });
+    await settleHomeCompletedTx(tx, id);
+    return id;
+  };
+  await completed(new Date(edge + 10 * MIN)); // 00:10 Dhaka, still the day before in UTC
+  await completed(new Date(edge + 24 * HOUR - 10 * MIN)); // 23:50 Dhaka
+  await completed(new Date(edge - 10 * MIN)); // 23:50 Dhaka the day before
+  const f = { from: dayStart(addDays(day, -1)), to: dayStart(addDays(day, 1)), salonIds: [salon.id], includeTest: true };
+  const reportDays = async () => {
+    const found = await getHomeDailyMoney(f, tx);
+    return found.map((d) => `${d.day} ${d.audience} ${d.visits} ${d.subtotalMinor} ${d.travelFeeMinor} ${d.commissionMinor}`).join(" | ");
+  };
+  const wantDays = `${addDays(day, -1)} LADIES 1 120000 10000 12000 | ${day} LADIES 2 240000 20000 24000`;
+  const utcDays = await reportDays();
+  check("report · visits fall on their Dhaka day; travel fee not commissioned", utcDays === wantDays, utcDays);
+  await tx.$executeRaw`SET LOCAL timezone = 'America/New_York'`;
+  check("report · the session time zone doesn't move a day", (await reportDays()) === wantDays);
+  await tx.$executeRaw`SET LOCAL timezone = 'UTC'`;
+  check("report · test salons are left out by default", (await getHomeDailyMoney({ ...f, includeTest: false }, tx)).length === 0);
+
+  const advances = await getHomeAdvances(f, tx);
+  const heldNow = await tx.homeBooking.aggregate({ where: { salonId: salon.id, advanceStatus: AdvanceStatus.HELD }, _sum: { advanceMinor: true }, _count: true });
+  check("report · advances held = HELD rows, whatever the range", advances.heldMinor === (heldNow._sum.advanceMinor ?? 0) && advances.heldVisits === heldNow._count, JSON.stringify(advances));
+  check("report · advances settled = the 3 completed visits", advances.settledMinor === 3 * ADVANCE && advances.settledVisits === 3);
+
+  const ever = { from: new Date(Date.now() - HOUR), to: new Date(Date.now() + HOUR), salonIds: [salon.id], includeTest: true };
+  const outcomes = await getHomeOutcomes(ever, "ended", tx);
+  const paidEnds = await tx.homeBooking.aggregate({
+    where: { salonId: salon.id, status: { in: [HomeBookingStatus.CANCELLED, HomeBookingStatus.NO_SHOW] } },
+    _sum: { feeMinor: true, refundedMinor: true },
+    _count: true,
+  });
+  const summed = outcomes.reduce((s, o) => ({ n: s.n + o.visits, fee: s.fee + o.feeMinor, back: s.back + o.refundedMinor }), { n: 0, fee: 0, back: 0 });
+  check(
+    "report · outcomes add up to the bookings",
+    summed.n === paidEnds._count && summed.fee === (paidEnds._sum.feeMinor ?? 0) && summed.back === (paidEnds._sum.refundedMinor ?? 0),
+    JSON.stringify(summed),
+  );
+  const refundedOnly = (side: string) => outcomes.filter((o) => o.side === side).every((o) => o.feeMinor === 0);
+  check("report · salon, admin, system and safety ends keep nothing", ["SALON", "ADMIN", "SYSTEM", "SAFETY"].every(refundedOnly));
+  check(
+    "report · a mismatch at the door is its own side and can keep a fee",
+    outcomes.some((o) => o.side === "MISMATCH" && o.feeMinor > 0) && outcomes.some((o) => o.side === "SAFETY"),
+  );
+  check(
+    "report · both no-show sides are told apart",
+    outcomes.some((o) => o.side === "CUSTOMER_NO_SHOW") && outcomes.some((o) => o.side === "EXPERT_NO_SHOW"),
+    [...new Set(outcomes.map((o) => o.side))].join(", "),
+  );
+  check("report · outcomes keep each booking's policy", new Set(outcomes.map((o) => o.policy)).size === 3, [...new Set(outcomes.map((o) => o.policy))].join(", "));
+
   throw new Rollback();
 };
 
 const main = async () => {
+  checkCoverage(check);
+  checkWindow(check);
   try {
     await prisma.$transaction(run, { timeout: 600_000, maxWait: 15_000 });
   } catch (error) {
@@ -367,14 +476,24 @@ const main = async () => {
     }
   }
 
+  if (onHomeBranch) {
+    try {
+      await runLive(check);
+    } catch (error) {
+      check("access and races ran to the end", false, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   const width = Math.max(...rows.map((row) => row.check.length));
   for (const row of rows) {
     console.log(`${row.ok ? "PASS" : "FAIL"}  ${row.check.padEnd(width)}  ${row.detail}`);
   }
   const failed = rows.filter((row) => !row.ok).length;
-  console.log(`\nverify:home ${failed ? "FAILED" : "passed"}: ${rows.length - failed}/${rows.length} (rolled back)`);
+  const verdict = failed ? "FAILED" : onHomeBranch ? "passed" : "INCOMPLETE";
+  console.log(`\nverify:home ${verdict}: ${rows.length - failed}/${rows.length}`);
+  if (!onHomeBranch) console.log("NOT RUN: access matrix, API gender and window cases, races. They need the test branch.");
   await prisma.$disconnect();
-  process.exit(failed ? 1 : 0);
+  process.exit(failed ? 1 : onHomeBranch ? 0 : 2);
 };
 
 void main();

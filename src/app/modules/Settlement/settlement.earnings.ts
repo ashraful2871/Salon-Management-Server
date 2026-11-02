@@ -690,7 +690,132 @@ export const getSalonMoneyRange = async (f: { salonIds: string[]; from: Date; to
   return { counter, platform, byMethod, payouts };
 };
 
+// ---------------------------------------------------------------------------
+// Home Service. `home_bookings` timestamps are timestamptz, unlike the columns
+// above, so the Dhaka day is one AT TIME ZONE and bounds stay timestamptz.
+// ---------------------------------------------------------------------------
+
+type Db = Pick<typeof prisma, "$queryRaw">;
+
+export type HomeMoneyFilter = {
+  from: Date;
+  to: Date;
+  /** Omitted: every salon (platform view). */
+  salonIds?: string[];
+  includeTest: boolean;
+};
+
+const homeTs = (at: Date) => Prisma.sql`${at.toISOString()}::timestamptz`;
+const homeDay = (col: string) => Prisma.raw(`to_char(${col} AT TIME ZONE 'Asia/Dhaka', 'YYYY-MM-DD')`);
+const HOME_ENDED_AT = `COALESCE(b."cancelledAt", b."noShowMarkedAt")`;
+
+const homeScope = (f: Pick<HomeMoneyFilter, "salonIds" | "includeTest">) =>
+  Prisma.sql`${f.includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false AND u."isTest" = false`}
+    ${f.salonIds ? (f.salonIds.length ? Prisma.sql`AND b."salonId" IN (${Prisma.join(f.salonIds)})` : Prisma.sql`AND false`) : Prisma.empty}`;
+
+const HOME_BOOKINGS = Prisma.sql`home_bookings b JOIN salons s ON s.id = b."salonId" JOIN users u ON u.id = b."customerId"`;
+
+/**
+ * Who ended a paid visit. An unpaid one (advance still PENDING) moved no money
+ * and is not an outcome. The two aborts at the door are stored as cancelled by
+ * the salon, but a mismatch can keep a fee, so they are read back from the
+ * reason code on the booking's closing event.
+ */
+const homeAborted = (code: string) =>
+  `EXISTS (SELECT 1 FROM home_booking_events ev WHERE ev."bookingId" = b.id AND ev."toStatus" = 'CANCELLED' AND ev.reason LIKE '${code}%')`;
+const HOME_SIDE = Prisma.raw(`CASE
+  WHEN b.status = 'NO_SHOW' AND b."noShowParty" = 'EXPERT' THEN 'EXPERT_NO_SHOW'
+  WHEN b.status = 'NO_SHOW' THEN 'CUSTOMER_NO_SHOW'
+  WHEN ${homeAborted("MISMATCH_ABORT")} THEN 'MISMATCH'
+  WHEN ${homeAborted("SAFETY_ABORT")} THEN 'SAFETY'
+  ELSE COALESCE(b."cancelledBy"::text, 'SYSTEM') END`);
+const HOME_PAID_END = Prisma.sql`b.status IN ('CANCELLED', 'NO_SHOW') AND b."advanceStatus" <> 'PENDING'`;
+
+export type HomeDayMoney = {
+  day: string;
+  audience: "LADIES" | "GENTS";
+  visits: number;
+  subtotalMinor: number;
+  travelFeeMinor: number;
+  commissionMinor: number;
+};
+
+export type HomeOutcome = {
+  side: string;
+  policy: string;
+  visits: number;
+  keptVisits: number;
+  feeMinor: number;
+  refundedMinor: number;
+};
+
+/**
+ * Completed visits per Dhaka day of `completedAt` and side. Commission is read
+ * back from the ledger (the lines written at settlement), not recomputed, so a
+ * rate change can't restate old days. Travel fees are never commissioned.
+ */
+export const getHomeDailyMoney = (f: HomeMoneyFilter, db: Db = prisma) =>
+  db.$queryRaw<HomeDayMoney[]>`
+    SELECT ${homeDay(`b."completedAt"`)} AS day, b.audience::text AS audience, COUNT(*)::int AS visits,
+           COALESCE(SUM(b."subtotalMinor"), 0)::float AS "subtotalMinor",
+           COALESCE(SUM(b."travelFeeMinor"), 0)::float AS "travelFeeMinor",
+           COALESCE(SUM(c.v), 0)::float AS "commissionMinor"
+    FROM ${HOME_BOOKINGS}
+    LEFT JOIN LATERAL (
+      SELECT SUM(l."amountMinor") AS v FROM ledger_entries l
+      WHERE l."homeBookingId" = b.id AND l.account = 'PLATFORM_REVENUE' AND l.description LIKE 'Platform commission%'
+    ) c ON true
+    WHERE b.status = 'COMPLETED'
+      AND b."completedAt" >= ${homeTs(f.from)} AND b."completedAt" < ${homeTs(f.to)}
+      ${homeScope(f)}
+    GROUP BY 1, 2
+    ORDER BY 1, 2`;
+
+/**
+ * Advances: held is a balance true now (the range does not apply), settled went
+ * to the salon on visits completed in the range. `advanceStatus` is the record;
+ * the money itself sits in the customer's held wallet until then.
+ */
+export const getHomeAdvances = async (f: HomeMoneyFilter, db: Db = prisma) => {
+  const [r] = await db.$queryRaw<Array<{ heldMinor: number; heldVisits: number; settledMinor: number; settledVisits: number }>>`
+    SELECT COALESCE(SUM(b."advanceMinor") FILTER (WHERE b."advanceStatus" = 'HELD'), 0)::float AS "heldMinor",
+           COUNT(*) FILTER (WHERE b."advanceStatus" = 'HELD')::int AS "heldVisits",
+           COALESCE(SUM(b."advanceMinor") FILTER (
+             WHERE b."advanceStatus" = 'APPLIED'
+               AND b."completedAt" >= ${homeTs(f.from)} AND b."completedAt" < ${homeTs(f.to)}
+           ), 0)::float AS "settledMinor",
+           COUNT(*) FILTER (
+             WHERE b."advanceStatus" = 'APPLIED'
+               AND b."completedAt" >= ${homeTs(f.from)} AND b."completedAt" < ${homeTs(f.to)}
+           )::int AS "settledVisits"
+    FROM ${HOME_BOOKINGS}
+    WHERE b."advanceStatus" IN ('HELD', 'APPLIED') ${homeScope(f)}`;
+  return r ?? { heldMinor: 0, heldVisits: 0, settledMinor: 0, settledVisits: 0 };
+};
+
+/**
+ * Paid visits that ended without happening, per side and the policy the booking
+ * carried. `on` picks the range's meaning: "ended" for what happened in a period,
+ * "booked" for everything booked under a policy since it changed.
+ */
+export const getHomeOutcomes = (f: HomeMoneyFilter, on: "ended" | "booked" = "ended", db: Db = prisma) => {
+  const at = Prisma.raw(on === "ended" ? HOME_ENDED_AT : `b."createdAt"`);
+  return db.$queryRaw<HomeOutcome[]>`
+    SELECT ${HOME_SIDE} AS side, COALESCE(b."policySnapshot"->>'policy', 'FREE') AS policy,
+           COUNT(*)::int AS visits,
+           COUNT(*) FILTER (WHERE b."feeMinor" > 0)::int AS "keptVisits",
+           COALESCE(SUM(b."feeMinor"), 0)::float AS "feeMinor",
+           COALESCE(SUM(b."refundedMinor"), 0)::float AS "refundedMinor"
+    FROM ${HOME_BOOKINGS}
+    WHERE ${HOME_PAID_END} AND ${at} >= ${homeTs(f.from)} AND ${at} < ${homeTs(f.to)} ${homeScope(f)}
+    GROUP BY 1, 2
+    ORDER BY 3 DESC`;
+};
+
 export const SettlementEarnings = {
+  getHomeDailyMoney,
+  getHomeAdvances,
+  getHomeOutcomes,
   getSalonMoneyRange,
   getCommissionRates,
   getSalonEarnings,

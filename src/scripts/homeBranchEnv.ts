@@ -9,7 +9,8 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 
-const file = path.join(process.cwd(), ".env.homebranch");
+// HOME_BRANCH_FILE: another file of the same shape (a local throwaway database).
+const file = path.resolve(process.cwd(), process.env.HOME_BRANCH_FILE || ".env.homebranch");
 let target = "the .env database";
 /** True once DATABASE_URL points at the test branch; a writing script refuses otherwise. */
 export let onHomeBranch = false;
@@ -21,7 +22,7 @@ if (!process.argv.includes("--env-db") && fs.existsSync(file)) {
   if (url && host && url.includes(host)) {
     process.env.DATABASE_URL = url;
     process.env.DIRECT_URL = url;
-    target = `Neon test branch (${host})`;
+    target = `test database (${host})`;
     onHomeBranch = true;
   }
 }
