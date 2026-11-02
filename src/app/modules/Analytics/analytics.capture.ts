@@ -43,7 +43,8 @@ export const normaliseTerm = (raw: string): string | null => {
   return term;
 };
 
-export type SearchSurface = "LIST" | "AI";
+/** LIST: GET /salons, AI: POST /ai/search, HOME: the Home Service lists (?q on GET /home-service/catalog). */
+export type SearchSurface = "LIST" | "AI" | "HOME";
 
 export const recordSearchTerm = (raw: string, surface: SearchSurface, zeroResults: boolean) =>
   quietly("search term", async () => {

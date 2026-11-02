@@ -759,7 +759,7 @@ export const METRICS: Metric[] = [
     testless: true,
     volatile: true,
     label: "Searches",
-    definition: "Searches with a term, from search_query_daily. Dimension surface:<LIST|AI>. Only the first results page of GET /salons counts.",
+    definition: "Searches with a term, from search_query_daily. Dimension surface:<LIST|AI|HOME>. Only the first results page of GET /salons counts; HOME counts GET /home-service/catalog?q (one per list view, not typeahead keystrokes).",
     unit: "count",
     goodDirection: "up",
     compute: async (from, to) => spread(await searches(from, to), ["surface"]),

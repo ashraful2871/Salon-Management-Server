@@ -18,7 +18,7 @@ export const EVENT_ALLOW_LIST = {
     { key: "ref", values: ["search", "social", "direct", "internal", "other"] },
   ],
   salon_list_viewed: [{ key: "mode", values: ["list", "map"] }],
-  search_submitted: [{ key: "source", values: ["hero", "navbar", "salons_page"] }],
+  search_submitted: [{ key: "source", values: ["hero", "navbar", "salons_page", "home_service"] }],
   salon_viewed: [{ key: "salon", values: "uuid" }],
   booking_started: [],
   slot_selected: [],

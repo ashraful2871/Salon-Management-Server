@@ -390,3 +390,17 @@ export const homePublicLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, message: "Too many requests. Try again in a minute." },
 });
+
+/**
+ * Home Service typeahead (GET /home-service/search): 120 a minute per visitor,
+ * apart from homePublicLimiter so typing never blocks the list itself. The
+ * frontend debounces and needs 2+ letters, so a search is a handful of calls.
+ */
+export const homeSearchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many searches. Try again in a minute." },
+});

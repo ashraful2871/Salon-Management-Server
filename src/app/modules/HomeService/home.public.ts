@@ -3,7 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
 import { getSetting } from "../../utils/settings";
-import { incrementMetrics } from "../Analytics/analytics.capture";
+import { incrementMetrics, recordSearchTerm } from "../Analytics/analytics.capture";
 import { addDays, dhakaDay, isDay } from "../Analytics/analytics.days";
 import { SALON_GEOG } from "../Salon/salon.geo";
 import { BD_BOUNDS } from "../Salon/salon.validation";
@@ -21,6 +21,15 @@ import {
 } from "./home.availability";
 import { isBranchBookable, loadHomeFlags, loadPolicyInForce } from "./home.owner";
 import { listExpertReviews } from "./home.reviews";
+import {
+  matchExpert,
+  matchFields,
+  offeringFields,
+  parseQuery,
+  personFields,
+  preferExact,
+  type HomeQuery,
+} from "./home.search";
 
 /**
  * What guests and customers see before booking: the catalog and experts near
@@ -280,20 +289,142 @@ const countOutOfArea = (point: Point, audience: HomeAudience) => {
   void work().catch((err) => console.error("[analytics] home out-of-area count failed", err));
 };
 
+/** One bookable service row (per salon), with the eligible experts who do it. */
+type OfferingRow = {
+  name: string;
+  category: HomeCategory;
+  priceMinor: number;
+  durationMin: number;
+  image: string | null;
+  salonId: string;
+  expertIds: string[];
+};
+
+type CatalogOffering = {
+  name: string;
+  category: HomeCategory;
+  minPriceMinor: number;
+  durationMin: number;
+  image: string | null;
+  salonIds: Set<string>;
+  expertIds: Set<string>;
+};
+
+/** One entry per category + name (case-insensitive), cheapest price and shortest duration. */
+const aggregateOfferings = (rows: OfferingRow[]) => {
+  const offerings = new Map<string, CatalogOffering>();
+  for (const r of rows) {
+    const key = `${r.category}:${r.name.trim().toLowerCase()}`;
+    const o = offerings.get(key);
+    if (!o) {
+      offerings.set(key, {
+        name: r.name.trim(),
+        category: r.category,
+        minPriceMinor: r.priceMinor,
+        durationMin: r.durationMin,
+        image: r.image,
+        salonIds: new Set([r.salonId]),
+        expertIds: new Set(r.expertIds),
+      });
+    } else {
+      o.minPriceMinor = Math.min(o.minPriceMinor, r.priceMinor);
+      o.durationMin = Math.min(o.durationMin, r.durationMin);
+      o.image ??= r.image;
+      o.salonIds.add(r.salonId);
+      for (const e of r.expertIds) o.expertIds.add(e);
+    }
+  }
+  return [...offerings.values()];
+};
+
+/** Services matching `query`, best first (typo matches only when nothing else matched). */
+const searchOfferings = (offerings: CatalogOffering[], query: HomeQuery) => {
+  const hits = offerings.flatMap((o) => {
+    const match = matchFields(query, offeringFields(o));
+    return match ? [{ o, match }] : [];
+  });
+  const { items, fuzzy } = preferExact(hits);
+  items.sort(
+    (a, b) =>
+      b.match.score - a.match.score ||
+      b.o.salonIds.size - a.o.salonIds.size ||
+      a.o.minPriceMinor - b.o.minPriceMinor,
+  );
+  return { offerings: items.map((i) => i.o), fuzzy };
+};
+
+/**
+ * Every eligible expert of these branches with their live services on this
+ * side: what a search matches people against.
+ */
+const loadExpertPool = (salonIds: string[], audience: HomeAudience) =>
+  prisma.homeExpert.findMany({
+    where: {
+      salonId: { in: salonIds },
+      ...eligibleExpertWhere(audience),
+      offerings: { some: { offering: liveOffering(audience) } },
+    },
+    select: {
+      ...EXPERT_CARD_SELECT,
+      offerings: {
+        where: { offering: liveOffering(audience) },
+        select: {
+          offering: { select: { name: true, category: true, priceMinor: true, durationMin: true, images: true } },
+        },
+      },
+    },
+  });
+
+type PoolExpert = Awaited<ReturnType<typeof loadExpertPool>>[number];
+type ExpertOffering = { name: string; category: HomeCategory; priceMinor: number };
+
+/**
+ * Experts matching `query` on their own fields or their services, optionally
+ * only over one category's services (as GET /experts?category does).
+ */
+const searchExperts = <E extends { name: string; headline: string | null; salonName: string; offerings: ExpertOffering[] }>(
+  experts: E[],
+  query: HomeQuery,
+  category?: HomeCategory,
+) => {
+  const hits = experts.flatMap((e) => {
+    const all: E["offerings"][number][] = e.offerings;
+    const offerings = category ? all.filter((o) => o.category === category) : all;
+    if (!offerings.length) return [];
+    const match = matchExpert(query, personFields(e), offerings.map(offeringFields));
+    return match ? [{ e, offerings, match }] : [];
+  });
+  return preferExact(hits);
+};
+
+/** The services an expert matched on, or all of them for a name search. */
+const matchedOfferings = <O>(offerings: O[], matched: number[]) =>
+  matched.length ? matched.map((i) => offerings[i]) : offerings;
+
+const searchable = (e: PoolExpert, salonName: string) => ({
+  ...e,
+  name: e.staff.user.name,
+  salonName,
+  offerings: e.offerings.map((o) => o.offering),
+});
+
 export const getCatalog = async (viewer: Viewer, q: Query) => {
   const audience = audienceOf(q);
   const point = pointOf(q, true);
+  const query = parseQuery(q.q);
   const isTest = await viewerIsTest(viewer);
   const branches = await servingBranches(point, audience, isTest);
+  const echo = { q: query?.raw ?? null, fuzzy: false };
   if (!branches.length) {
     if (!isTest) countOutOfArea(point, audience);
-    return { audience, outOfArea: true, expertCount: 0, categories: [], offerings: [] };
+    return { audience, outOfArea: true, ...echo, expertCount: 0, categories: [], offerings: [] };
   }
+  const salonIds = branches.map((b) => b.branch.salonId);
 
   // Only what someone can actually book: an offering with a verified expert.
   const rows = await prisma.homeServiceOffering.findMany({
     where: {
-      salonId: { in: branches.map((b) => b.branch.salonId) },
+      salonId: { in: salonIds },
       ...liveOffering(audience),
       experts: { some: { expert: eligibleExpertWhere(audience) } },
     },
@@ -308,39 +439,12 @@ export const getCatalog = async (viewer: Viewer, q: Query) => {
     },
   });
 
-  const offerings = new Map<
-    string,
-    {
-      name: string;
-      category: HomeCategory;
-      minPriceMinor: number;
-      durationMin: number;
-      image: string | null;
-      salonIds: Set<string>;
-      expertIds: Set<string>;
-    }
-  >();
-  for (const r of rows) {
-    const key = `${r.category}:${r.name.trim().toLowerCase()}`;
-    const o = offerings.get(key);
-    if (!o) {
-      offerings.set(key, {
-        name: r.name.trim(),
-        category: r.category,
-        minPriceMinor: r.priceMinor,
-        durationMin: r.durationMin,
-        image: r.images[0] ?? null,
-        salonIds: new Set([r.salonId]),
-        expertIds: new Set(r.experts.map((e) => e.expertId)),
-      });
-    } else {
-      o.minPriceMinor = Math.min(o.minPriceMinor, r.priceMinor);
-      o.durationMin = Math.min(o.durationMin, r.durationMin);
-      o.image ??= r.images[0] ?? null;
-      o.salonIds.add(r.salonId);
-      for (const e of r.experts) o.expertIds.add(e.expertId);
-    }
-  }
+  let offerings = aggregateOfferings(
+    rows.map((r) => ({ ...r, image: r.images[0] ?? null, expertIds: r.experts.map((e) => e.expertId) })),
+  );
+  let fuzzy = false;
+  if (query) ({ offerings, fuzzy } = searchOfferings(offerings, query));
+  else offerings.sort((a, b) => b.salonIds.size - a.salonIds.size || a.minPriceMinor - b.minPriceMinor);
 
   // Per category: how many services and how many distinct experts (what the
   // experts list filtered to that category counts), plus the totals.
@@ -349,7 +453,7 @@ export const getCatalog = async (viewer: Viewer, q: Query) => {
     { category: HomeCategory; count: number; minPriceMinor: number; expertIds: Set<string> }
   >();
   const allExperts = new Set<string>();
-  for (const o of offerings.values()) {
+  for (const o of offerings) {
     for (const id of o.expertIds) allExperts.add(id);
     const c = categories.get(o.category);
     if (!c) {
@@ -366,18 +470,48 @@ export const getCatalog = async (viewer: Viewer, q: Query) => {
     }
   }
 
-  const list = [...offerings.values()]
-    .map(({ salonIds, expertIds, ...o }) => ({ ...o, salonCount: salonIds.size, expertCount: expertIds.size }))
-    .sort((a, b) => b.salonCount - a.salonCount || a.minPriceMinor - b.minPriceMinor);
+  // With a search, the expert counts are the people GET /experts?q finds (by
+  // name, headline, salon or service), per category the way it filters them.
+  if (query) {
+    const salonName = new Map(branches.map((b) => [b.branch.salonId, b.branch.salon.name]));
+    const pool = (await loadExpertPool(salonIds, audience)).map((e) => searchable(e, salonName.get(e.salonId) ?? ""));
+    allExperts.clear();
+    for (const { e } of searchExperts(pool, query).items) allExperts.add(e.id);
+    for (const c of categories.values()) c.expertIds.clear();
+    const inPool = new Set(pool.flatMap((e) => e.offerings.map((o) => o.category)));
+    for (const category of inPool) {
+      for (const { e, offerings: own, match } of searchExperts(pool, query, category).items) {
+        // Found by name only, no service matched in it: the chip still filters the experts.
+        let c = categories.get(category);
+        if (!c) {
+          c = { category, count: 0, minPriceMinor: Number.MAX_SAFE_INTEGER, expertIds: new Set() };
+          categories.set(category, c);
+        }
+        c.expertIds.add(e.id);
+        if (!c.count) {
+          const prices = matchedOfferings(own, match.matched).map((o) => o.priceMinor);
+          c.minPriceMinor = Math.min(c.minPriceMinor, ...prices);
+        }
+      }
+    }
+    for (const [k, c] of categories) if (!c.count && !c.expertIds.size) categories.delete(k);
+    if (!isTest) recordSearchTerm(query.raw, "HOME", !offerings.length && !allExperts.size);
+  }
 
   return {
     audience,
     outOfArea: false,
+    q: echo.q,
+    fuzzy,
     expertCount: allExperts.size,
     categories: [...categories.values()]
       .map(({ expertIds, ...c }) => ({ ...c, expertCount: expertIds.size }))
       .sort((a, b) => b.count - a.count || b.expertCount - a.expertCount),
-    offerings: list,
+    offerings: offerings.map(({ salonIds, expertIds, ...o }) => ({
+      ...o,
+      salonCount: salonIds.size,
+      expertCount: expertIds.size,
+    })),
   };
 };
 
@@ -392,13 +526,17 @@ const categoryOf = (q: Query): HomeCategory | undefined => {
   return v as HomeCategory;
 };
 
-const sortOf = (q: Query) => {
-  const v = str(q.sort) || "rating";
-  if (v !== "rating" && v !== "distance" && v !== "soonest") {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "sort must be rating, distance or soonest");
+/** `relevance` (best match) is the default with a search and means `rating` without one. */
+const sortOf = (q: Query, searching: boolean) => {
+  const v = str(q.sort) || (searching ? "relevance" : "rating");
+  if (v !== "relevance" && v !== "rating" && v !== "distance" && v !== "soonest") {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "sort must be relevance, rating, distance or soonest");
   }
-  return v;
+  return v === "relevance" && !searching ? "rating" : v;
 };
+
+/** At most this many matched service names on an expert card. */
+const MATCHED_SERVICES_MAX = 3;
 
 const EXPERT_CARD_SELECT = {
   id: true,
@@ -415,11 +553,12 @@ export const listExperts = async (viewer: Viewer, q: Query) => {
   const audience = audienceOf(q);
   const point = pointOf(q, true);
   const category = categoryOf(q);
-  const sort = sortOf(q);
+  const query = parseQuery(q.q);
+  const sort = sortOf(q, !!query);
   const page = pageOf(q);
 
   const branches = await servingBranches(point, audience, await viewerIsTest(viewer));
-  const empty = { audience, outOfArea: !branches.length, sort, experts: [] };
+  const empty = { audience, outOfArea: !branches.length, sort, q: query?.raw ?? null, fuzzy: false, experts: [] };
   if (!branches.length) return { meta: { page, limit: PAGE_SIZE, total: 0 }, data: empty };
   const branchById = new Map(branches.map((b) => [b.branch.salonId, b]));
 
@@ -434,17 +573,40 @@ export const listExperts = async (viewer: Viewer, q: Query) => {
       ...EXPERT_CARD_SELECT,
       offerings: {
         where: { offering: offeringWhere },
-        select: { offering: { select: { priceMinor: true, durationMin: true } } },
+        select: { offering: { select: { name: true, category: true, priceMinor: true, durationMin: true } } },
       },
     },
   });
 
-  let cards = rows.map((e) => {
+  // A search keeps the experts it matches (on name, headline, salon or one of
+  // these services) and prices each card on the services it matched.
+  type Offering = (typeof rows)[number]["offerings"][number]["offering"];
+  const people = rows.map((e) => ({
+    ...e,
+    name: e.staff.user.name,
+    salonName: branchById.get(e.salonId)!.branch.salon.name,
+    offerings: e.offerings.map((o) => o.offering),
+  }));
+  let fuzzy = false;
+  let found: Array<{ e: (typeof people)[number]; own: Offering[]; score: number; searched: boolean }> = people.map(
+    (e) => ({ e, own: e.offerings, score: 0, searched: false }),
+  );
+  if (query) {
+    const hits = searchExperts(people, query);
+    fuzzy = hits.fuzzy;
+    found = hits.items.map(({ e, offerings, match }) => ({
+      e,
+      own: matchedOfferings(offerings, match.matched),
+      score: match.score,
+      searched: match.matched.length > 0,
+    }));
+  }
+
+  let cards = found.map(({ e, own, score, searched }) => {
     const b = branchById.get(e.salonId)!;
-    const prices = e.offerings.map((o) => o.offering.priceMinor);
     return {
       id: e.id,
-      name: e.staff.user.name,
+      name: e.name,
       photo: e.staff.user.profilePhoto,
       headline: e.headline,
       languages: e.languages,
@@ -454,18 +616,26 @@ export const listExperts = async (viewer: Viewer, q: Query) => {
       verified: true,
       salon: { id: b.branch.salon.id, name: b.branch.salon.name, area: b.branch.salon.area },
       distanceKm: b.distanceKm,
-      fromPriceMinor: Math.min(...prices),
-      shortestMin: Math.min(...e.offerings.map((o) => o.offering.durationMin)),
+      fromPriceMinor: Math.min(...own.map((o) => o.priceMinor)),
+      ...(query
+        ? {
+            // The services the search found on this expert; empty for a name match.
+            matchedServices: searched
+              ? [...new Set(own.map((o) => o.name.trim()))].slice(0, MATCHED_SERVICES_MAX)
+              : [],
+          }
+        : {}),
+      shortestMin: Math.min(...own.map((o) => o.durationMin)),
+      score,
       soonestAt: null as Date | null,
     };
   });
 
-  const byDistance = (a: (typeof cards)[number], b: (typeof cards)[number]) =>
-    a.distanceKm - b.distanceKm || b.rating - a.rating || a.id.localeCompare(b.id);
+  type Card = (typeof cards)[number];
+  const byDistance = (a: Card, b: Card) => a.distanceKm - b.distanceKm || b.rating - a.rating || a.id.localeCompare(b.id);
+  const byRating = (a: Card, b: Card) => b.rating - a.rating || b.totalReviews - a.totalReviews || byDistance(a, b);
   cards.sort(
-    sort === "rating"
-      ? (a, b) => b.rating - a.rating || b.totalReviews - a.totalReviews || byDistance(a, b)
-      : byDistance,
+    sort === "relevance" ? (a, b) => b.score - a.score || byRating(a, b) : sort === "rating" ? byRating : byDistance,
   );
 
   const total = cards.length;
@@ -503,11 +673,96 @@ export const listExperts = async (viewer: Viewer, q: Query) => {
     data: {
       ...empty,
       outOfArea: false,
-      experts: cards.map(({ shortestMin: _s, soonestAt, ...c }) => ({
+      fuzzy,
+      experts: cards.map(({ shortestMin: _s, score: _score, soonestAt, ...c }) => ({
         ...c,
         ...(sort === "soonest" ? { soonestAt, soonestLabel: soonestAt ? slotLabel(soonestAt) : null } : {}),
       })),
     },
+  };
+};
+
+// ---------------------------------------------------------------------------
+// GET /search (typeahead)
+// ---------------------------------------------------------------------------
+
+const SUGGEST_LIMIT = 5;
+
+/**
+ * As-you-type suggestions for one side at one point: the best few services
+ * and experts for `q`, with how many of each the full lists would show. Same
+ * matching as GET /catalog?q and GET /experts?q. Keystrokes are not recorded
+ * as search terms; the list they lead to is.
+ */
+export const searchSuggestions = async (viewer: Viewer, q: Query) => {
+  const audience = audienceOf(q);
+  const point = pointOf(q, true);
+  const query = parseQuery(q.q);
+  const none = {
+    audience,
+    q: query?.raw ?? null,
+    outOfArea: false,
+    fuzzy: false,
+    totals: { services: 0, experts: 0 },
+    services: [],
+    experts: [],
+  };
+  if (!query) return none;
+
+  const branches = await servingBranches(point, audience, await viewerIsTest(viewer));
+  if (!branches.length) return { ...none, outOfArea: true };
+  const branchById = new Map(branches.map((b) => [b.branch.salonId, b]));
+  const pool = (await loadExpertPool([...branchById.keys()], audience)).map((e) =>
+    searchable(e, branchById.get(e.salonId)!.branch.salon.name),
+  );
+
+  // Services: the catalog's grouping, built from the same experts.
+  const services = searchOfferings(
+    aggregateOfferings(
+      pool.flatMap((e) =>
+        e.offerings.map((o) => ({ ...o, image: o.images[0] ?? null, salonId: e.salonId, expertIds: [e.id] })),
+      ),
+    ),
+    query,
+  );
+
+  const experts = searchExperts(pool, query);
+  const rankedExperts = experts.items
+    .map(({ e, offerings, match }) => ({ e, offerings, match, b: branchById.get(e.salonId)! }))
+    .sort(
+      (x, y) =>
+        y.match.score - x.match.score ||
+        y.e.rating - x.e.rating ||
+        x.b.distanceKm - y.b.distanceKm ||
+        x.e.id.localeCompare(y.e.id),
+    );
+
+  const anything = services.offerings.length + experts.items.length > 0;
+  return {
+    ...none,
+    // Every suggestion shown is a close match, not what was typed.
+    fuzzy:
+      anything &&
+      (services.fuzzy || !services.offerings.length) &&
+      (experts.fuzzy || !experts.items.length),
+    totals: { services: services.offerings.length, experts: experts.items.length },
+    services: services.offerings.slice(0, SUGGEST_LIMIT).map((o) => ({
+      name: o.name,
+      category: o.category,
+      minPriceMinor: o.minPriceMinor,
+      expertCount: o.expertIds.size,
+    })),
+    experts: rankedExperts.slice(0, SUGGEST_LIMIT).map(({ e, offerings, match, b }) => ({
+      id: e.id,
+      name: e.name,
+      photo: e.staff.user.profilePhoto,
+      rating: e.rating,
+      totalReviews: e.totalReviews,
+      salon: { name: b.branch.salon.name, area: b.branch.salon.area },
+      distanceKm: b.distanceKm,
+      /** The service the search found on them; null for a name match. */
+      matchedService: match.matched.length ? offerings[match.matched[0]].name.trim() : null,
+    })),
   };
 };
 

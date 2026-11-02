@@ -176,6 +176,10 @@ const publicExperts = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, { statusCode: StatusCodes.OK, success: true, message: "Home experts", meta, data });
 });
 
+const publicSearch = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Home Service search", await Public.searchSuggestions(viewerOf(req), req.query));
+});
+
 const publicExpert = catchAsync(async (req: Request, res: Response) => {
   ok(res, "Home expert", await Public.getExpert(viewerOf(req), String(req.params.id), req.query));
 });
@@ -455,6 +459,7 @@ export const HomeController = {
   getBooking,
   publicCatalog,
   publicExperts,
+  publicSearch,
   publicExpert,
   publicAvailability,
   publicAvailabilityDays,
