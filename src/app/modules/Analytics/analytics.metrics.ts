@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../../shared/prisma";
-import { SettlementEarnings, type DailyMoney } from "../Settlement/settlement.earnings";
+import { POLICY_MONEY_KEYS } from "../HomeService/home.policy";
+import { SettlementEarnings, type DailyMoney, type HomeDayMoney } from "../Settlement/settlement.earnings";
 import { between, DAY_MS, daySql, dhakaDay, utcTs } from "./analytics.days";
 import { latencyBucket } from "./analytics.capture";
 import { EVENT_ALLOW_LIST, EVENT_NAMES, primaryKey, type EventName } from "./analytics.events";
@@ -148,6 +149,14 @@ const money =
       .map((m) => ({ day: m.day, dimension: "", value: pick(m) }));
 
 const balances = (o: MetricOpts) => SettlementEarnings.getPlatformEarnings({ includeTest: o.includeTest });
+
+const homeVisits = (days: HomeDayMoney[]): Raw[] =>
+  days.map((d) => ({
+    day: d.day,
+    v: d.visits,
+    audience: d.audience.toLowerCase(),
+    gmv: d.subtotalMinor + d.travelFeeMinor,
+  }));
 
 // ---------------------------------------------------------------------------
 // Shared queries
@@ -750,7 +759,7 @@ export const METRICS: Metric[] = [
     testless: true,
     volatile: true,
     label: "Searches",
-    definition: "Searches with a term, from search_query_daily. Dimension surface:<LIST|AI>. Only the first results page of GET /salons counts.",
+    definition: "Searches with a term, from search_query_daily. Dimension surface:<LIST|AI|HOME>. Only the first results page of GET /salons counts; HOME counts GET /home-service/catalog?q (one per list view, not typeahead keystrokes).",
     unit: "count",
     goodDirection: "up",
     compute: async (from, to) => spread(await searches(from, to), ["surface"]),
@@ -1081,6 +1090,84 @@ export const METRICS: Metric[] = [
     definition: "Share of the reviews written that were hidden by moderation.",
     unit: "percent",
     goodDirection: "down",
+  },
+
+  // Home Service. The funnel's first steps are the `funnel.home_*` events.
+  {
+    id: "home.completed",
+    kind: "daily",
+    label: "Home visits completed",
+    definition: "Home visits COMPLETED, by the Dhaka day of completedAt. Dimension audience:<ladies|gents>.",
+    unit: "count",
+    goodDirection: "up",
+    compute: async (from, to, o) => spread(homeVisits(await SettlementEarnings.getHomeDailyMoney({ from, to, includeTest: o.includeTest })), ["audience"]),
+  },
+  {
+    id: "home.gmvMinor",
+    kind: "daily",
+    label: "Home visit value",
+    definition: "Subtotal + travel fee of COMPLETED home visits, by the Dhaka day of completedAt (from settlement.earnings).",
+    unit: "minor",
+    goodDirection: "up",
+    compute: async (from, to, o) =>
+      spread(
+        homeVisits(await SettlementEarnings.getHomeDailyMoney({ from, to, includeTest: o.includeTest })),
+        ["audience"],
+        (r) => Number(r.gmv),
+      ),
+  },
+  {
+    id: "home.outOfArea",
+    kind: "captured",
+    label: "Out-of-area looks",
+    definition:
+      "Times the Home Service catalog found no branch serving the visitor's point, counted on the server and at most once a minute per point. Dimension area:<area of the nearest salon>, audience:<ladies|gents>. Test accounts and closed sides are not counted.",
+    unit: "count",
+    goodDirection: "down",
+  },
+  {
+    id: "home.supply",
+    kind: "table",
+    label: "Experts by area",
+    definition:
+      "Per salon area, as of now: experts a customer can book on each side (verified, active, branch on and approved), and those waiting for verification. The date range does not apply.",
+    unit: "count",
+    goodDirection: "up",
+    table: async (_from, _to, o) =>
+      prisma.$queryRaw`
+        SELECT s.area,
+               COUNT(*) FILTER (WHERE e.audience = 'LADIES' AND e.verification = 'VERIFIED' AND p."isOn" AND p.status = 'ACTIVE')::int AS ladies,
+               COUNT(*) FILTER (WHERE e.audience = 'GENTS' AND e.verification = 'VERIFIED' AND p."isOn" AND p.status = 'ACTIVE')::int AS gents,
+               COUNT(*) FILTER (WHERE e.verification = 'PENDING')::int AS pending
+        FROM home_experts e
+        JOIN staff st ON st.id = e."staffId"
+        JOIN salons s ON s.id = e."salonId"
+        LEFT JOIN home_service_profiles p ON p."salonId" = s.id
+        WHERE e."isActive" AND e."removedAt" IS NULL AND st."isDeleted" = false
+          AND s."isDeleted" = false AND s.status = 'ACTIVE' ${realSalon(o)}
+        GROUP BY 1
+        ORDER BY 2 DESC, 3 DESC, 1`,
+  },
+  {
+    id: "home.policyOutcomes",
+    kind: "table",
+    label: "Fees kept vs refunded",
+    definition:
+      "Paid visits booked since the last saved change to the cancellation policy or its fees that ended without happening, per side and the policy each booking carried. Salon, admin and system ends are always 100% back. The date range does not apply.",
+    unit: "minor",
+    goodDirection: "up",
+    table: async (_from, _to, o) => {
+      const last = await prisma.platformSetting.findFirst({
+        where: { key: { in: [...POLICY_MONEY_KEYS] } },
+        orderBy: { updatedAt: "desc" },
+        select: { key: true, updatedAt: true },
+      });
+      const outcomes = await SettlementEarnings.getHomeOutcomes(
+        { from: last?.updatedAt ?? new Date(0), to: new Date(), includeTest: o.includeTest },
+        "booked",
+      );
+      return { since: last?.updatedAt ?? null, key: last?.key ?? null, outcomes };
+    },
   },
 
   // Report tables

@@ -2,7 +2,7 @@ import { UserRole } from "@prisma/client";
 import express from "express";
 import auth from "../../middlewares/auth";
 import optionalAuth from "../../middlewares/optionalAuth";
-import { adminSensitiveLimiter, homePublicLimiter, paymentLimiter } from "../../middlewares/rateLimiter";
+import { adminSensitiveLimiter, homePublicLimiter, homeSearchLimiter, paymentLimiter } from "../../middlewares/rateLimiter";
 import validateRequest from "../../middlewares/validateRequest";
 import { BUSINESS_ROLES } from "../../utils/salonAccess";
 import { adminAuth, adminOnly, requireStepUp } from "../Admin/admin.middleware";
@@ -15,6 +15,8 @@ const router = express.Router();
 const publicRead = [optionalAuth(), homePublicLimiter];
 router.get("/catalog", ...publicRead, HomeController.publicCatalog);
 router.get("/experts", ...publicRead, HomeController.publicExperts);
+// Typeahead: its own bucket, so typing never spends the list's budget.
+router.get("/search", optionalAuth(), homeSearchLimiter, HomeController.publicSearch);
 router.get("/experts/:id", ...publicRead, HomeController.publicExpert);
 router.get("/experts/:id/reviews", ...publicRead, validateRequest(HomeValidation.expertReviews), HomeController.publicExpertReviews);
 router.get("/availability", ...publicRead, HomeController.publicAvailability);

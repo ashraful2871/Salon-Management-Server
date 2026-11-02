@@ -41,7 +41,7 @@ const PAGE_SIZE = 20;
 /** A visit still IN_PROGRESS this long after its end is closed by `home.stale`. */
 const STALE_AFTER_MS = 3 * HOUR_MS;
 /** An expert not arrived this long after the start is flagged by `home.notArrived`. */
-const LATE_AFTER_MS = 45 * MIN_MS;
+export const LATE_AFTER_MS = 45 * MIN_MS;
 
 export const STALE_CLOSED_FLAG = "STALE_CLOSED";
 export const EXPERT_LATE_FLAG = "EXPERT_LATE_FLAG";

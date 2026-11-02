@@ -8,7 +8,14 @@ import sendResponse from "../../shared/sendResponse";
 import { CsvColumn, streamCsv } from "../../utils/csv";
 import { AccessUser, scopeSalonIds, withAccessCache } from "../../utils/salonAccess";
 import { addDays, dateOnly, dayStart, daysBetween, dhakaDay, isDay, utcTs } from "../Analytics/analytics.days";
-import { getSalonMoneyRange } from "../Settlement/settlement.earnings";
+import {
+  getHomeAdvances,
+  getHomeDailyMoney,
+  getHomeOutcomes,
+  getSalonMoneyRange,
+  type HomeDayMoney,
+} from "../Settlement/settlement.earnings";
+import { EXPERT_LATE_FLAG, LATE_AFTER_MS } from "../HomeService/home.lifecycle";
 import { OwnerTeam } from "./owner.team";
 import { typeOf } from "./owner.money";
 
@@ -28,11 +35,12 @@ import { typeOf } from "./owner.money";
  * never a zero.
  */
 
-export const REPORTS = ["overview", "bookings", "services", "team", "customers", "utilisation", "discovery", "money"] as const;
+export const REPORTS = ["overview", "bookings", "services", "team", "customers", "utilisation", "discovery", "home", "money"] as const;
 export type ReportName = (typeof REPORTS)[number];
 
 const MAX_DAYS = 366;
 const CANCELLED = AppointmentStatus.CANCELLED;
+const HOME_LATE_MINUTES = LATE_AFTER_MS / 60_000;
 
 type Unit = "count" | "minor" | "percent" | "hours" | "days";
 type Kpi = { id: string; label: string; value: number | null; previous?: number | null; unit: Unit; goodDirection: "up" | "down" };
@@ -600,7 +608,140 @@ const money = async (c: Ctx) => {
   };
 };
 
+// ---------------------------------------------------------------------------
+// Home Service
+// ---------------------------------------------------------------------------
+
+const homeFigures = async (ids: string[], r: Range) => {
+  const f = { salonIds: ids, ...instants(r), includeTest: true };
+  const [days, advances, outcomes] = await Promise.all([getHomeDailyMoney(f), getHomeAdvances(f), getHomeOutcomes(f)]);
+  const total = (pick: (d: HomeDayMoney) => number, audience?: string) =>
+    sum(days.filter((d) => !audience || d.audience === audience).map(pick));
+  return {
+    days,
+    advances,
+    outcomes,
+    visits: total((d) => d.visits),
+    ladies: total((d) => d.visits, "LADIES"),
+    gents: total((d) => d.visits, "GENTS"),
+    subtotalMinor: total((d) => d.subtotalMinor),
+    travelFeeMinor: total((d) => d.travelFeeMinor),
+    commissionMinor: total((d) => d.commissionMinor),
+    feeMinor: sum(outcomes.map((o) => o.feeMinor)),
+  };
+};
+
+// Each visit counts on the day it ended, so these rows agree with the cancellations table.
+const homeExperts = (ids: string[], r: Range) => {
+  const { from, to } = instants(r);
+  return prisma.$queryRaw<
+    Array<{
+      id: string;
+      name: string;
+      salonName: string;
+      audience: string;
+      rating: number;
+      totalReviews: number;
+      jobs: number;
+      late: number;
+      noShows: number;
+      salonCancels: number;
+    }>
+  >`
+    SELECT e.id, u.name, s.name AS "salonName", e.audience::text AS audience, e.rating, e."totalReviews",
+           COUNT(b.id) FILTER (WHERE b.status = 'COMPLETED')::int AS jobs,
+           COUNT(b.id) FILTER (
+             WHERE b."arrivedAt" > b."startAt" + (${HOME_LATE_MINUTES} * interval '1 minute')
+                OR EXISTS (SELECT 1 FROM home_booking_events ev WHERE ev."bookingId" = b.id AND ev.reason = ${EXPERT_LATE_FLAG})
+           )::int AS late,
+           COUNT(b.id) FILTER (WHERE b.status = 'NO_SHOW' AND b."noShowParty" = 'EXPERT')::int AS "noShows",
+           COUNT(b.id) FILTER (WHERE b.status = 'CANCELLED' AND b."cancelledBy" = 'SALON')::int AS "salonCancels"
+    FROM home_experts e
+    JOIN staff st ON st.id = e."staffId"
+    JOIN users u ON u.id = st."userId"
+    JOIN salons s ON s.id = e."salonId"
+    LEFT JOIN home_bookings b ON b."expertId" = e.id
+      AND COALESCE(b."completedAt", b."cancelledAt", b."noShowMarkedAt", b."startAt") >= ${from.toISOString()}::timestamptz
+      AND COALESCE(b."completedAt", b."cancelledAt", b."noShowMarkedAt", b."startAt") < ${to.toISOString()}::timestamptz
+    WHERE ${inSalons(`e."salonId"`, ids)} AND (e."removedAt" IS NULL OR b.id IS NOT NULL)
+    GROUP BY e.id, u.name, s.name
+    ORDER BY jobs DESC, u.name
+    LIMIT 200`;
+};
+
+const home = async (c: Ctx) => {
+  const [now, prev, experts] = await Promise.all([
+    homeFigures(c.salonIds, c.range),
+    c.prev ? homeFigures(c.salonIds, c.prev) : Promise.resolve(null),
+    homeExperts(c.salonIds, c.range),
+  ]);
+  const revenueOf = (f: typeof now) => f.subtotalMinor + f.travelFeeMinor;
+  const kpi = (id: string, label: string, value: number, previous: number | undefined, unit: Unit, goodDirection: "up" | "down" = "up"): Kpi => ({
+    id,
+    label,
+    value,
+    ...(c.prev && { previous: previous ?? null }),
+    unit,
+    goodDirection,
+  });
+  const byDay = new Map<string, { visits: number; ladies: number; gents: number; subtotalMinor: number; travelFeeMinor: number; commissionMinor: number }>();
+  for (const d of now.days) {
+    const row = byDay.get(d.day) ?? { visits: 0, ladies: 0, gents: 0, subtotalMinor: 0, travelFeeMinor: 0, commissionMinor: 0 };
+    row.visits += d.visits;
+    row[d.audience === "LADIES" ? "ladies" : "gents"] += d.visits;
+    row.subtotalMinor += d.subtotalMinor;
+    row.travelFeeMinor += d.travelFeeMinor;
+    row.commissionMinor += d.commissionMinor;
+    byDay.set(d.day, row);
+  }
+
+  // One row per side: the same side can carry bookings of several policies.
+  const sides = new Map<string, { side: string; visits: number; keptVisits: number; feeMinor: number; refundedMinor: number }>();
+  for (const o of now.outcomes) {
+    const row = sides.get(o.side) ?? { side: o.side, visits: 0, keptVisits: 0, feeMinor: 0, refundedMinor: 0 };
+    row.visits += o.visits;
+    row.keptVisits += o.keptVisits;
+    row.feeMinor += o.feeMinor;
+    row.refundedMinor += o.refundedMinor;
+    sides.set(o.side, row);
+  }
+
+  return {
+    kpis: [
+      kpi("visits", "Visits completed", now.visits, prev?.visits, "count"),
+      kpi("revenue", "Visit revenue", revenueOf(now), prev ? revenueOf(prev) : undefined, "minor"),
+      kpi("held", "Advances held now", now.advances.heldMinor, undefined, "minor"),
+      kpi("settled", "Advances settled", now.advances.settledMinor, prev?.advances.settledMinor, "minor"),
+    ],
+    revenue: {
+      subtotalMinor: now.subtotalMinor,
+      travelFeeMinor: now.travelFeeMinor,
+      commissionMinor: now.commissionMinor,
+      netMinor: revenueOf(now) - now.commissionMinor,
+    },
+    advances: now.advances,
+    audience: [
+      { key: "LADIES", value: now.ladies },
+      { key: "GENTS", value: now.gents },
+    ],
+    series: c.range.days.map((day) => ({
+      day,
+      visits: 0,
+      ladies: 0,
+      gents: 0,
+      subtotalMinor: 0,
+      travelFeeMinor: 0,
+      commissionMinor: 0,
+      ...byDay.get(day),
+    })),
+    experts,
+    outcomes: [...sides.values()].sort((a, b) => b.visits - a.visits),
+    feeMinor: now.feeMinor,
+  };
+};
+
 const BUILDERS: Record<ReportName, (c: Ctx) => Promise<unknown>> = {
+  home,
   overview,
   bookings,
   services,
@@ -677,6 +818,19 @@ const csvSpec = (report: ReportName, data: any): CsvSpec => {
         : { columns: [col("note", "reason")], rows: [{ reason: data.missedDemand.reason }] };
     case "money":
       return { columns: [col("day", "day"), col("counter_taka", "counter", true), col("platform_taka", "platform", true)], rows: data.series };
+    case "home":
+      return {
+        columns: [
+          col("day", "day"),
+          col("visits", "visits"),
+          col("ladies", "ladies"),
+          col("gents", "gents"),
+          col("subtotal_taka", "subtotalMinor", true),
+          col("travel_fee_taka", "travelFeeMinor", true),
+          col("commission_taka", "commissionMinor", true),
+        ],
+        rows: data.series,
+      };
   }
 };
 

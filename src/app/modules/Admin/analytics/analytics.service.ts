@@ -18,7 +18,7 @@ import {
  * computed live from the same definitions.
  */
 
-export const REPORTS = ["overview", "bookings", "customers", "salons", "geo", "funnel", "search", "assistant", "tryon"] as const;
+export const REPORTS = ["overview", "bookings", "customers", "salons", "geo", "funnel", "search", "assistant", "tryon", "home"] as const;
 export type ReportName = (typeof REPORTS)[number];
 
 export type ReportQuery = {
@@ -199,6 +199,14 @@ type ReportDef = {
 };
 
 const FUNNEL_STEPS = ["funnel.page_view", "funnel.salon_list_viewed", "funnel.salon_viewed", "funnel.booking_started", "funnel.slot_selected"];
+const HOME_STEPS = ["funnel.home_view", "funnel.home_quote", "funnel.home_booking_created", "funnel.home_booking_paid", "home.completed"];
+const HOME_STEP_LABELS: Record<string, string> = {
+  "funnel.home_view": "Home Service views",
+  "funnel.home_quote": "Quotes",
+  "funnel.home_booking_created": "Bookings created",
+  "funnel.home_booking_paid": "Advance paid",
+  "home.completed": "Visits completed",
+};
 
 const DEFS: Record<ReportName, ReportDef> = {
   overview: {
@@ -329,6 +337,26 @@ const DEFS: Record<ReportName, ReportDef> = {
     kpis: ["tryon.uploads", "tryon.done", "tryon.failed", "tryon.latencyP50"],
     series: ["tryon.uploads", "tryon.done", "tryon.failed"],
     tables: ({ store }) => ({ failures: breakdown(store, "tryon.failed", "code") }),
+  },
+  home: {
+    kpis: [...HOME_STEPS, "home.gmvMinor", "funnel.home_out_of_area", "home.outOfArea"],
+    series: ["funnel.home_view", "funnel.home_booking_paid", "home.completed", "home.gmvMinor"],
+    tables: async ({ store, from, to, q }) => {
+      const values = HOME_STEPS.map((id) => total(store, id, ""));
+      return {
+        steps: HOME_STEPS.map((id, i) => ({
+          id,
+          label: HOME_STEP_LABELS[id],
+          value: values[i],
+          ladies: total(store, id, "audience:ladies"),
+          gents: total(store, id, "audience:gents"),
+          fromPrevious: i && values[i - 1] ? round((values[i] / values[i - 1]) * 100) : null,
+        })),
+        gaps: breakdown(store, "home.outOfArea", "area"),
+        supply: await table("home.supply", from, to, q),
+        policy: await table("home.policyOutcomes", from, to, q),
+      };
+    },
   },
 };
 
