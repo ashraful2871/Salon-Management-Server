@@ -33,6 +33,12 @@ const coordsPair = (b: { latitude?: number; longitude?: number }) =>
 
 const audience = z.enum(["UNISEX", "LADIES", "GENTS"]);
 
+// Photo links, the first is the cover. Kept in step with SALON_MAX_IMAGES
+// (salon.photos.ts) and the frontend's photo manager.
+const images = z
+  .array(z.string().trim().url({ message: "Each photo must be a link (https://…)" }))
+  .max(10, { message: "A salon can have at most 10 photos" });
+
 const coordsPairError = {
   message: "Send latitude and longitude together",
   path: ["latitude"],
@@ -52,7 +58,7 @@ const createSalonValidation = z.object({
     zipCode: z.string().optional(),
     phone: z.string().nonempty({ message: "Phone is required" }),
     email: z.string().email().optional(),
-    images: z.array(z.string()).optional(),
+    images: images.optional(),
     operatingHours: z.any().optional(),
     audience: audience.optional(),
     latitude: latitude.optional(),
@@ -74,7 +80,7 @@ const updateSalonValidation = z.object({
     zipCode: z.string().optional(),
     phone: z.string().optional(),
     email: z.string().email().optional(),
-    images: z.array(z.string()).optional(),
+    images: images.optional(),
     operatingHours: z.any().optional(),
     audience: audience.optional(),
     managerCanEditServices: z.boolean().optional(),
@@ -203,7 +209,21 @@ const pauseValidation = z.object({
   }),
 });
 
+const discardPhotoUploadsValidation = z.object({
+  body: z.object({
+    urls: z.array(z.string().trim().url()).min(1).max(20),
+  }),
+});
+
+const deleteSalonValidation = z.object({
+  body: z.object({
+    confirmName: z.string().trim().min(1, { message: "Type the salon's name to confirm" }),
+  }),
+});
+
 export const SalonValidation = {
+  deleteSalonValidation,
+  discardPhotoUploadsValidation,
   createClosureValidation,
   pauseValidation,
   createSalonValidation,

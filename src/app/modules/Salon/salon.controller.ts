@@ -3,6 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import catchAsync from "../../shared/catchAsync";
 import sendResponse from "../../shared/sendResponse";
 import { SalonService } from "./salon.service";
+import { SalonPhotos } from "./salon.photos";
 import { withAccessCache } from "../../utils/salonAccess";
 import { findSalonMarkers } from "./salon.geo";
 import { NEARBY_MAX_RADIUS_KM, SalonValidation } from "./salon.validation";
@@ -185,13 +186,57 @@ const deleteSalon = catchAsync(async (req: Request, res: Response) => {
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  await SalonService.deleteSalon(withAccessCache(req), id);
+  const result = await SalonService.deleteSalon(
+    withAccessCache(req),
+    buildAuditCtx(req, req.user!.role),
+    id,
+    req.body,
+  );
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
-    message: "Salon deleted successfully",
+    message: "Salon deleted",
+    data: result,
+  });
+});
+
+const photoUploadSignature = catchAsync(async (req: Request, res: Response) => {
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+  const result = await SalonPhotos.photoUploadSignature(withAccessCache(req), id);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Upload ticket issued",
+    data: result,
+  });
+});
+
+const discardPhotoUploads = catchAsync(async (req: Request, res: Response) => {
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+  await SalonPhotos.discardUploads(withAccessCache(req), id, req.body.urls);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Discarded uploads removed",
     data: null,
+  });
+});
+
+const newSalonPhotoUploadSignature = catchAsync(async (req: Request, res: Response) => {
+  const result = await SalonPhotos.newSalonPhotoUploadSignature(withAccessCache(req));
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Upload ticket issued",
+    data: result,
   });
 });
 
@@ -210,4 +255,7 @@ export const SalonController = {
   updateSalon,
   updateSalonLocation,
   deleteSalon,
+  photoUploadSignature,
+  newSalonPhotoUploadSignature,
+  discardPhotoUploads,
 };
