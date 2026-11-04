@@ -71,6 +71,7 @@ const loadPlatformCaps = async () => {
     flags,
     maxRadiusKm,
     travelFeeMaxMinor,
+    minOrderEnabled,
     minOrderMinMinor,
     minOrderMaxMinor,
     dayStartBound,
@@ -81,6 +82,7 @@ const loadPlatformCaps = async () => {
     loadHomeFlags(),
     getSetting("homeService.maxRadiusKm"),
     getSetting("homeService.travelFeeMaxMinor"),
+    getSetting("homeService.minOrderEnabled"),
     getSetting("homeService.minOrderMinMinor"),
     getSetting("homeService.minOrderMaxMinor"),
     getSetting("homeService.dayStartBound"),
@@ -92,6 +94,7 @@ const loadPlatformCaps = async () => {
     ...flags,
     maxRadiusKm,
     travelFeeMaxMinor,
+    minOrderEnabled,
     minOrderMinMinor,
     minOrderMaxMinor,
     dayStartBound,
@@ -461,7 +464,9 @@ export const updateProfile = async (user: AccessUser, ctx: AuditCtx, body: Updat
         : `Travel fee can be at most ৳${caps.travelFeeMaxMinor / 100}.`,
     );
   }
+  // While the platform has no minimum order the field is hidden and not checked.
   if (
+    caps.minOrderEnabled &&
     body.minOrderMinor !== undefined &&
     (body.minOrderMinor < caps.minOrderMinMinor || body.minOrderMinor > caps.minOrderMaxMinor)
   ) {

@@ -17,6 +17,10 @@ export const STEPS = [
   "summary",
   "payment",
   "booked",
+  // A home visit from the chosen salon (assistant.home.ts): services → day →
+  // time → a summary that hands off to /home-service/book for the address and
+  // the advance. Its picks live in `home`, not in the salon funnel's fields.
+  "home",
 ] as const;
 
 export type Step = (typeof STEPS)[number];
@@ -36,6 +40,16 @@ export const assistantStateSchema = z.object({
     .object({ lat: z.number(), lng: z.number(), label: z.string().max(80) })
     .optional(),
   lastQuery: z.string().max(300).optional(),
+  /** The home-visit draft at `salonId`: who it is for, then the services,
+   *  day and time as they are picked. Dropped with the salon. */
+  home: z
+    .object({
+      audience: z.enum(["LADIES", "GENTS"]),
+      offeringIds: z.array(z.string().uuid()).min(1).max(10).optional(),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      startAt: z.string().max(40).optional(),
+    })
+    .optional(),
   /**
    * What a typed message asked for that the funnel has not reached yet —
    * "tomorrow evening", "a haircut". Applied once, when the step it answers
@@ -170,7 +184,13 @@ const ALWAYS: ActionType[] = [
   "choose_salon",
   "wallet",
   "check_payment",
+  // "Have them come to my home instead" is a fair turn mid-funnel.
+  "home_book",
 ];
+
+/** The home-visit picks: each re-checks the draft it needs, so a stale tap is
+ *  answered rather than trusted. */
+const HOME: ActionType[] = ["home_book", "home_services", "home_date", "home_time"];
 
 /** What a tap may do from where the customer actually is. Anything else is a
  *  stale tab pressing an old button — answered, not thrown at. */
@@ -212,12 +232,15 @@ export const ALLOWED_ACTIONS: Record<Step, ActionType[]> = {
     "change_location",
     "book",
     "show_services",
+    "home_book",
     "restart",
     "back",
     "wallet",
     "check_payment",
     ...MANAGE,
   ],
+  // The salon funnel's doors stay open: "Book at the salon" from here is fine.
+  home: [...ALWAYS, ...HOME, "book", "show_services"],
   // Date and service may arrive in either order, so each of the two steps
   // accepts both answers — see `nextStep` in assistant.actions.ts.
   date: [...ALWAYS, "book", "show_services", "choose_date", "choose_service"],
@@ -278,6 +301,7 @@ export const BACK_TARGET: Partial<
   Record<Step, "salon" | "date" | "service" | "counter" | "slot">
 > = {
   date: "salon",
+  home: "salon",
   service: "date",
   counter: "service",
   slot: "counter",
@@ -305,14 +329,15 @@ type ClearableField =
   | "staffId"
   | "quoteToken"
   | "holdExtended"
-  | "rescheduleOf";
+  | "rescheduleOf"
+  | "home";
 
 /** A quote and its hold extension belong to one slot, so anything that drops
  *  the slot drops them too. */
 const QUOTE: ClearableField[] = ["staffId", "quoteToken", "holdExtended"];
 
 const CLEARED_BY: Record<(typeof DOWNSTREAM)[number], ClearableField[]> = {
-  salonId: ["serviceId", "date", "counterId", "slotId", "rescheduleOf", ...QUOTE],
+  salonId: ["serviceId", "date", "counterId", "slotId", "rescheduleOf", "home", ...QUOTE],
   serviceId: ["counterId", "slotId", ...QUOTE],
   date: ["counterId", "slotId", ...QUOTE],
   counterId: ["slotId", ...QUOTE],

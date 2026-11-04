@@ -189,7 +189,7 @@ const runChecks = async (actor: Actor, body: QuoteBody) => {
   if ((salon.isTest && !customer.isTest) || !isBranchBookable(profile, salon, cart.audience, flags, now)) {
     throw fail(StatusCodes.NOT_FOUND, "Home service isn't available here right now.", "HOME_SERVICE_UNAVAILABLE");
   }
-  if (cart.subtotalMinor < profile.minOrderMinor) {
+  if ((await getSetting("homeService.minOrderEnabled")) && cart.subtotalMinor < profile.minOrderMinor) {
     throw fail(StatusCodes.BAD_REQUEST, "Add a little more to reach this salon's minimum order.", "BELOW_MIN_ORDER", {
       minOrderMinor: profile.minOrderMinor,
     });

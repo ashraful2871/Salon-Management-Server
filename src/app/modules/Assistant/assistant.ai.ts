@@ -154,6 +154,8 @@ const TOOLS_BY_STEP: Record<Step, ToolName[]> = {
   summary: [],
   payment: [],
   booked: ["search_salons"],
+  // The home-visit picks are taps; typed text there may still search salons.
+  home: ["search_salons"],
 };
 
 const toolsFor = (step: Step, signedIn: boolean): ToolName[] => [

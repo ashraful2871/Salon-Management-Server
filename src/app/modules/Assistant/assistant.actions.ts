@@ -5,7 +5,10 @@ import { formatBDT } from "../../utils/money";
 import { getSettingSync } from "../../utils/settings";
 import { hasSlotStarted, slotStartsAt } from "../../utils/slotTime";
 import { isOpenNow } from "../AI-Suggestion/ai.search";
-import { resolveDepositMinor } from "../Appointment/appointment.deposit";
+import {
+  depositsEnabled,
+  resolveDepositMinor,
+} from "../Appointment/appointment.deposit";
 import {
   AppointmentService,
   type BookingQuote,
@@ -83,6 +86,7 @@ import {
   rescheduleInfo,
   withReturningExtras,
 } from "./assistant.manage";
+import { AssistantHome } from "./assistant.home";
 import { AssistantValidation, type SearchFilters } from "./assistant.validation";
 import { rankSalons } from "../AI-Suggestion/ai.search";
 import { CATEGORY_LABELS } from "../AI-Suggestion/ai.constants";
@@ -126,7 +130,13 @@ export type AssistantAction =
   | { type: "cancel_confirm"; appointmentId: string }
   | { type: "reschedule"; appointmentId: string }
   | { type: "book_usual"; appointmentId: string }
-  | { type: "rate_booking"; appointmentId: string; rating: number };
+  | { type: "rate_booking"; appointmentId: string; rating: number }
+  // A home visit from the chosen salon (assistant.home.ts). `home_book` asks
+  // who it is for when the branch serves both sides, then shows the menu.
+  | { type: "home_book"; audience?: "LADIES" | "GENTS" }
+  | { type: "home_services"; offeringIds: string[] }
+  | { type: "home_date"; date: string }
+  | { type: "home_time"; startAt: string };
 
 export type ChangeTarget = "salon" | "date" | "service" | "counter" | "slot";
 
@@ -646,15 +656,20 @@ const handleChooseSalon = async (
   if (!salon) return salonGone(state);
 
   const card = toCard(salon as unknown as SalonRow);
+  // With booking payments off the salon's own deposit policy does not apply,
+  // so the card shows none rather than a figure nobody will be charged.
+  const takesDeposits = depositsEnabled();
   const policy: SalonPolicy = {
-    depositMinor: salon.depositMinor,
-    depositPercent: salon.depositPercent,
+    depositMinor: takesDeposits ? salon.depositMinor : 0,
+    depositPercent: takesDeposits ? salon.depositPercent : null,
     cancellationWindowMin: salon.cancellationWindowMin,
     phone: salon.phone,
     address: salon.address,
   };
 
   const bookable = salon.services.length > 0 && salon.counters.length > 0;
+  // The branch also comes to homes: offered beside the salon booking.
+  const atHome = await AssistantHome.homeBookable(salon);
 
   const actions: QuickReply[] = [
     ...(bookable
@@ -665,6 +680,20 @@ const handleChooseSalon = async (
             style: "primary",
             icon: "calendar",
           },
+        ] as QuickReply[])
+      : []),
+    ...(atHome
+      ? ([
+          {
+            label: "Book at home",
+            action: { type: "home_book" },
+            style: bookable ? undefined : "primary",
+            icon: "home",
+          },
+        ] as QuickReply[])
+      : []),
+    ...(bookable
+      ? ([
           {
             label: "See services",
             action: { type: "show_services" },
@@ -679,11 +708,15 @@ const handleChooseSalon = async (
 
   return {
     text: bookable
-      ? `${salon.name}, ${salon.area}. Tap Book appointment and I will find you a time.`
-      : `${salon.name}, ${salon.area}. ${COPY.notBookable}`,
+      ? atHome
+        ? `${salon.name}, ${salon.area}. Book at the salon, or have an expert come to your home.`
+        : `${salon.name}, ${salon.area}. Tap Book appointment and I will find you a time.`
+      : atHome
+        ? `${salon.name}, ${salon.area}. This salon takes home visits here: tap Book at home.`
+        : `${salon.name}, ${salon.area}. ${COPY.notBookable}`,
     blocks: [
       salonDetails(card, policy, actions),
-      ...(bookable ? [] : [notice("info", COPY.notBookable)]),
+      ...(bookable || atHome ? [] : [notice("info", COPY.notBookable)]),
     ],
     state: advance(state, { step: "salon", salonId: salon.id }),
   };
@@ -1227,11 +1260,16 @@ const handleBook = async (
   }
 
   const cheapest = Math.min(...salon.services.map((s) => s.priceMinor));
+  // Free booking (booking.depositsEnabled off): no deposit, so no wallet card,
+  // no top-up chip and no frozen-wallet stop - the wallet plays no part.
+  const free = !depositsEnabled();
   const depositFromMinor = resolveDepositMinor(salon, cheapest);
   const wallet = await readWallet(ctx.userId);
   const shortfallMinor = Math.max(depositFromMinor - wallet.availableMinor, 0);
 
-  const opening: Block[] = [walletBlock(wallet, depositFromMinor, true)];
+  const opening: Block[] = free
+    ? []
+    : [walletBlock(wallet, depositFromMinor, true)];
 
   // A guest is shown the times anyway and signs in at the summary. Making them
   // log in first loses the customer who only wanted to know if 6 pm was free.
@@ -1241,7 +1279,7 @@ const handleBook = async (
 
   // An owner, admin or stylist would otherwise walk all the way to a time
   // only for `quoteBooking` to refuse it, being offered a top-up on the way.
-  if (wallet.notCustomer || wallet.isFrozen) {
+  if (wallet.notCustomer || (wallet.isFrozen && !free)) {
     const text =
       wallet.notCustomer ??
       `Your wallet is on hold, so I cannot start a booking at ${salon.name} yet.`;
@@ -1268,7 +1306,9 @@ const handleBook = async (
     state,
     salon,
     `${salon.name}.`,
-    wallet.signedIn && shortfallMinor > 0 ? [topupChip(shortfallMinor)] : [],
+    !free && wallet.signedIn && shortfallMinor > 0
+      ? [topupChip(shortfallMinor)]
+      : [],
   );
 
   return { ...dates, blocks: [...opening, ...dates.blocks] };
@@ -1374,7 +1414,9 @@ const handleChooseService = async (
   return advanceFunnel(
     chosen,
     salon,
-    `${service.name}, ${formatBDT(service.priceMinor)} with a ${formatBDT(depositMinor)} deposit.`,
+    depositMinor > 0
+      ? `${service.name}, ${formatBDT(service.priceMinor)} with a ${formatBDT(depositMinor)} deposit.`
+      : `${service.name}, ${formatBDT(service.priceMinor)}, paid at the salon - booking is free.`,
   );
 };
 
@@ -1882,6 +1924,8 @@ export const renderCurrent = async (
     case "slot":
     case "summary":
       return renderSlots(state, salon, "");
+    case "home":
+      return AssistantHome.renderHome(state, {});
     default:
       return handleStart(state);
   }
@@ -2189,5 +2233,13 @@ const dispatchAction = async (
       return AssistantManage.handleBookUsual(state, ctx, action);
     case "rate_booking":
       return AssistantManage.handleRateBooking(state, ctx, action);
+    case "home_book":
+      return AssistantHome.handleHomeBook(state, ctx, action);
+    case "home_services":
+      return AssistantHome.handleHomeServices(state, ctx, action);
+    case "home_date":
+      return AssistantHome.handleHomeDate(state, ctx, action);
+    case "home_time":
+      return AssistantHome.handleHomeTime(state, ctx, action);
   }
 };

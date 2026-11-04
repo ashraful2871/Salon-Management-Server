@@ -88,6 +88,13 @@ const actionSchema = z.discriminatedUnion("type", [
     appointmentId: z.string().uuid(),
     rating: z.number().int().min(1).max(5),
   }),
+  z.object({ type: z.literal("home_book"), audience: z.enum(["LADIES", "GENTS"]).optional() }),
+  z.object({
+    type: z.literal("home_services"),
+    offeringIds: z.array(z.string().uuid()).min(1).max(10),
+  }),
+  z.object({ type: z.literal("home_date"), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
+  z.object({ type: z.literal("home_time"), startAt: z.string().datetime({ offset: true }) }),
 ]);
 
 // Fails the build if the schema and the handler union ever drift apart.

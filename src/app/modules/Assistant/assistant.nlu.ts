@@ -274,6 +274,28 @@ const interpretUnsafe = async (
   if (has(text, /\b(another|other|different|onno|arekta|anno)\s+(salon|parlou?r|place|jaygay?)\b|অন্য (সেলুন|পার্লার)/)) {
     return { action: { type: "find_nearby" }, confidence: "high" };
   }
+  // "Home service", "come to my home", "basay", "বাসায়": a home visit from the
+  // salon in view. Without one there is nothing to book at home yet.
+  if (
+    has(
+      text,
+      /\b(home service|home visit|at home|to my home|come home|basay|bashay|bashai|basai|barite|bari te)\b|বাসায়|বাড়িতে|হোম সার্ভিস/,
+    )
+  ) {
+    if (!state.salonId) {
+      return {
+        action: null,
+        confidence: "high",
+        note: "Pick a salon first, then tap Book at home — I'll show what it does at home and the advance.",
+      };
+    }
+    const audience = has(text, /\b(ladies|lady|female|women|woman|mohila|meyeder|meye)\b|মহিলা|মেয়ে/)
+      ? "LADIES"
+      : has(text, /\b(gents|gent|male|men|man|chele|purush)\b|ছেলে|পুরুষ/)
+        ? "GENTS"
+        : undefined;
+    return { action: { type: "home_book", ...(audience ? { audience } : {}) }, confidence: "high" };
+  }
   if (isPaymentQuestion(text)) {
     return { action: { type: "check_payment" }, confidence: "high" };
   }

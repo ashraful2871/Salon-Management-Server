@@ -7,6 +7,10 @@ import { homeSidesOf } from "../HomeService/home.public";
 import { countNearbySalons, findNearbySalonIds } from "./salon.geo";
 import { upcomingClosures } from "./salon.closure";
 import { SalonListQuery } from "./salon.validation";
+import { SalonPhotos } from "./salon.photos";
+import { AuditCtx, auditTx } from "../../utils/audit";
+import { dhakaToday, toCalendarDate } from "../Assistant/assistant.availability";
+import { ACTIVE_BOOKING_STATUSES } from "../HomeService/home.expertSetup";
 import {
   AccessUser,
   OwnerPermission,
@@ -562,6 +566,11 @@ const updateSalon = async (user: AccessUser, salonId: string, payload: any) => {
   // services) changed, so settings-only saves cost no Gemini call.
   scheduleReindex(salonId, "salon.updated");
 
+  // Photos taken off the list are deleted from Cloudinary (own uploads only).
+  if (Array.isArray(payload.images)) {
+    SalonPhotos.destroyRemovedPhotos(salonId, salon.images, result.images);
+  }
+
   return result;
 };
 
@@ -597,8 +606,18 @@ const updateSalonLocation = async (
   return result;
 };
 
-/** Owners only; admins delete through DELETE /admin/salons/:id. */
-const deleteSalon = async (user: AccessUser, salonId: string) => {
+/**
+ * Owners only; admins delete through DELETE /admin/salons/:id. Soft delete:
+ * bookings, reviews and money records stay. The owner types the salon's name,
+ * and the delete is refused while customers still hold upcoming bookings or a
+ * home visit is under way, so nobody turns up at a closed branch.
+ */
+const deleteSalon = async (
+  user: AccessUser,
+  ctx: AuditCtx | undefined,
+  salonId: string,
+  input: { confirmName: string },
+) => {
   const salon = await prisma.salon.findUnique({
     where: {
       id: salonId,
@@ -616,13 +635,51 @@ const deleteSalon = async (user: AccessUser, salonId: string) => {
     throw new ApiError(StatusCodes.NOT_FOUND, "Not found");
   }
 
+  if (input.confirmName.trim().toLowerCase() !== salon.name.trim().toLowerCase()) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "The name you typed does not match this salon");
+  }
+
+  const [upcoming, homeActive] = await Promise.all([
+    prisma.appointment.count({
+      where: {
+        salonId,
+        status: { in: ["PENDING", "CONFIRMED"] },
+        appointmentDate: { gte: toCalendarDate(dhakaToday()) },
+      },
+    }),
+    prisma.homeBooking.count({ where: { salonId, status: { in: ACTIVE_BOOKING_STATUSES } } }),
+  ]);
+  if (upcoming > 0 || homeActive > 0) {
+    const parts = [
+      upcoming > 0 && `${upcoming} upcoming booking${upcoming === 1 ? "" : "s"}`,
+      homeActive > 0 && `${homeActive} active home booking${homeActive === 1 ? "" : "s"}`,
+    ].filter(Boolean);
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      `This salon still has ${parts.join(" and ")}. Finish or cancel them first, then delete.`,
+    );
+  }
+
   // Soft delete
-  await prisma.salon.update({
-    where: { id: salonId },
-    data: { isDeleted: true },
+  await prisma.$transaction(async (tx) => {
+    await tx.salon.update({
+      where: { id: salonId },
+      data: { isDeleted: true, statusChangedAt: new Date(), statusChangedById: user.userId },
+    });
+    await auditTx(tx, ctx, {
+      action: "salon.delete",
+      entityType: "salon",
+      entityId: salonId,
+      salonId,
+      before: { status: salon.status, isDeleted: false },
+      after: { isDeleted: true },
+    });
   });
 
-  return null;
+  // Drops it from the AI index.
+  scheduleReindex(salonId, "salon.delete");
+
+  return { id: salonId, isDeleted: true };
 };
 
 export const SalonService = {

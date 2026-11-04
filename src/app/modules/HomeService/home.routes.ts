@@ -19,6 +19,7 @@ router.get("/experts", ...publicRead, HomeController.publicExperts);
 router.get("/search", optionalAuth(), homeSearchLimiter, HomeController.publicSearch);
 router.get("/experts/:id", ...publicRead, HomeController.publicExpert);
 router.get("/experts/:id/reviews", ...publicRead, validateRequest(HomeValidation.expertReviews), HomeController.publicExpertReviews);
+router.get("/salons/:salonId/menu", ...publicRead, HomeController.publicSalonMenu);
 router.get("/availability", ...publicRead, HomeController.publicAvailability);
 router.get("/availability/days", ...publicRead, HomeController.publicAvailabilityDays);
 
