@@ -779,6 +779,16 @@ export const SETTINGS = {
     help: "How long a new home booking holds its time while the customer pays.",
     tier: 3,
   }),
+  "homeService.minOrderEnabled": def<boolean>({
+    ...bool(),
+    // Off at launch: any single service can be booked (decided 2026-11-04).
+    default: false,
+    group: "homeService",
+    label: "Minimum home order",
+    help: "On, each branch's own minimum order applies to new home bookings. Off, there is no minimum.",
+    public: true,
+    tier: 3,
+  }),
   "homeService.minOrderMinMinor": def<number>({
     ...int(0, 1_000_000),
     default: 20_000,

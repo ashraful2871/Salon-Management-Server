@@ -2,7 +2,7 @@ import { HomeAudience, HomeCategory, Prisma } from "@prisma/client";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../../Error/error";
 import prisma from "../../shared/prisma";
-import { getSetting } from "../../utils/settings";
+import { getSetting, getSettingSync } from "../../utils/settings";
 import { incrementMetrics, recordSearchTerm } from "../Analytics/analytics.capture";
 import { addDays, dhakaDay, isDay } from "../Analytics/analytics.days";
 import { SALON_GEOG } from "../Salon/salon.geo";
@@ -218,7 +218,8 @@ const branchView = (b: Branch) => ({
   rating: b.salon.rating,
   totalReviews: b.salon.totalReviews,
   travelFeeMinor: b.travelFeeMinor,
-  minOrderMinor: b.minOrderMinor,
+  // 0 while the platform has no minimum order (`homeService.minOrderEnabled`).
+  minOrderMinor: getSettingSync("homeService.minOrderEnabled") ? b.minOrderMinor : 0,
 });
 
 const liveOffering = (audience: HomeAudience): Prisma.HomeServiceOfferingWhereInput => ({
