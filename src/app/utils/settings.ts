@@ -254,6 +254,15 @@ export const SETTINGS = {
     help: "A changed payout account is not paid to until this long after the change.",
     tier: 3,
   }),
+  "booking.depositsEnabled": def<boolean>({
+    ...bool(),
+    default: false,
+    group: "money",
+    label: "Take booking deposits",
+    public: true,
+    help: "Off: salon bookings are free - no deposit is held and nothing is paid in the app; the whole bill is paid at the salon. On: each salon's deposit policy (and pay-in-full, if enabled) applies again. Home service is not affected.",
+    tier: 3,
+  }),
   "booking.depositMinMinor": def<number>({
     ...int(0, 100000),
     default: 2000,
@@ -632,7 +641,8 @@ export const SETTINGS = {
   }),
   "homeService.gentsEnabled": def<boolean>({
     ...bool(),
-    default: true,
+    // Off at launch: Home Service opens with Ladies only (decided 2026-11-04).
+    default: false,
     group: "flags",
     label: "Gents at Home",
     help: "Off hides the Gents side and stops new Gents home bookings.",

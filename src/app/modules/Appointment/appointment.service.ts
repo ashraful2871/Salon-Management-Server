@@ -630,22 +630,27 @@ const quoteBooking = async (
   // onto the appointment now, so a later price or policy change cannot rewrite
   // a deal the customer already agreed to.
   const totalMinor = service.priceMinor;
-  const depositMinor = AppointmentDeposit.resolveDepositMinor(
-    salon,
-    totalMinor,
-  );
+  // Read async first so the sync read inside resolveDepositMinor is fresh.
+  const paymentsOn = await getSetting("booking.depositsEnabled");
+  const depositMinor = paymentsOn
+    ? AppointmentDeposit.resolveDepositMinor(salon, totalMinor)
+    : 0;
 
   // Paying the whole bill now (owner Phase 15): the platform switch and the
   // salon's opt-in must both be on. Asking when it is off is a 400, not a
-  // silent deposit-only booking the customer did not choose.
+  // silent deposit-only booking the customer did not choose. With booking
+  // payments off (booking.depositsEnabled) nothing is paid in the app at all.
   const prepayAllowed =
+    paymentsOn &&
     salon.acceptsPrepay &&
     totalMinor > depositMinor &&
     (await getSetting("booking.prepayEnabled"));
   if (payload.payInFull && !prepayAllowed) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      "This salon does not take full payment in the app. Pay the deposit and the rest at the salon.",
+      paymentsOn
+        ? "This salon does not take full payment in the app. Pay the deposit and the rest at the salon."
+        : "Bookings are free right now - nothing is paid in the app. Pay at the salon.",
     );
   }
   const prepaidMinor = payload.payInFull ? totalMinor - depositMinor : 0;
@@ -758,7 +763,7 @@ const bookAppointment = async (
         ? `${formatBDT(totalMinor)} (paid in full in the app, nothing due at the salon)`
         : depositMinor > 0
           ? `${formatBDT(totalMinor)} (${formatBDT(depositMinor)} deposit held, ${formatBDT(totalMinor - depositMinor)} due at the salon)`
-          : formatBDT(totalMinor),
+          : `${formatBDT(totalMinor)} (free booking - pay at the salon)`,
       {
         token: appointment.token,
         serialNumber: appointment.serialNumber,

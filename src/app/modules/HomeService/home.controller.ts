@@ -184,6 +184,10 @@ const publicExpert = catchAsync(async (req: Request, res: Response) => {
   ok(res, "Home expert", await Public.getExpert(viewerOf(req), String(req.params.id), req.query));
 });
 
+const publicSalonMenu = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Home menu", await Public.getSalonMenu(viewerOf(req), String(req.params.salonId), req.query));
+});
+
 const publicAvailability = catchAsync(async (req: Request, res: Response) => {
   const data = await Public.getAvailability(viewerOf(req), req.query);
   res.set("Cache-Control", "no-store");
@@ -461,6 +465,7 @@ export const HomeController = {
   publicExperts,
   publicSearch,
   publicExpert,
+  publicSalonMenu,
   publicAvailability,
   publicAvailabilityDays,
   getProfile,

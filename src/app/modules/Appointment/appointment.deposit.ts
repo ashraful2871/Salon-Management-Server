@@ -63,6 +63,13 @@ const latePenaltyMinor = (depositMinor: number) =>
   );
 
 /**
+ * The platform switch for salon booking payments (booking.depositsEnabled).
+ * Off - the default - means bookings are free: no deposit and no pay-in-full.
+ */
+export const depositsEnabled = (): boolean =>
+  getSettingSync("booking.depositsEnabled");
+
+/**
  * `depositPercent` wins when the salon set one - for a bridal or keratin
  * booking a flat BDT 30 is not a deterrent. Either way the result is clamped
  * to the platform band, and never exceeds the bill itself.
@@ -71,6 +78,10 @@ export const resolveDepositMinor = (
   salon: Pick<Salon, "depositMinor" | "depositPercent">,
   servicePriceMinor: number,
 ): number => {
+  // Free booking: with the platform switch off no salon takes a deposit,
+  // whatever its own policy says. Every hold, release and forfeit below is
+  // keyed on a non-zero deposit, so a 0 here makes the whole chain a no-op.
+  if (!depositsEnabled()) return 0;
   if (servicePriceMinor <= 0) return 0;
 
   const raw =
@@ -324,7 +335,12 @@ export const settleReleasedTx = async (
     });
   }
 
-  if (options.goodwill) {
+  // A free booking (booking payments switched off, nothing held) moves no
+  // money at all - not even the salon-funded goodwill credit. A booking that
+  // did hold a deposit before the switch went off still gets it.
+  const freeBooking = heldMinor(appointment) <= 0 && !depositsEnabled();
+
+  if (options.goodwill && !freeBooking) {
     const goodwillMinor = await getSetting("booking.goodwillCreditMinor");
     await WalletService.mutate(
       {

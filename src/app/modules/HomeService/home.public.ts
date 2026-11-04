@@ -854,6 +854,88 @@ export const getExpert = async (viewer: Viewer, id: string, q: Query) => {
   };
 };
 
+// ---------------------------------------------------------------------------
+// GET /salons/:salonId/menu
+// ---------------------------------------------------------------------------
+
+/**
+ * One branch's home menu for `audience`: what a customer picks from when they
+ * choose "At home" on the salon's own page or in the chat. Every service is
+ * offered by at least one eligible expert, and lists who does it, so the
+ * caller can start the booking with "any available expert" on an expert who
+ * covers the whole cart. Prices and the advance share are the ones the quote
+ * will use (`homeService.advancePercent`, the clamped travel fee); the quote
+ * stays the authority.
+ */
+export const getSalonMenu = async (viewer: Viewer, salonIdRaw: string, q: Query) => {
+  const salonId = idOf(salonIdRaw, "salonId");
+  const audience = audienceOf(q);
+  const point = pointOf(q, false);
+  const branch = await bookableBranch(salonId, audience, await viewerIsTest(viewer));
+
+  const experts = await prisma.homeExpert.findMany({
+    where: {
+      salonId,
+      ...eligibleExpertWhere(audience),
+      offerings: { some: { offering: liveOffering(audience) } },
+    },
+    select: {
+      ...EXPERT_CARD_SELECT,
+      offerings: { where: { offering: liveOffering(audience) }, select: { offeringId: true } },
+    },
+    orderBy: [{ rating: "desc" }, { totalReviews: "desc" }, { id: "asc" }],
+  });
+  if (!experts.length) throw unavailable();
+
+  const offeredIds = [...new Set(experts.flatMap((e) => e.offerings.map((o) => o.offeringId)))];
+  const [offerings, reach, advancePercent, travelFeeMaxMinor] = await Promise.all([
+    prisma.homeServiceOffering.findMany({
+      where: { id: { in: offeredIds }, salonId, ...liveOffering(audience) },
+      select: {
+        id: true,
+        category: true,
+        name: true,
+        description: true,
+        kitNote: true,
+        durationMin: true,
+        priceMinor: true,
+        images: true,
+      },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    }),
+    reachOf(branch, point),
+    getSetting("homeService.advancePercent"),
+    getSetting("homeService.travelFeeMaxMinor"),
+  ]);
+  if (!offerings.length) throw unavailable();
+
+  const doneBy = (offeringId: string) =>
+    experts.filter((e) => e.offerings.some((o) => o.offeringId === offeringId)).map((e) => e.id);
+
+  return {
+    salon: {
+      ...branchView(branch),
+      // What the quote will charge: a fee saved above a since-lowered cap is clamped.
+      travelFeeMinor: Math.max(0, Math.min(branch.travelFeeMinor, travelFeeMaxMinor)),
+    },
+    audience,
+    advancePercent,
+    distanceKm: reach.distanceKm,
+    servesYou: reach.servesYou,
+    menu: offerings.map(({ images, ...o }) => ({ ...o, image: images[0] ?? null, expertIds: doneBy(o.id) })),
+    experts: experts.map((e) => ({
+      id: e.id,
+      name: e.staff.user.name,
+      photo: e.staff.user.profilePhoto,
+      headline: e.headline,
+      rating: e.rating,
+      totalReviews: e.totalReviews,
+      completedJobs: e.completedJobs,
+      offeringIds: e.offerings.map((o) => o.offeringId),
+    })),
+  };
+};
+
 /** GET /experts/:id/reviews?page: only for an expert the public can see. */
 export const getExpertReviews = async (id: string, q: Query) => {
   const expertId = idOf(id, "id");

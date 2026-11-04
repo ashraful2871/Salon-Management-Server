@@ -186,7 +186,55 @@ export type Block =
       methods: string[];
       /** "Top up & book" is offered: a live, held summary is behind this. */
       canAutoConfirm: boolean;
-    };
+    }
+  | HomeServicePickerBlock
+  | HomeSummaryBlock;
+
+/** A home visit's menu at the chosen salon: several may be picked, then one
+ *  tap sends `home_services` with the ids. */
+export type HomeServicePickerBlock = {
+  type: "home_service_picker";
+  salonId: string;
+  salonName: string;
+  audience: "LADIES" | "GENTS";
+  /** `homeService.advancePercent`: the share paid up front. */
+  advancePercent: number;
+  /** Already clamped to the platform cap. */
+  travelFeeMinor: number;
+  minOrderMinor: number;
+  /** Pre-ticked: what this draft already holds (e.g. after "Change services"). */
+  selected: string[];
+  services: Array<{
+    id: string;
+    name: string;
+    category: string;
+    priceMinor: number;
+    durationMin: number;
+    kitNote: string | null;
+  }>;
+};
+
+/** The priced home visit, before the address. The address, the disclaimer and
+ *  the advance payment happen on the booking page `handoffUrl` opens. */
+export type HomeSummaryBlock = {
+  type: "home_summary";
+  salon: { id: string; name: string; area: string };
+  audience: "LADIES" | "GENTS";
+  services: Array<{ id: string; name: string; priceMinor: number; durationMin: number }>;
+  date: string;
+  dateLabel: string;
+  startAt: string;
+  timeLabel: string;
+  subtotalMinor: number;
+  travelFeeMinor: number;
+  totalMinor: number;
+  advancePercent: number;
+  advanceMinor: number;
+  balanceMinor: number;
+  /** /home-service/book at the address step, with the cart, day and time. */
+  handoffUrl: string;
+  signedIn: boolean;
+};
 
 /** `icon` is a name ("map-pin", "scissors", "wallet"), never markup — the
  *  frontend maps it to a Lucide icon. */
