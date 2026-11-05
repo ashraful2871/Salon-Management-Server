@@ -11,7 +11,7 @@ import { addDays, dhakaDay, isDay } from "../Analytics/analytics.days";
 import { writeJournal } from "../Settlement/settlement.service";
 import { lockStaff } from "../Staff/staff.schedule";
 import { WalletService } from "../Wallet/wallet.service";
-import { availableFor, expertCanTake } from "./home.availability";
+import { availableFor, computeSlots, expertCanTake, loadExpertDays, NotFreeReason, whyNotFree } from "./home.availability";
 import { Actor, expireStaleOf, getBooking, isContention, isExclusionViolation } from "./home.booking";
 import { ACTIVE_BOOKING_STATUSES } from "./home.expertSetup";
 import { homeCommissionMinor } from "./home.money";
@@ -679,33 +679,108 @@ export const reassign = async (user: AccessUser, ctx: AuditCtx, id: string, expe
   return getBoardBooking(id);
 };
 
-/** Who could take a CONFIRMED visit: the same checks as `moveToExpertTx`, for everyone at once. */
+export type CandidateReason =
+  | "CURRENT"
+  | "NOT_VERIFIED"
+  | "SUSPENDED"
+  | "PAUSED"
+  | "MISSING_SERVICE"
+  | NotFreeReason;
+
+/**
+ * Every expert of the branch on the visit's side, each with whether they can
+ * take this CONFIRMED visit and, if not, why — so the salon sees the whole
+ * team, not only the free few. "Available" is the same test as
+ * `moveToExpertTx` (verified, active, does every item, `computeSlots` offers
+ * the start as of the booking, this visit left out), so whoever is marked
+ * available can be picked; assign / reassign still check again under lock.
+ * The other side is never listed: the gender CHECKs refuse it outright.
+ */
 export const reassignCandidates = async (user: AccessUser, id: string) => {
   const b = await loadBoardBooking(user, id);
   if (b.status !== HomeBookingStatus.CONFIRMED) throw invalidState("Only a confirmed visit that hasn't started can be reassigned.");
 
+  const offeringIds = b.items.map((i) => i.offeringId);
+  const [offerings, experts] = await Promise.all([
+    prisma.homeServiceOffering.findMany({
+      where: { id: { in: offeringIds } },
+      select: { id: true, name: true, durationMin: true },
+    }),
+    prisma.homeExpert.findMany({
+      where: { salonId: b.salonId, audience: b.audience, removedAt: null, staff: { isDeleted: false } },
+      select: {
+        id: true,
+        rating: true,
+        completedJobs: true,
+        isActive: true,
+        verification: true,
+        staff: { select: { user: { select: { name: true, profilePhoto: true } } } },
+        offerings: { where: { offeringId: { in: offeringIds } }, select: { offeringId: true } },
+      },
+    }),
+  ]);
+  const offeringName = new Map(offerings.map((o) => [o.id, o.name]));
+  const durationMin = offerings.reduce((s, o) => s + o.durationMin, 0);
+  // Gone or paused services count as missing: the visit can't move to someone who doesn't do them now.
+  const missingOf = (e: (typeof experts)[number]) => {
+    const has = new Set(e.offerings.map((o) => o.offeringId));
+    return offeringIds.filter((o) => !has.has(o));
+  };
+  // The visit is assigned to someone: that person stays listed, but can't be picked again.
+  const currentId = b.expertAssignedAt ? b.expertId : null;
+  // Unassigned, the hidden hold expert already has the time (`assignExpert` confirms them without a slot check).
+  const holdId = b.expertAssignedAt ? null : b.expertId;
+
+  const checkable = experts.filter(
+    (e) => e.id !== currentId && e.id !== holdId && e.isActive && e.verification === "VERIFIED" && !missingOf(e).length,
+  );
   const day = dhakaDay(b.startAt);
-  const { byDay } = await availableFor({
-    offeringIds: b.items.map((i) => i.offeringId),
-    days: [day],
-    now: b.createdAt,
-    excludeBookingId: b.id,
+  const loaded = await loadExpertDays(
+    checkable.map((e) => e.id),
+    [day],
+    { now: b.createdAt, excludeBookingId: b.id },
+  );
+
+  const rows = experts.map((e) => {
+    const base = {
+      id: e.id,
+      name: e.staff.user.name,
+      photo: e.staff.user.profilePhoto,
+      rating: e.rating,
+      completedJobs: e.completedJobs,
+    };
+    const no = (reasonCode: CandidateReason, reason: string) => ({ ...base, available: false, reasonCode, reason });
+
+    if (e.id === currentId) return no("CURRENT", "Has this visit now");
+    if (e.verification === "SUSPENDED") return no("SUSPENDED", "Suspended");
+    if (e.verification !== "VERIFIED") return no("NOT_VERIFIED", "Not verified yet");
+    if (!e.isActive) return no("PAUSED", "Not taking home visits");
+    const missing = missingOf(e);
+    if (missing.length) {
+      const names = missing.map((o) => offeringName.get(o) ?? "a service in this visit");
+      return no("MISSING_SERVICE", `Doesn't do ${names.join(", ")}`);
+    }
+    if (e.id === holdId) return { ...base, available: true, reasonCode: null, reason: null };
+    const input = loaded.get(e.id)?.get(day);
+    if (!input) return no("NOT_FREE", "Not free at that time");
+    const slotInput = { ...input, durationMin };
+    if (computeSlots(slotInput).some((s) => s.getTime() === b.startAt.getTime())) {
+      return { ...base, available: true, reasonCode: null, reason: null };
+    }
+    const why = whyNotFree(slotInput, b.startAt);
+    const text: Record<NotFreeReason, string> = {
+      DAY_FULL: `Already has ${input.jobsThatDay} home visit${input.jobsThatDay === 1 ? "" : "s"} that day (limit ${input.maxJobsPerDay})`,
+      OFF_SHIFT: "Not working at that time",
+      TIME_OFF: "On leave, or the salon is closed then",
+      BUSY: "Has another booking at that time",
+      NOT_FREE: "Not free at that time",
+    };
+    return no(why, text[why]);
   });
-  const free = byDay.get(day)?.find((s) => s.startAt.getTime() === b.startAt.getTime())?.expertIds ?? [];
-  // Unassigned, the expert holding the time is a fine choice too (they are free for it by construction).
-  const ids = b.expertAssignedAt ? free.filter((expertId) => expertId !== b.expertId) : [...new Set([b.expertId, ...free])];
-  const experts = await prisma.homeExpert.findMany({
-    where: { id: { in: ids }, isActive: true, removedAt: null },
-    select: { id: true, rating: true, completedJobs: true, staff: { select: { user: { select: { name: true, profilePhoto: true } } } } },
-    orderBy: { rating: "desc" },
-  });
-  return experts.map((e) => ({
-    id: e.id,
-    name: e.staff.user.name,
-    photo: e.staff.user.profilePhoto,
-    rating: e.rating,
-    completedJobs: e.completedJobs,
-  }));
+
+  // Free first, then by rating; the current expert last.
+  const rank = (r: (typeof rows)[number]) => (r.available ? 0 : r.reasonCode === "CURRENT" ? 2 : 1);
+  return rows.sort((x, y) => rank(x) - rank(y) || y.rating - x.rating || x.name.localeCompare(y.name));
 };
 
 /**

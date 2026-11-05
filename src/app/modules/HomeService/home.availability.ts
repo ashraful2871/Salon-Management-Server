@@ -77,6 +77,30 @@ export const computeSlots = (i: SlotInput): Date[] => {
   return [...out].sort((x, y) => x - y).map((t) => new Date(t));
 };
 
+export type NotFreeReason = "DAY_FULL" | "OFF_SHIFT" | "TIME_OFF" | "BUSY" | "NOT_FREE";
+
+/**
+ * Why `computeSlots` would not offer `startAt`, checked in the same order as
+ * its rules, for telling a salon why an expert can't take a visit. Only for
+ * display: whether a start is offered is always `computeSlots`'s answer.
+ */
+export const whyNotFree = (i: SlotInput, startAt: Date): NotFreeReason => {
+  if (i.jobsThatDay >= i.maxJobsPerDay) return "DAY_FULL";
+  const s = startAt.getTime();
+  const dur = i.durationMin * MIN_MS;
+  const buf = i.bufferMin * MIN_MS;
+  const inHours = i.working.some(
+    (w) =>
+      s >= Math.max(w.from.getTime(), i.homeHours.from.getTime()) &&
+      s + dur <= Math.min(w.to.getTime(), i.homeHours.to.getTime()),
+  );
+  if (!inHours || (i.lastStartAt && s > i.lastStartAt.getTime())) return "OFF_SHIFT";
+  const overlaps = (list: Interval[]) => list.some((b) => b.from.getTime() < s + dur + buf && b.to.getTime() > s - buf);
+  if (overlaps(i.closed)) return "TIME_OFF";
+  if (overlaps(i.busy)) return "BUSY";
+  return "NOT_FREE";
+};
+
 // ---------------------------------------------------------------------------
 // Labels
 // ---------------------------------------------------------------------------
