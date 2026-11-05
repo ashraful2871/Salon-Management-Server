@@ -5,7 +5,25 @@ import prisma from "../../shared/prisma";
 export const SALON_GEOG = Prisma.sql`ST_SetSRID(ST_MakePoint(s.longitude, s.latitude), 4326)::geography`;
 const escapeLike = (v: string) => `%${v.replace(/[\\%_]/g, "\\$&")}%`;
 
-type NearbyArgs = {
+/**
+ * The list filters every public salon query shares: the list (both paths),
+ * the map pins and the area facets, so a pin, an area count and a card always
+ * agree on what "ladies parlours that do facials" means.
+ */
+export type SalonListFilters = {
+  searchTerm?: string;
+  city?: string;
+  division?: string;
+  district?: string;
+  /** Exact and case-blind: the area facets hand out real area names. */
+  area?: string;
+  category?: string;
+  audience?: "LADIES" | "GENTS";
+  /** Only that audience's own salons, without the UNISEX ones. */
+  exactAudience?: boolean;
+};
+
+type NearbyArgs = SalonListFilters & {
   lat: number;
   lng: number;
   radiusKm: number;
@@ -14,29 +32,14 @@ type NearbyArgs = {
   sort: "distance" | "rating" | "newest";
   status?: string;
   agentArea?: string;
-  searchTerm?: string;
-  city?: string;
-  division?: string;
-  district?: string;
-  area?: string;
-  category?: string;
-  audience?: "LADIES" | "GENTS";
-  /** Only that audience's own salons, without the UNISEX ones. */
-  exactAudience?: boolean;
 };
 
 const originOf = (a: NearbyArgs) =>
   Prisma.sql`ST_SetSRID(ST_MakePoint(${a.lng}::float8, ${a.lat}::float8), 4326)::geography`;
 
-// Shared by the page query and the empty-page count so both see the same set.
-const nearbyWhere = (a: NearbyArgs) => {
-  const conds: Prisma.Sql[] = [
-    Prisma.sql`s."isDeleted" = false`,
-    Prisma.sql`s.latitude IS NOT NULL AND s.longitude IS NOT NULL`, // matches the partial-index predicate
-    Prisma.sql`ST_DWithin(${SALON_GEOG}, ${originOf(a)}, ${a.radiusKm * 1000}::float8)`,
-  ];
-  if (a.status) conds.push(Prisma.sql`s.status = ${a.status}::"SalonStatus"`);
-  if (a.agentArea) conds.push(Prisma.sql`s.area = ${a.agentArea}`);
+/** The SQL twin of the Prisma filters in SalonService.getAllSalons. */
+export const filterConds = (a: SalonListFilters): Prisma.Sql[] => {
+  const conds: Prisma.Sql[] = [];
   if (a.searchTerm) {
     const t = escapeLike(a.searchTerm);
     conds.push(
@@ -58,7 +61,21 @@ const nearbyWhere = (a: NearbyArgs) => {
     conds.push(Prisma.sql`s.division ILIKE ${escapeLike(a.division)}`);
   if (a.district)
     conds.push(Prisma.sql`s.district ILIKE ${escapeLike(a.district)}`);
-  if (a.area) conds.push(Prisma.sql`s.area ILIKE ${escapeLike(a.area)}`);
+  if (a.area)
+    conds.push(Prisma.sql`lower(trim(s.area)) = lower(${a.area.trim()})`);
+  return conds;
+};
+
+// Shared by the page query and the empty-page count so both see the same set.
+const nearbyWhere = (a: NearbyArgs) => {
+  const conds: Prisma.Sql[] = [
+    Prisma.sql`s."isDeleted" = false`,
+    Prisma.sql`s.latitude IS NOT NULL AND s.longitude IS NOT NULL`, // matches the partial-index predicate
+    Prisma.sql`ST_DWithin(${SALON_GEOG}, ${originOf(a)}, ${a.radiusKm * 1000}::float8)`,
+  ];
+  if (a.status) conds.push(Prisma.sql`s.status = ${a.status}::"SalonStatus"`);
+  if (a.agentArea) conds.push(Prisma.sql`s.area = ${a.agentArea}`);
+  conds.push(...filterConds(a));
   return Prisma.join(conds, " AND ");
 };
 
@@ -100,9 +117,15 @@ export const findSalonMarkers = async (
   maxLat: number,
   // The nearby map shows only what the list next to it can show.
   near?: { lat: number; lng: number; radiusKm: number },
+  // The list's own filters, so the pins are the salons the list would show.
+  filters: SalonListFilters = {},
 ) => {
   const withinReach = near
     ? Prisma.sql`AND ST_DWithin(${SALON_GEOG}, ST_SetSRID(ST_MakePoint(${near.lng}::float8, ${near.lat}::float8), 4326)::geography, ${near.radiusKm * 1000}::float8)`
+    : Prisma.empty;
+  const conds = filterConds(filters);
+  const filtered = conds.length
+    ? Prisma.sql`AND ${Prisma.join(conds, " AND ")}`
     : Prisma.empty;
   const rows = await prisma.$queryRaw<any[]>`
     SELECT s.id, s.name, s.latitude, s.longitude, s."locationAccuracy", s.rating, s."totalReviews",
@@ -114,7 +137,86 @@ export const findSalonMarkers = async (
       AND s.latitude  BETWEEN ${minLat}::float8 AND ${maxLat}::float8
       AND s.longitude BETWEEN ${minLng}::float8 AND ${maxLng}::float8
       ${withinReach}
+      ${filtered}
     ORDER BY s.rating DESC, s."totalReviews" DESC, s.id
     LIMIT 201`;
   return { markers: rows.slice(0, 200), truncated: rows.length > 200 };
+};
+
+export type SalonArea = {
+  area: string;
+  district: string;
+  division: string;
+  count: number;
+  /** The middle of its salons' pins; null when none has a pin. */
+  center: { lat: number; lng: number } | null;
+  /** [minLng, minLat, maxLng, maxLat] around its pins (the GET /salons/map order). */
+  bbox: [number, number, number, number] | null;
+};
+
+/**
+ * Every area that has a live salon matching the filters, with how many and
+ * where their pins are. The location filter is built from this rather than
+ * from a fixed list of places, so a new salon in a new area shows up in it
+ * on its own. Areas are grouped case- and space-blind (an owner may type
+ * " mirpur") and named by their most common spelling.
+ */
+export const findSalonAreas = async (
+  filters: Pick<SalonListFilters, "audience" | "exactAudience" | "category">,
+): Promise<SalonArea[]> => {
+  const conds = [
+    Prisma.sql`s."isDeleted" = false`,
+    Prisma.sql`s.status = 'ACTIVE'`,
+    Prisma.sql`trim(s.area) <> ''`,
+    Prisma.sql`upper(trim(s.area)) <> 'N/A'`,
+    ...filterConds(filters),
+  ];
+  const rows = await prisma.$queryRaw<
+    {
+      area: string;
+      district: string;
+      division: string;
+      count: number;
+      lat: number | null;
+      lng: number | null;
+      min_lat: number | null;
+      min_lng: number | null;
+      max_lat: number | null;
+      max_lng: number | null;
+    }[]
+  >`
+    SELECT mode() WITHIN GROUP (ORDER BY trim(s.area))     AS area,
+           mode() WITHIN GROUP (ORDER BY trim(s.district)) AS district,
+           mode() WITHIN GROUP (ORDER BY trim(s.division)) AS division,
+           COUNT(*)::int            AS count,
+           AVG(s.latitude)::float8  AS lat,
+           AVG(s.longitude)::float8 AS lng,
+           MIN(s.latitude)::float8  AS min_lat,
+           MIN(s.longitude)::float8 AS min_lng,
+           MAX(s.latitude)::float8  AS max_lat,
+           MAX(s.longitude)::float8 AS max_lng
+    FROM salons s
+    WHERE ${Prisma.join(conds, " AND ")}
+    GROUP BY lower(trim(s.area)), lower(trim(s.district))
+    ORDER BY count DESC, area ASC
+    LIMIT 500`;
+
+  const round = (n: number) => Math.round(n * 1e5) / 1e5;
+  return rows.map((r) => ({
+    area: r.area,
+    district: r.district,
+    division: r.division,
+    count: r.count,
+    center:
+      r.lat != null && r.lng != null
+        ? { lat: round(r.lat), lng: round(r.lng) }
+        : null,
+    bbox:
+      r.min_lat != null &&
+      r.min_lng != null &&
+      r.max_lat != null &&
+      r.max_lng != null
+        ? [round(r.min_lng), round(r.min_lat), round(r.max_lng), round(r.max_lat)]
+        : null,
+  }));
 };

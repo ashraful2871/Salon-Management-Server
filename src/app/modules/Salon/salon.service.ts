@@ -244,8 +244,10 @@ const getAllSalons = async (query: SalonListQuery, user?: any) => {
 
   const areaConditions: Prisma.SalonWhereInput[] = [
     ...(agentArea ? [{ area: agentArea }] : []),
+    // Exact, like the SQL path (filterConds): "Uttara" must not also bring
+    // in a future "Uttara Sector 7", or the area's count would lie.
     ...(area
-      ? [{ area: { contains: area, mode: Prisma.QueryMode.insensitive } }]
+      ? [{ area: { equals: area, mode: Prisma.QueryMode.insensitive } }]
       : []),
   ];
   if (category) {

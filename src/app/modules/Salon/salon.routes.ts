@@ -26,6 +26,9 @@ router.get("/my-salons", auth("SALON_OWNER", "BRANCH_MANAGER"), SalonController.
 
 // Must stay above "/:id", or "map" is read as a salon id.
 router.get("/map", mapLimiter, SalonController.getSalonMarkers);
+// The areas that have a live salon, with counts and pin bounds (the list
+// pages' location filter). Same budget as the map; answers are cached.
+router.get("/areas", mapLimiter, SalonController.getSalonAreas);
 
 // Signed direct-to-Cloudinary photo uploads. The URL is then saved through
 // PATCH /salons/:id (or sent with POST /salons for a new salon).
