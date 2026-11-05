@@ -7,6 +7,7 @@
  *   npm run seed:home                 dry run: which salons, how many rows
  *   npm run seed:home -- --apply      write it to the test branch
  *   npm run seed:home -- --remove     delete what --apply wrote
+ *   add --all to cover every eligible salon instead of PER_AREA per area
  *   add --env-db to any of them for the .env database (production)
  *
  * Everything written is marked with `statusReason = MARK` on the branch's
@@ -22,7 +23,9 @@ import prisma from "../app/shared/prisma";
 import { allowedSidesOf } from "../app/modules/HomeService/home.owner";
 
 const MARK = "seed:home-demo";
-const PER_AREA = 2;
+const all = process.argv.includes("--all");
+/** Branches per area; --all takes every salon with staff of a matching gender. */
+const PER_AREA = all ? Infinity : 2;
 const EXPERTS_PER_SIDE = 3;
 
 const apply = process.argv.includes("--apply");

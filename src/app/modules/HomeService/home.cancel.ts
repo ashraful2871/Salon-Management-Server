@@ -27,6 +27,7 @@ import { eligibleExperts, expertCanTake } from "./home.availability";
 import { Actor, expireStaleOf, getBooking, isContention, isExclusionViolation } from "./home.booking";
 import { getBoardBooking, moveToExpertTx, moveTx } from "./home.lifecycle";
 import { homeNotice } from "./home.notify";
+import { syncHomeRefund } from "./home.refund";
 import { isBranchBookable, loadHomeFlags } from "./home.owner";
 import type { HomePolicy } from "./home.policy";
 import type { RescheduleBody } from "./home.validation";
@@ -404,6 +405,8 @@ export const endVisitTx = async (tx: Tx, args: EndArgs) => {
 export const endVisit = async (args: EndArgs) => {
   const r = await prisma.$transaction((tx) => endVisitTx(tx, args), { maxWait: 10_000, timeout: 20_000 });
   homeNotice(r.bookingId, { kind: "ended", outcome: r.outcome, balanceReleasedMinor: r.balanceReleasedMinor });
+  // The returned part of the advance goes back to bKash / the card it came from.
+  if (r.outcome.refundMinor > 0) void syncHomeRefund(r.bookingId, r.outcome.reasonCode);
   return r;
 };
 
@@ -503,10 +506,10 @@ const cancelMessage = (o: Outcome, advanceMinor: number, balanceBackMinor: numbe
     o.reasonCode === "NOT_PAID"
       ? "Nothing was paid for this booking"
       : o.feeMinor === 0
-        ? `Free cancellation — ${formatBDT(o.refundMinor)} back to your wallet`
+        ? `Free cancellation — ${formatBDT(o.refundMinor)} refunded to your bKash or card`
         : o.refundMinor === 0
           ? `Your ${formatBDT(advanceMinor)} advance is non-refundable — you get ৳0 back`
-          : `${formatBDT(o.feeMinor)} of your ${formatBDT(advanceMinor)} advance is kept — ${formatBDT(o.refundMinor)} back to your wallet`;
+          : `${formatBDT(o.feeMinor)} of your ${formatBDT(advanceMinor)} advance is kept — ${formatBDT(o.refundMinor)} refunded to your bKash or card`;
   return balanceBackMinor > 0 ? `${head}. The ${formatBDT(balanceBackMinor)} balance you paid comes back too.` : head;
 };
 
@@ -994,6 +997,7 @@ export const reverseFeeTx = async (tx: Tx, id: string) => {
 export const resolveAppeal = async (ctx: AuditCtx | undefined, id: string, approve: boolean, note?: string) => {
   const r = await resolveAppealTx(ctx, id, approve, note);
   homeNotice(id, { kind: "appeal", approved: approve, refundedMinor: r.refundedMinor });
+  if (r.refundedMinor > 0) void syncHomeRefund(id, "appeal upheld");
   return r;
 };
 

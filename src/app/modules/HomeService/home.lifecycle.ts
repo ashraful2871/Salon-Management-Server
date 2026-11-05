@@ -48,7 +48,7 @@ export const EXPERT_LATE_FLAG = "EXPERT_LATE_FLAG";
 
 /** Statuses in which the customer still needs the start code. */
 const CODE_STATUSES: HomeBookingStatus[] = [HomeBookingStatus.CONFIRMED, HomeBookingStatus.EN_ROUTE, HomeBookingStatus.ARRIVED];
-/** Statuses in which the balance can still be paid from the wallet. */
+/** Statuses in which the balance could be paid from the wallet (kept for older visits; see payBalance). */
 const PAY_BALANCE_STATUSES: HomeBookingStatus[] = [
   HomeBookingStatus.CONFIRMED,
   HomeBookingStatus.EN_ROUTE,
@@ -404,40 +404,26 @@ export const completeJob = async (userId: string, id: string, body: CompleteJobB
 };
 
 // ---------------------------------------------------------------------------
-// Customer: pay the balance from the wallet
+// Customer: pay the balance in the app (switched off)
 // ---------------------------------------------------------------------------
 
+/**
+ * The wallet is not a way to pay any more, so the rest of a visit is paid at
+ * the door (cash or bKash to the salon). A visit that already paid its
+ * balance from the wallet keeps it (`balanceMethod = WALLET` is still settled
+ * and released everywhere); everyone else is told to pay at the door.
+ */
 export const payBalance = async (actor: Actor, id: string) => {
   if (actor.impersonating) {
     throw fail(StatusCodes.FORBIDDEN, "Read-only view: changes are not allowed while viewing as this user.", "IMPERSONATION_READ_ONLY");
   }
   const b = await prisma.homeBooking.findFirst({
     where: { id, customerId: actor.userId },
-    select: { id: true, status: true, balanceMinor: true, balanceMethod: true },
+    select: { id: true, balanceMethod: true },
   });
   if (!b) throw new ApiError(StatusCodes.NOT_FOUND, "Booking not found");
   if (b.balanceMethod === BalanceMethod.WALLET) return getBooking(actor.userId, id);
-  if (!PAY_BALANCE_STATUSES.includes(b.status)) throw fail(StatusCodes.CONFLICT, "The balance can't be paid now.", "INVALID_STATE");
-  if (b.balanceMinor <= 0) throw fail(StatusCodes.CONFLICT, "There is no balance left to pay.", "INVALID_STATE");
-
-  const wallet = await WalletService.getOrCreateWallet(actor.userId);
-  if (wallet.isFrozen) throw fail(StatusCodes.FORBIDDEN, "Your wallet is frozen. Contact support.", "WALLET_FROZEN");
-  const available = WalletService.availableOf(wallet);
-  if (available < b.balanceMinor) {
-    const short = new ApiError(StatusCodes.BAD_REQUEST, "Your wallet doesn't cover the balance. Top up first, or pay the expert at the door.");
-    short.details = { shortfallMinor: b.balanceMinor - Math.max(available, 0) };
-    throw short;
-  }
-
-  await prisma.$transaction(async (tx) => {
-    const n = await tx.homeBooking.updateMany({
-      where: { id, status: { in: PAY_BALANCE_STATUSES }, balanceMethod: null },
-      data: { balanceMethod: BalanceMethod.WALLET },
-    });
-    if (!n.count) throw invalidState();
-    await WalletService.holdHomeBalance(actor.userId, b.balanceMinor, id, tx);
-  });
-  return getBooking(actor.userId, id);
+  throw fail(StatusCodes.BAD_REQUEST, "Pay the rest to your expert at the door, in cash or by bKash.", "PAYMENT_METHOD_UNAVAILABLE");
 };
 
 // ---------------------------------------------------------------------------

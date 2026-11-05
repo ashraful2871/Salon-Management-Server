@@ -220,9 +220,9 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
               ["Date", at],
               ["Services", services],
               ["Total", formatBDT(b.totalMinor)],
-              ["Advance (wallet)", formatBDT(b.advanceMinor)],
+              ["Advance paid online", formatBDT(b.advanceMinor)],
               [
-                paidInApp ? "Balance (wallet)" : "Balance paid to the expert",
+                paidInApp ? "Balance paid in the app" : "Balance paid to the expert",
                 formatBDT(paidInApp ? b.balanceMinor : (b.balanceCollectedMinor ?? 0)),
               ],
             ],
@@ -257,7 +257,7 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
         const lines = [who];
         if (o.reasonCode === "NOT_PAID") lines.push("Nothing was paid for it, so nothing was charged.");
         else {
-          if (back > 0) lines.push(`${formatBDT(back)} is back in your wallet.`);
+          if (back > 0) lines.push(`${formatBDT(back)} is being refunded to the bKash account or card you paid with (bKash usually within minutes, cards within 7–10 working days).`);
           if (o.salonCreditMinor > 0) lines.push(`${b.salon.name} added ${formatBDT(o.salonCreditMinor)} to your wallet for the trouble.`);
           if (o.feeMinor > 0) {
             const hours = snapshotOf(b.policySnapshot).appealWindowHours;
@@ -330,7 +330,7 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
             heading: n.approved ? "Appeal upheld" : "Appeal not upheld",
             name,
             lines: n.approved
-              ? [`We agreed with your appeal. ${formatBDT(n.refundedMinor)} is back in your wallet.`]
+              ? [`We agreed with your appeal. ${formatBDT(n.refundedMinor)} is being refunded to the bKash account or card you paid with (bKash usually within minutes, cards within 7–10 working days).`]
               : ["We looked at your appeal and the fee stands under the policy you accepted."],
             rows: visitRows,
             cta: myVisit,

@@ -202,6 +202,7 @@ const createBooking = z.object({
 
 const payBooking = z.object({
   params: idParams,
+  // WALLET is refused by the service with PAYMENT_METHOD_UNAVAILABLE (older clients).
   body: z.object({ method: z.enum(["WALLET", "BKASH", "SSLCOMMERZ"]) }),
 });
 
