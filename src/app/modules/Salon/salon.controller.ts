@@ -5,7 +5,7 @@ import sendResponse from "../../shared/sendResponse";
 import { SalonService } from "./salon.service";
 import { SalonPhotos } from "./salon.photos";
 import { withAccessCache } from "../../utils/salonAccess";
-import { findSalonMarkers } from "./salon.geo";
+import { findSalonAreas, findSalonMarkers, type SalonArea } from "./salon.geo";
 import { NEARBY_MAX_RADIUS_KM, SalonValidation } from "./salon.validation";
 import { recordSearchTerm } from "../Analytics/analytics.capture";
 import { buildAuditCtx } from "../Admin/admin.middleware";
@@ -110,18 +110,52 @@ const getSalonMarkers = catchAsync(async (req: Request, res: Response) => {
     lat,
     lng,
     radiusKm,
+    includeUnisex,
+    ...filters
   } = SalonValidation.salonMapQuery.parse(req.query);
   const near =
     lat !== undefined && lng !== undefined
       ? { lat, lng, radiusKm: Math.min(radiusKm, NEARBY_MAX_RADIUS_KM) }
       : undefined;
-  const result = await findSalonMarkers(minLng, minLat, maxLng, maxLat, near);
+  const result = await findSalonMarkers(minLng, minLat, maxLng, maxLat, near, {
+    ...filters,
+    exactAudience: includeUnisex === "false",
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
     success: true,
     message: "Salon markers retrieved successfully",
     data: result,
+  });
+});
+
+// The area list changes only when a salon is approved, moved or removed, and
+// every visitor of a list page asks for one, so a short cache per filter set
+// saves a GROUP BY over every salon on each page view.
+const AREAS_TTL_MS = 2 * 60 * 1000;
+const areasCache = new Map<string, { at: number; data: SalonArea[] }>();
+
+const getSalonAreas = catchAsync(async (req: Request, res: Response) => {
+  const { audience, includeUnisex, category } =
+    SalonValidation.salonAreasQuery.parse(req.query);
+  const exactAudience = audience !== undefined && includeUnisex === "false";
+  const key = `${audience ?? "ALL"}|${exactAudience}|${category ?? ""}`;
+
+  let hit = areasCache.get(key);
+  if (!hit || Date.now() - hit.at > AREAS_TTL_MS) {
+    hit = {
+      at: Date.now(),
+      data: await findSalonAreas({ audience, exactAudience, category }),
+    };
+    areasCache.set(key, hit);
+  }
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Salon areas retrieved successfully",
+    data: hit.data,
   });
 });
 
@@ -244,6 +278,7 @@ export const SalonController = {
   createSalon,
   getAllSalons,
   getSalonMarkers,
+  getSalonAreas,
   getMySalons,
   getSalonById,
   listClosures,

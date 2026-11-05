@@ -102,15 +102,45 @@ const updateSalonLocationValidation = z.object({
 
 // Query schemas below are parsed in the controller, not through
 // validateRequest: it doesn't write coerced values back to req.query.
+const serviceCategory = z.enum([
+  "HAIRCUT",
+  "STYLING",
+  "COLORING",
+  "TREATMENT",
+  "SPA",
+  "FACIAL",
+  "MANICURE",
+  "PEDICURE",
+  "MAKEUP",
+  "WAXING",
+  "MASSAGE",
+  "OTHER",
+]);
+
+// LADIES / GENTS also return UNISEX salons, which serve both, unless
+// includeUnisex=false (the ladies and gents parlour pages list their own).
+const audienceFields = {
+  audience: z.enum(["LADIES", "GENTS"]).optional(),
+  includeUnisex: z.enum(["true", "false"]).optional(),
+  category: serviceCategory.optional(),
+};
+
+// What GET /salons, GET /salons/map and GET /salons/areas all filter by.
+const listFilterFields = {
+  searchTerm: z.string().trim().max(100).optional(),
+  city: z.string().trim().max(60).optional(),
+  division: z.string().trim().max(60).optional(),
+  district: z.string().trim().max(60).optional(),
+  // Matched exactly (ignoring case): GET /salons/areas hands out the names.
+  area: z.string().trim().max(60).optional(),
+  ...audienceFields,
+};
+
 const salonListQuery = z
   .object({
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(1).max(100).default(10),
-    searchTerm: z.string().trim().max(100).optional(),
-    city: z.string().trim().max(60).optional(),
-    division: z.string().trim().max(60).optional(),
-    district: z.string().trim().max(60).optional(),
-    area: z.string().trim().max(60).optional(),
+    ...listFilterFields,
     status: z
       .enum(["ACTIVE", "INACTIVE", "PENDING_APPROVAL", "REJECTED", "SUSPENDED"])
       .optional(),
@@ -126,26 +156,6 @@ const salonListQuery = z
       .optional(),
     radiusKm: z.coerce.number().min(0.5).max(50).default(NEARBY_MAX_RADIUS_KM),
     sort: z.enum(["distance", "rating", "newest"]).optional(),
-    // LADIES / GENTS also return UNISEX salons, which serve both, unless
-    // includeUnisex=false (the gents parlour page lists gents-only salons).
-    audience: z.enum(["LADIES", "GENTS"]).optional(),
-    includeUnisex: z.enum(["true", "false"]).optional(),
-    category: z
-      .enum([
-        "HAIRCUT",
-        "STYLING",
-        "COLORING",
-        "TREATMENT",
-        "SPA",
-        "FACIAL",
-        "MANICURE",
-        "PEDICURE",
-        "MAKEUP",
-        "WAXING",
-        "MASSAGE",
-        "OTHER",
-      ])
-      .optional(),
   })
   .refine((q) => (q.lat === undefined) === (q.lng === undefined), {
     message: "lat and lng must be sent together",
@@ -168,6 +178,8 @@ const salonMapQuery = z
     lat: z.coerce.number().min(BD_BOUNDS.minLat).max(BD_BOUNDS.maxLat).optional(),
     lng: z.coerce.number().min(BD_BOUNDS.minLng).max(BD_BOUNDS.maxLng).optional(),
     radiusKm: z.coerce.number().min(0.5).max(50).default(NEARBY_MAX_RADIUS_KM),
+    // The list's filters, so the pins match the cards beside them.
+    ...listFilterFields,
   })
   .refine(
     ({ bbox: [minLng, minLat, maxLng, maxLat] }) =>
@@ -185,7 +197,14 @@ const salonMapQuery = z
     path: ["lat"],
   });
 
-const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:mm");
+export type SalonMapQuery = z.infer<typeof salonMapQuery>;
+
+// GET /salons/areas: the places that have a live salon for this audience.
+const salonAreasQuery = z.object(audienceFields);
+
+export type SalonAreasQuery = z.infer<typeof salonAreasQuery>;
+
+const HHMM =z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:mm");
 
 const createClosureValidation = z.object({
   body: z
@@ -231,4 +250,5 @@ export const SalonValidation = {
   updateSalonLocationValidation,
   salonListQuery,
   salonMapQuery,
+  salonAreasQuery,
 };

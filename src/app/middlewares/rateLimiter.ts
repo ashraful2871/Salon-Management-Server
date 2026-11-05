@@ -176,6 +176,9 @@ export const aiSearchLimiter = rateLimit({
  */
 export const mapLimiter = rateLimit({
   windowMs: 60 * 1000,
+  // Per visitor: the frontend forwards X-Client-IP (contract 4). Without
+  // INTERNAL_API_KEY this falls back to req.ip, one bucket per server.
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
@@ -193,6 +196,8 @@ export const mapLimiter = rateLimit({
  */
 export const geoLimiter = rateLimit({
   windowMs: 60 * 1000,
+  // Per visitor, as mapLimiter.
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
