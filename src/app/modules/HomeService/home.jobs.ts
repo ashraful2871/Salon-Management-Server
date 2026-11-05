@@ -32,6 +32,8 @@ export const expireUnpaidHomeBookings = async () => {
 // home.stale (IN_PROGRESS long past its end → COMPLETED + settled) and
 // home.notArrived (EXPERT_LATE_FLAG) live with the visit lifecycle.
 export { closeStaleVisits, flagLateExperts } from "./home.lifecycle";
+// home.refunds: what a gateway-paid visit doesn't keep goes back to bKash / the card.
+export { sweepHomeRefunds } from "./home.refund";
 
 // ---------------------------------------------------------------------------
 // home.reminders (every 5 min)

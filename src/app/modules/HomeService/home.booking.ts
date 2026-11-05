@@ -2,6 +2,8 @@ import { createHash, randomInt } from "crypto";
 import {
   AdvanceStatus,
   BookingPause,
+  IntentPurpose,
+  IntentStatus,
   ExpertVerification,
   HomeAudience,
   HomeBookingStatus,
@@ -40,8 +42,9 @@ import type { CreateBookingBody, QuoteBody } from "./home.validation";
 
 /**
  * Booking a home visit: quote → create (PENDING_PAYMENT, the slot is held)
- * → pay the advance (a wallet hold, topped up at a gateway when short) →
- * CONFIRMED. The quote and the create run the same checks in the same order;
+ * → pay the whole advance at bKash or SSLCommerz (credited to the wallet as
+ * escrow and held at once; the wallet is never a way to pay) → CONFIRMED.
+ * What the visit doesn't keep goes back to the gateway (home.refund.ts). The quote and the create run the same checks in the same order;
  * the create repeats the slot check under the stylist lock that salon
  * bookings take too (`lockStaff`), and the overlap exclusion on
  * home_bookings backs it up.
@@ -523,6 +526,10 @@ export const createBooking = async (actor: Actor, body: CreateBookingBody, idemp
             expertId: chosen.id,
             audience: q.cart.audience,
             expertAudience: chosen.audience,
+            // A picked expert is assigned now. "Any available expert" only
+            // holds this one's time: the branch picks who goes (assignExpert).
+            expertAssignedAt: specific ? now : null,
+            expertAssignedById: specific ? actor.userId : null,
             status: HomeBookingStatus.PENDING_PAYMENT,
             startAt: q.startAt,
             endAt: q.endAt,
@@ -732,25 +739,12 @@ export const payBooking = async (actor: Actor, id: string, method: "WALLET" | Pr
     throw fail(StatusCodes.CONFLICT, "This booking can't be paid for.", "INVALID_STATE");
   }
 
-  const wallet = await WalletService.getOrCreateWallet(actor.userId);
-  if (wallet.isFrozen) throw fail(StatusCodes.FORBIDDEN, "Your wallet is frozen. Contact support.", "WALLET_FROZEN");
-  const available = WalletService.availableOf(wallet);
-
-  if (available >= b.advanceMinor) {
-    const r = await confirmPaidHomeBooking(b.id, 0, { fromGateway: false, actorId: actor.userId });
-    if (r.status !== HomeBookingStatus.CONFIRMED) {
-      throw fail(StatusCodes.CONFLICT, "The time to pay for this booking has run out. Please book again.", "PAYMENT_EXPIRED");
-    }
-    return { status: r.status, paidFrom: "WALLET" as const, booking: await getBooking(actor.userId, id) };
-  }
-
-  const shortfallMinor = b.advanceMinor - Math.max(available, 0);
+  // The wallet is not a way to pay: the whole advance goes through the gateway
+  // (bKash or SSLCommerz), whatever balance an old top-up left behind.
   if (method === "WALLET") {
-    const short = new ApiError(StatusCodes.BAD_REQUEST, "Your wallet doesn't cover the advance. Pay the rest with bKash or card.");
-    short.details = { shortfallMinor };
-    throw short;
+    throw fail(StatusCodes.BAD_REQUEST, "Pay the advance with bKash or card.", "PAYMENT_METHOD_UNAVAILABLE");
   }
-  const session = await PaymentIntentService.initiateHomeBookingPayment(actor.userId, b.id, shortfallMinor, method);
+  const session = await PaymentIntentService.initiateHomeBookingPayment(actor.userId, b.id, b.advanceMinor, method);
   await prisma.homeBooking.update({ where: { id: b.id }, data: { paymentIntentId: session.intentId } });
   return {
     status: HomeBookingStatus.PENDING_PAYMENT,
@@ -758,7 +752,7 @@ export const payBooking = async (actor: Actor, id: string, method: "WALLET" | Pr
     redirectUrl: session.redirectUrl,
     transactionId: session.transactionId,
     amountMinor: session.amountMinor,
-    shortfallMinor,
+    shortfallMinor: session.amountMinor,
   };
 };
 
@@ -809,6 +803,7 @@ const SUMMARY = {
   feeMinor: true,
   refundedMinor: true,
   createdAt: true,
+  expertAssignedAt: true,
   salon: { select: { id: true, name: true, area: true, images: true } },
   expert: { select: EXPERT_CARD },
   items: { select: { nameSnapshot: true } },
@@ -830,7 +825,13 @@ const summaryOf = (b: Prisma.HomeBookingGetPayload<{ select: typeof SUMMARY }>) 
   refundedMinor: b.refundedMinor,
   createdAt: b.createdAt,
   salon: { id: b.salon.id, name: b.salon.name, area: b.salon.area, image: b.salon.images[0] ?? null },
-  expert: expertCardOf(b.expert),
+  // Null until the branch assigns someone to an "any available expert"
+  // visit: the expert on the row only holds the time and may still change.
+  expert: b.expertAssignedAt ? expertCardOf(b.expert) : null,
+  expertAssigned: b.expertAssignedAt !== null,
+  expertAssignedAt: b.expertAssignedAt,
+  /** Where "Book again" starts: any expert who does the cart, with "any" kept when it was chosen. */
+  bookAgain: { expertId: b.expert.id, any: b.expertAssignedAt === null },
   services: b.items.map((i) => i.nameSnapshot),
 });
 
@@ -891,6 +892,11 @@ export const getBooking = async (userId: string, id: string) => {
   });
   if (!b) throw new ApiError(StatusCodes.NOT_FOUND, "Booking not found");
   const { items, events, policySnapshot, ...rest } = b;
+  const payments = await prisma.paymentIntent.findMany({
+    where: { purpose: IntentPurpose.HOME_BOOKING, referenceId: b.id, status: IntentStatus.SUCCESS },
+    select: { transactionId: true, provider: true, method: true, amountMinor: true, completedAt: true, gatewayRef: true, rawResponse: true },
+    orderBy: { createdAt: "asc" },
+  });
   return {
     ...summaryOf({ ...b, items: items.map((i) => ({ nameSnapshot: i.nameSnapshot })) }),
     serviceDate: rest.serviceDate.toISOString().slice(0, 10),
@@ -927,5 +933,29 @@ export const getBooking = async (userId: string, id: string) => {
     startCode: startCodeFor({ id: b.id, status: b.status }),
     balanceMethod: rest.balanceMethod,
     balanceHeldInApp: rest.balanceMethod === "WALLET",
+    // What was paid online for this visit and what went back. Only the refund
+    // list is read from rawResponse (the rest can hold the payer's number).
+    payments: payments.map((p) => ({
+      transactionId: p.transactionId,
+      provider: p.provider,
+      method: p.method,
+      amountMinor: p.amountMinor,
+      paidAt: p.completedAt,
+      gatewayRef: p.gatewayRef,
+      refunds: refundsOf(p.rawResponse),
+    })),
   };
+};
+
+/** The customer's view of a payment's refunds: sent, or still being processed (a timeout or a refusal being retried). */
+const refundsOf = (raw: unknown) => {
+  const list = (raw as { refunds?: Array<{ amountMinor?: number; status?: string; at?: string }> } | null)?.refunds;
+  if (!Array.isArray(list)) return [];
+  // A refused attempt was put back and is retried by the sweep; it shows here once it is sent.
+  const done = list.filter((r) => r?.status === "COMPLETED" || r?.status === "UNKNOWN");
+  return done.map((r) => ({
+    amountMinor: Number(r.amountMinor) || 0,
+    status: r.status === "COMPLETED" ? ("REFUNDED" as const) : ("PROCESSING" as const),
+    at: r.at ?? null,
+  }));
 };

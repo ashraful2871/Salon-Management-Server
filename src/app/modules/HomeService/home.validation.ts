@@ -202,6 +202,7 @@ const createBooking = z.object({
 
 const payBooking = z.object({
   params: idParams,
+  // WALLET is refused by the service with PAYMENT_METHOD_UNAVAILABLE (older clients).
   body: z.object({ method: z.enum(["WALLET", "BKASH", "SSLCOMMERZ"]) }),
 });
 
@@ -235,6 +236,8 @@ const ownerBookingsQuery = z
     status: z.enum(["PENDING_PAYMENT", "CONFIRMED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"]).optional(),
     audience: z.nativeEnum(HomeAudience).optional(),
     expertId: z.string().uuid().optional(),
+    /** "1": only visits still waiting for the branch to assign an expert. */
+    needsExpert: z.enum(["1", "true"]).optional(),
     from: day.optional(),
     to: day.optional(),
     page,
@@ -244,6 +247,8 @@ const ownerBookingsQuery = z
 const ownerBookings = z.object({ query: ownerBookingsQuery });
 
 const reassign = z.object({ params: idParams, body: z.object({ expertId: z.string().uuid(), reason: requiredReason }) });
+
+const assign = z.object({ params: idParams, body: z.object({ expertId: z.string().uuid() }) });
 
 const overrideStart = z.object({ params: idParams, body: z.object({ reason: requiredReason }) });
 
@@ -395,6 +400,7 @@ export const HomeValidation = {
   completeJob,
   ownerBookings,
   reassign,
+  assign,
   overrideStart,
   customerCancel,
   reschedule,

@@ -45,7 +45,8 @@ const optionalAuth = () => {
         // A "View as" token is refused here too, not downgraded to a visitor:
         // a write must never go through as a guest on the user's behalf.
         await guardImpersonation(req, verifiedUser, user.id);
-        req.user = { ...verifiedUser, email: user.email, role: user.role };
+        // isTest rides along so public reads that hide test data don't look the user up again.
+        req.user = { ...verifiedUser, email: user.email, role: user.role, isTest: user.isTest };
       }
 
       next();

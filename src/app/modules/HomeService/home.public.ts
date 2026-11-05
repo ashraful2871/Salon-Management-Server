@@ -11,6 +11,7 @@ import {
   availableFor,
   computeSlots,
   dayLabel,
+  eligibleExperts,
   eligibleExpertWhere,
   loadCart,
   loadExpertDays,
@@ -38,7 +39,8 @@ import {
  */
 
 type Query = Record<string, unknown>;
-export type Viewer = { userId?: string } | undefined;
+/** `isTest` comes from the user `optionalAuth` already read; without it, one lookup. */
+export type Viewer = { userId?: string; isTest?: boolean } | undefined;
 
 const PAGE_SIZE = 20;
 const SOONEST_DAYS = 2;
@@ -105,9 +107,11 @@ const pageOf = (q: Query) => {
 };
 
 const viewerIsTest = async (viewer: Viewer) =>
-  viewer?.userId
-    ? ((await prisma.user.findUnique({ where: { id: viewer.userId }, select: { isTest: true } }))?.isTest ?? false)
-    : false;
+  !viewer?.userId
+    ? false
+    : (viewer.isTest ??
+      (await prisma.user.findUnique({ where: { id: viewer.userId }, select: { isTest: true } }))?.isTest ??
+      false);
 
 const unavailable = () =>
   ApiError.withCode(StatusCodes.NOT_FOUND, "Home service isn't available here right now.", "HOME_SERVICE_UNAVAILABLE");
@@ -196,18 +200,31 @@ const bookableBranch = async (salonId: string, audience: HomeAudience, includeTe
   return branch;
 };
 
-/** Distance to `point` in km, and whether the branch's radius covers it. */
-const reachOf = async (branch: Branch, point: Point | null) => {
-  if (!point) return { distanceKm: null, servesYou: null };
+/**
+ * Metres from salon `salonId` to `point`: `undefined` without a point, `null`
+ * when the salon has no pin. Needs only the id, so it can run alongside the
+ * branch read; `reachFrom` turns it into the reach.
+ */
+const distanceTo = async (salonId: string, point: Point | null): Promise<number | null | undefined> => {
+  if (!point) return undefined;
   const origin = Prisma.sql`ST_SetSRID(ST_MakePoint(${point.lng}::float8, ${point.lat}::float8), 4326)::geography`;
   const [row] = await prisma.$queryRaw<{ distance_m: number | null }[]>`
     SELECT ST_Distance(${SALON_GEOG}, ${origin})::float8 AS distance_m
     FROM salons s
-    WHERE s.id = ${branch.salonId} AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL`;
-  if (row?.distance_m == null) return { distanceKm: null, servesYou: false };
-  const maxRadiusKm = await getSetting("homeService.maxRadiusKm");
-  return { distanceKm: km(row.distance_m), servesYou: row.distance_m <= effectiveRadiusKm(branch, maxRadiusKm) * 1000 };
+    WHERE s.id = ${salonId} AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL`;
+  return row?.distance_m ?? null;
 };
+
+/** Distance in km, and whether the branch's radius covers it, from `distanceTo`. */
+const reachFrom = async (branch: Branch, distanceM: number | null | undefined) => {
+  if (distanceM === undefined) return { distanceKm: null, servesYou: null };
+  if (distanceM === null) return { distanceKm: null, servesYou: false };
+  const maxRadiusKm = await getSetting("homeService.maxRadiusKm");
+  return { distanceKm: km(distanceM), servesYou: distanceM <= effectiveRadiusKm(branch, maxRadiusKm) * 1000 };
+};
+
+/** Distance to `point` in km, and whether the branch's radius covers it. */
+const reachOf = async (branch: Branch, point: Point | null) => reachFrom(branch, await distanceTo(branch.salonId, point));
 
 const branchView = (b: Branch) => ({
   id: b.salon.id,
@@ -780,56 +797,63 @@ const DISCLAIMER_KEY = {
 export const getExpert = async (viewer: Viewer, id: string, q: Query) => {
   const expertId = idOf(id, "id");
   const point = pointOf(q, false);
-  const includeTest = await viewerIsTest(viewer);
+  const gone = () => ApiError.withCode(StatusCodes.NOT_FOUND, "This expert isn't available.", "EXPERT_UNAVAILABLE");
 
-  const head = await prisma.homeExpert.findUnique({ where: { id: expertId }, select: { audience: true } });
-  if (!head) throw ApiError.withCode(StatusCodes.NOT_FOUND, "This expert isn't available.", "EXPERT_UNAVAILABLE");
-  const audience = head.audience;
-
-  const expert = await prisma.homeExpert.findFirst({
-    where: { id: expertId, ...eligibleExpertWhere(audience) },
-    select: {
-      ...EXPERT_CARD_SELECT,
-      audience: true,
-      staff: { select: { speciality: true, experience: true, bio: true, user: { select: { name: true, profilePhoto: true } } } },
-      offerings: {
-        where: { offering: liveOffering(audience) },
-        select: {
-          offering: {
-            select: {
-              id: true,
-              category: true,
-              name: true,
-              description: true,
-              kitNote: true,
-              durationMin: true,
-              priceMinor: true,
-              images: true,
-              sortOrder: true,
+  // The expert's side isn't known before the read, so the side filter is
+  // applied to the offerings afterwards instead of in the query. Policy and
+  // reviews need only the id: everything goes out in one round trip.
+  const { audience: _anySide, ...eligible } = eligibleExpertWhere(HomeAudience.LADIES);
+  const [includeTest, found, policy, reviews] = await Promise.all([
+    viewerIsTest(viewer),
+    prisma.homeExpert.findFirst({
+      where: { id: expertId, ...eligible },
+      select: {
+        ...EXPERT_CARD_SELECT,
+        audience: true,
+        staff: { select: { speciality: true, experience: true, bio: true, user: { select: { name: true, profilePhoto: true } } } },
+        offerings: {
+          where: { offering: { isActive: true, isDeleted: false } },
+          select: {
+            offering: {
+              select: {
+                id: true,
+                audience: true,
+                category: true,
+                name: true,
+                description: true,
+                kitNote: true,
+                durationMin: true,
+                priceMinor: true,
+                images: true,
+                sortOrder: true,
+              },
             },
           },
         },
       },
-    },
-  });
-  if (!expert || !expert.offerings.length) {
-    throw ApiError.withCode(StatusCodes.NOT_FOUND, "This expert isn't available.", "EXPERT_UNAVAILABLE");
-  }
-
-  const branch = await bookableBranch(expert.salonId, audience, includeTest).catch(() => {
-    throw ApiError.withCode(StatusCodes.NOT_FOUND, "This expert isn't available.", "EXPERT_UNAVAILABLE");
-  });
-  const [reach, policy, reviews] = await Promise.all([
-    reachOf(branch, point),
+    }),
     loadPolicyInForce(),
-    listExpertReviews(expert.id, Number(str(q.reviewPage)) || 1),
+    listExpertReviews(expertId, Number(str(q.reviewPage)) || 1),
   ]);
+  if (!found) throw gone();
+  const audience = found.audience;
+  // `liveOffering(audience)`: the live offerings on the expert's own side.
+  const expert = { ...found, offerings: found.offerings.filter((o) => o.offering.audience === audience) };
+  if (!expert.offerings.length) throw gone();
+
+  const [branch, distanceM] = await Promise.all([
+    bookableBranch(expert.salonId, audience, includeTest).catch(() => {
+      throw gone();
+    }),
+    distanceTo(expert.salonId, point),
+  ]);
+  const reach = await reachFrom(branch, distanceM);
   const disclaimer = await getSetting(DISCLAIMER_KEY[policy.customerCancelPolicy]);
 
   const menu = expert.offerings
     .map((o) => o.offering)
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
-    .map(({ sortOrder: _s, ...o }) => o);
+    .map(({ sortOrder: _s, audience: _a, ...o }) => o);
 
   return {
     id: expert.id,
@@ -957,14 +981,27 @@ const availabilityContext = async (viewer: Viewer, q: Query) => {
   if (!expertId && !salonId) throw new ApiError(StatusCodes.BAD_REQUEST, "Pass expertId or salonId");
   const point = pointOf(q, false);
 
-  const cart = await loadCart(offeringIds);
+  const [cart, includeTest] = await Promise.all([loadCart(offeringIds), viewerIsTest(viewer)]);
   if (salonId && salonId !== cart.salonId) {
     throw ApiError.withCode(StatusCodes.BAD_REQUEST, "These services belong to another salon.", "INVALID_CART");
   }
-  const branch = await bookableBranch(cart.salonId, cart.audience, await viewerIsTest(viewer));
-  const reach = await reachOf(branch, point);
-  return { offeringIds, expertId, outOfArea: reach.servesYou === false };
+  // All three need only the cart: one round trip, and `availableFor` reads neither again.
+  const [branch, distanceM, experts] = await Promise.all([
+    bookableBranch(cart.salonId, cart.audience, includeTest),
+    distanceTo(cart.salonId, point),
+    eligibleExperts({ salonId: cart.salonId, audience: cart.audience, offeringIds: cart.items.map((i) => i.id) }),
+  ]);
+  const reach = await reachFrom(branch, distanceM);
+  return { offeringIds, expertId, cart, eligibleIds: experts.map((e) => e.id), outOfArea: reach.servesYou === false };
 };
+
+/** What `availableFor` would otherwise load again. */
+const slotArgs = (ctx: Awaited<ReturnType<typeof availabilityContext>>) => ({
+  expertId: ctx.expertId,
+  offeringIds: ctx.offeringIds,
+  cart: ctx.cart,
+  eligibleIds: ctx.eligibleIds,
+});
 
 export const getAvailability = async (viewer: Viewer, q: Query) => {
   const date = str(q.date);
@@ -972,7 +1009,7 @@ export const getAvailability = async (viewer: Viewer, q: Query) => {
   const ctx = await availabilityContext(viewer, q);
   if (ctx.outOfArea) return { date, outOfArea: true, slots: [] };
 
-  const { byDay } = await availableFor({ expertId: ctx.expertId, offeringIds: ctx.offeringIds, days: [date] });
+  const { byDay } = await availableFor({ ...slotArgs(ctx), days: [date] });
   return {
     date,
     outOfArea: false,
@@ -994,7 +1031,7 @@ export const getAvailabilityDays = async (viewer: Viewer, q: Query) => {
     return { outOfArea: true, days: days.map((date) => ({ date, label: dayLabel(date, today), hasSlots: false })) };
   }
 
-  const { byDay } = await availableFor({ expertId: ctx.expertId, offeringIds: ctx.offeringIds, days, now });
+  const { byDay } = await availableFor({ ...slotArgs(ctx), days, now });
   return {
     outOfArea: false,
     days: days.map((date) => ({ date, label: dayLabel(date, today), hasSlots: (byDay.get(date) ?? []).length > 0 })),

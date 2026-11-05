@@ -40,6 +40,8 @@ export const NOTIFY_EVENTS = [
   "home.booking.completed",
   "home.booking.reminder",
   "home.booking.on_the_way",
+  "home.booking.needs_expert",
+  "home.booking.assigned",
   "home.expert.verified",
   "home.expert.rejected",
   "home.branch.reviewed",
@@ -94,6 +96,9 @@ export const EVENT_INFO: Record<NotifyEvent, EventInfo> = {
   "home.booking.completed": { label: "Home visit completed", group: "Bookings", email: false, inApp: true, ownerOnly: false },
   "home.booking.reminder": { label: "Home visit coming up (expert)", group: "Bookings", email: false, inApp: true, ownerOnly: false },
   "home.booking.on_the_way": { label: "Expert on the way or arrived (customer)", group: "Bookings", email: false, inApp: true, ownerOnly: false },
+  // An "any available expert" visit waits for the branch to pick who goes.
+  "home.booking.needs_expert": { label: "Home visit needs an expert assigned", group: "Bookings", email: true, inApp: true, ownerOnly: false },
+  "home.booking.assigned": { label: "A home visit was assigned to you (expert)", group: "Bookings", email: true, inApp: true, ownerOnly: false },
   "home.expert.verified": { label: "Home expert verified", group: "Business", email: true, inApp: true, ownerOnly: true },
   "home.expert.rejected": { label: "Home expert not verified", group: "Business", email: true, inApp: true, ownerOnly: true },
   "home.branch.reviewed": { label: "Home Service approved, rejected or suspended", group: "Business", email: true, inApp: true, ownerOnly: true },

@@ -33,6 +33,7 @@ import {
 } from "../Settlement/settlement.dues";
 import { getOwnerBuckets } from "../Settlement/settlement.buckets";
 import { confirmPaidHomeBooking } from "../HomeService/home.booking";
+import { syncHomeRefund } from "../HomeService/home.refund";
 
 const MIN_TOPUP_MINOR = 10000; // BDT 100
 const MAX_TOPUP_MINOR = 5000000; // BDT 50,000
@@ -236,7 +237,7 @@ const MIN_HOME_TOPUP_MINOR = 1000; // BDT 10
 const initiateHomeBookingPayment = async (
   userId: string,
   homeBookingId: string,
-  shortfallMinor: number,
+  advanceMinor: number,
   providerName: ProviderName,
 ) => {
   const provider = getProvider(providerName);
@@ -247,7 +248,9 @@ const initiateHomeBookingPayment = async (
     );
   }
 
-  const amountMinor = Math.max(MIN_HOME_TOPUP_MINOR, Math.ceil(shortfallMinor / 100) * 100);
+  // The whole advance (already whole taka). Below the gateway minimum the
+  // surplus goes straight back after the visit is confirmed (home.refund.ts).
+  const amountMinor = Math.max(MIN_HOME_TOPUP_MINOR, Math.ceil(advanceMinor / 100) * 100);
   if (amountMinor > MAX_TOPUP_MINOR) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
@@ -341,7 +344,10 @@ const creditSettledIntent = async (
           userId: intent.userId,
           type: WalletTxType.TOPUP,
           amount: intent.amountMinor,
-          description: `Top-up via ${settled.method ?? provider.displayName}`,
+          description:
+            intent.purpose === IntentPurpose.HOME_BOOKING
+              ? `${ESCROW_DESCRIPTION}${settled.method ?? provider.displayName}`
+              : `Top-up via ${settled.method ?? provider.displayName}`,
           referenceType: "TOPUP",
           referenceId: intent.id,
           // The wallet history renders these. Without them a ledger row has no
@@ -353,6 +359,8 @@ const creditSettledIntent = async (
             method: settled.method ?? null,
             provider: intent.provider,
             gatewayEnv: provider.isTestMode() ? "sandbox" : "live",
+            // Held for the visit, never spendable: what home.refund.ts may send back.
+            ...(intent.purpose === IntentPurpose.HOME_BOOKING ? { escrow: true } : {}),
           },
           // The final replay guard: even if every check above is passed twice,
           // this key means the money only lands once.
@@ -381,6 +389,9 @@ const creditSettledIntent = async (
     await confirmPaidHomeBooking(intent.referenceId, intent.amountMinor).catch((error) =>
       console.error(`[payment] home booking ${intent.referenceId} not confirmed after ${intent.transactionId}`, error),
     );
+    // Paid too late, paid twice, or above the advance: that part goes back to
+    // where it came from at once. A no-op for a normal payment.
+    if (credited) void syncHomeRefund(intent.referenceId, "payment not used");
   }
   if (credited && intent.purpose === IntentPurpose.SALON_DUES && intent.referenceId) {
     await afterDuesChange(intent.referenceId);
@@ -885,19 +896,10 @@ const refundTopup = async (
     );
   }
 
-  const provider = getProvider(intent.provider);
-  const gatewayRef = intent.gatewayRef;
-
-  if (
-    intent.status !== IntentStatus.SUCCESS ||
-    intent.purpose !== IntentPurpose.WALLET_TOPUP ||
-    !gatewayRef ||
-    !provider.refund
-  ) {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      "Only a completed wallet top-up can be refunded",
-    );
+  // A home visit's advance can be refunded by hand too: the automatic refund
+  // (home.refund.ts) may have been refused by the gateway.
+  if (intent.purpose !== IntentPurpose.WALLET_TOPUP && intent.purpose !== IntentPurpose.HOME_BOOKING) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Only a completed wallet top-up or home visit payment can be refunded");
   }
 
   if (amountMinor !== undefined && (!Number.isInteger(amountMinor) || amountMinor <= 0)) {
@@ -907,9 +909,69 @@ const refundTopup = async (
     );
   }
 
+  const result = await refundIntent(intent, {
+    amount: ({ remainingMinor }) => {
+      if (remainingMinor <= 0) {
+        throw new ApiError(StatusCodes.BAD_REQUEST, "This payment has already been refunded in full");
+      }
+      const amount = amountMinor ?? remainingMinor;
+      if (amount > remainingMinor) {
+        throw new ApiError(StatusCodes.BAD_REQUEST, `Only ${formatBDT(remainingMinor)} of this payment is left to refund`);
+      }
+      return amount;
+    },
+    reason,
+    by: adminId,
+    auditCtx,
+  });
+  if (!result) throw new ApiError(StatusCodes.BAD_REQUEST, "Nothing to refund");
+  if (result.status === "FAILED") throw new ApiError(StatusCodes.BAD_GATEWAY, result.message);
+  return { refundedMinor: result.refundedMinor, remainingMinor: result.remainingMinor, status: result.status, refundRef: result.refundRef };
+};
+
+export type IntentRefundResult = {
+  refundedMinor: number;
+  remainingMinor: number;
+  status: RefundStatus;
+  refundRef: string | null;
+  message: string;
+};
+
+/**
+ * Sends part of a completed payment back to where it came from: the wallet is
+ * debited first, under a lock, then the gateway is asked.
+ *
+ * `amount` is decided under that lock from what is left of the payment
+ * (`remainingMinor`) and what has gone back already (`refundedMinor`); 0 means
+ * nothing to do (null is returned). `by` is the admin, or null for the system.
+ * A definite "no" from the gateway puts the money back in the wallet and
+ * returns FAILED; a timeout returns UNKNOWN (the wallet stays debited).
+ */
+/** The escrow credit of a home-visit payment starts with this (home.refund.ts relies on it). */
+export const ESCROW_DESCRIPTION = "Home visit payment via ";
+
+const refundIntent = async (
+  intent: PaymentIntent,
+  opts: {
+    amount: (state: { remainingMinor: number; refundedMinor: number }) => number;
+    reason: string;
+    by: string | null;
+    auditCtx?: AuditCtx;
+  },
+): Promise<IntentRefundResult | null> => {
+  const { reason, auditCtx } = opts;
+  const adminId = opts.by;
+  const provider = getProvider(intent.provider);
+  const gatewayRef = intent.gatewayRef;
+
+  if (intent.status !== IntentStatus.SUCCESS || !gatewayRef || !provider.refund) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Only a completed online payment can be refunded");
+  }
+  const refund = provider.refund.bind(provider);
+
   // 1. Reserve: take the money out of the wallet. The advisory lock serialises
   //    refunds of this intent, so two admins cannot both refund what is left.
-  const { amount, remainingMinor, n } = await prisma.$transaction(
+  const reserved = await prisma.$transaction(
     async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`refund:${intent.id}`}::text, 0))`;
 
@@ -928,20 +990,8 @@ const refundTopup = async (
       });
 
       const remaining = intent.amountMinor + (net._sum.amount ?? 0);
-      const amount = amountMinor ?? remaining;
-
-      if (remaining <= 0) {
-        throw new ApiError(
-          StatusCodes.BAD_REQUEST,
-          "This top-up has already been refunded in full",
-        );
-      }
-      if (amount > remaining) {
-        throw new ApiError(
-          StatusCodes.BAD_REQUEST,
-          `Only ${formatBDT(remaining)} of this top-up is left to refund`,
-        );
-      }
+      const amount = Math.min(opts.amount({ remainingMinor: remaining, refundedMinor: -(net._sum.amount ?? 0) }), remaining);
+      if (amount <= 0) return null;
 
       const n = attempts + 1;
 
@@ -970,7 +1020,7 @@ const refundTopup = async (
 
       // In the same transaction: no wallet debit without its audit row.
       await auditTx(tx, auditCtx, {
-        action: "topup.refund",
+        action: adminId ? "topup.refund" : "topup.refund_auto",
         entityType: "intent",
         entityId: intent.id,
         before: { remainingMinor: remaining },
@@ -982,11 +1032,13 @@ const refundTopup = async (
     },
     { maxWait: 10_000, timeout: 20_000 },
   );
+  if (!reserved) return null;
+  const { amount, remainingMinor, n } = reserved;
 
   // 2. Ask the gateway, outside any transaction: the call can take 30 s.
   let result: { ok: boolean; refundRef?: string; message?: string; unknown?: boolean };
   try {
-    result = await provider.refund({
+    result = await refund({
       sessionKey: intent.sessionKey,
       gatewayRef,
       amountMinor: amount,
@@ -1010,7 +1062,7 @@ const refundTopup = async (
     const refundRef = result.refundRef ?? null;
     await recordRefund(intent.id, { ...entry, refundRef, status: "COMPLETED" });
     await auditOutcome("COMPLETED");
-    return { refundedMinor: amount, remainingMinor, status: "COMPLETED" as RefundStatus, refundRef };
+    return { refundedMinor: amount, remainingMinor, status: "COMPLETED", refundRef, message: "Refund sent" };
   }
 
   if (result.unknown) {
@@ -1019,7 +1071,7 @@ const refundTopup = async (
     console.error(
       `[payment.refund] needs manual check: intent=${intent.id} tran=${intent.transactionId} refund #${n} of ${amount} poisha via ${intent.provider} (${gatewayRef}) - ${result.message}. The wallet was debited; confirm in the merchant portal before touching it.`,
     );
-    return { refundedMinor: amount, remainingMinor, status: "UNKNOWN" as RefundStatus, refundRef: null };
+    return { refundedMinor: amount, remainingMinor, status: "UNKNOWN", refundRef: null, message: result.message ?? "Needs a manual check" };
   }
 
   // 3. A definite "no": the money never left, so give it back.
@@ -1051,7 +1103,7 @@ const refundTopup = async (
 
   await recordRefund(intent.id, { ...entry, status: "FAILED", message });
   await auditOutcome("FAILED", message);
-  throw new ApiError(StatusCodes.BAD_GATEWAY, message);
+  return { refundedMinor: 0, remainingMinor: remainingMinor + amount, status: "FAILED", refundRef: null, message };
 };
 
 // ---------------------------------------------------------------------------
@@ -1113,8 +1165,10 @@ const listTopupsForAdmin = async (query: any) => {
   const pageNum = Math.max(1, Math.floor(Number(query.page) || 1));
   const limitNum = Math.min(50, Math.max(1, Math.floor(Number(query.limit) || 20)));
 
+  // Home visit payments too: their refunds go back to the gateway, and one the
+  // gateway refused is retried from here.
   const where: Prisma.PaymentIntentWhereInput = {
-    purpose: IntentPurpose.WALLET_TOPUP,
+    purpose: { in: [IntentPurpose.WALLET_TOPUP, IntentPurpose.HOME_BOOKING] },
   };
 
   const status = typeof query.status === "string" ? query.status.toUpperCase() : "";
@@ -1283,6 +1337,7 @@ export const PaymentIntentService = {
   reconcilePendingIntents,
   recheckIntent,
   refundTopup,
+  refundIntent,
   refundRequestInfo,
   listTopupsForAdmin,
   getMyIntents,

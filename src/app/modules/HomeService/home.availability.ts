@@ -77,6 +77,30 @@ export const computeSlots = (i: SlotInput): Date[] => {
   return [...out].sort((x, y) => x - y).map((t) => new Date(t));
 };
 
+export type NotFreeReason = "DAY_FULL" | "OFF_SHIFT" | "TIME_OFF" | "BUSY" | "NOT_FREE";
+
+/**
+ * Why `computeSlots` would not offer `startAt`, checked in the same order as
+ * its rules, for telling a salon why an expert can't take a visit. Only for
+ * display: whether a start is offered is always `computeSlots`'s answer.
+ */
+export const whyNotFree = (i: SlotInput, startAt: Date): NotFreeReason => {
+  if (i.jobsThatDay >= i.maxJobsPerDay) return "DAY_FULL";
+  const s = startAt.getTime();
+  const dur = i.durationMin * MIN_MS;
+  const buf = i.bufferMin * MIN_MS;
+  const inHours = i.working.some(
+    (w) =>
+      s >= Math.max(w.from.getTime(), i.homeHours.from.getTime()) &&
+      s + dur <= Math.min(w.to.getTime(), i.homeHours.to.getTime()),
+  );
+  if (!inHours || (i.lastStartAt && s > i.lastStartAt.getTime())) return "OFF_SHIFT";
+  const overlaps = (list: Interval[]) => list.some((b) => b.from.getTime() < s + dur + buf && b.to.getTime() > s - buf);
+  if (overlaps(i.closed)) return "TIME_OFF";
+  if (overlaps(i.busy)) return "BUSY";
+  return "NOT_FREE";
+};
+
 // ---------------------------------------------------------------------------
 // Labels
 // ---------------------------------------------------------------------------
@@ -196,6 +220,21 @@ const SALON_BUSY: AppointmentStatus[] = [
 const at = (day0: number, min: number) => new Date(day0 + min * MIN_MS);
 
 /**
+ * Runs independent reads together on the pool, and one after another on a
+ * transaction client, which has a single connection.
+ */
+const readAll = async <T extends readonly unknown[] | []>(
+  db: Db,
+  reads: { [K in keyof T]: () => Promise<T[K]> },
+): Promise<T> => {
+  const thunks = reads as unknown as Array<() => Promise<unknown>>;
+  if (db === prisma) return (await Promise.all(thunks.map((read) => read()))) as unknown as T;
+  const out: unknown[] = [];
+  for (const read of thunks) out.push(await read());
+  return out as unknown as T;
+};
+
+/**
  * One query per table for any number of experts and days.
  * Map: expertId → day → input. `excludeBookingId` leaves a booking out of
  * the busy list and the day's count (reschedule).
@@ -216,46 +255,53 @@ export const loadExpertDays = async (
   const rangeTo = dayStart(addDays(sorted[sorted.length - 1], 1));
   const calendarDates = sorted.map((d) => new Date(`${d}T00:00:00Z`));
 
-  // Sequential: on a transaction client these share one connection.
-  const experts = await db.homeExpert.findMany({
-    where: { id: { in: expertIds } },
-    select: {
-      id: true,
-      staffId: true,
-      salonId: true,
-      audience: true,
-      maxJobsPerDay: true,
-      salon: { select: { operatingHours: true, homeProfile: { select: { travelBufferMin: true, dayStart: true, dayEnd: true } } } },
-    },
-  });
-  const staffIds = experts.map((e) => e.staffId);
-  const salonIds = [...new Set(experts.map((e) => e.salonId))];
-
-  const shifts = await db.staffShift.findMany({
-    where: { staffId: { in: staffIds } },
-    select: { staffId: true, weekday: true, startTime: true, endTime: true },
-  });
-  const leave = await db.staffTimeOff.findMany({
-    where: { staffId: { in: staffIds }, startsAt: { lt: rangeTo }, endsAt: { gt: rangeFrom } },
-    select: { staffId: true, startsAt: true, endsAt: true },
-  });
-  const closures = await db.salonClosure.findMany({
-    where: { salonId: { in: salonIds }, date: { in: calendarDates } },
-    select: { salonId: true, date: true, allDay: true, startTime: true, endTime: true },
-  });
-  const homeJobs = await db.homeBooking.findMany({
-    where: {
-      expertId: { in: expertIds },
-      status: { in: ACTIVE_BOOKING_STATUSES },
-      ...(opts.excludeBookingId ? { id: { not: opts.excludeBookingId } } : {}),
-      OR: [{ blockFrom: { lt: rangeTo }, blockTo: { gt: rangeFrom } }, { serviceDate: { in: calendarDates } }],
-    },
-    select: { expertId: true, blockFrom: true, blockTo: true, serviceDate: true },
-  });
-  const appointments = await db.appointment.findMany({
-    where: { staffId: { in: staffIds }, status: { in: SALON_BUSY }, appointmentDate: { in: calendarDates } },
-    select: { staffId: true, appointmentDate: true, startTime: true, endTime: true },
-  });
+  // Every read is keyed by the expert ids (through the staff / salon relation),
+  // so none waits for another: one database round trip on the pool instead of six.
+  const ofExperts = { homeExpert: { is: { id: { in: expertIds } } } } satisfies Prisma.StaffWhereInput;
+  const [experts, shifts, leave, closures, homeJobs, appointments] = await readAll(db, [
+    () =>
+      db.homeExpert.findMany({
+        where: { id: { in: expertIds } },
+        select: {
+          id: true,
+          staffId: true,
+          salonId: true,
+          audience: true,
+          maxJobsPerDay: true,
+          salon: { select: { operatingHours: true, homeProfile: { select: { travelBufferMin: true, dayStart: true, dayEnd: true } } } },
+        },
+      }),
+    () =>
+      db.staffShift.findMany({
+        where: { staff: ofExperts },
+        select: { staffId: true, weekday: true, startTime: true, endTime: true },
+      }),
+    () =>
+      db.staffTimeOff.findMany({
+        where: { staff: ofExperts, startsAt: { lt: rangeTo }, endsAt: { gt: rangeFrom } },
+        select: { staffId: true, startsAt: true, endsAt: true },
+      }),
+    () =>
+      db.salonClosure.findMany({
+        where: { salon: { homeExperts: { some: { id: { in: expertIds } } } }, date: { in: calendarDates } },
+        select: { salonId: true, date: true, allDay: true, startTime: true, endTime: true },
+      }),
+    () =>
+      db.homeBooking.findMany({
+        where: {
+          expertId: { in: expertIds },
+          status: { in: ACTIVE_BOOKING_STATUSES },
+          ...(opts.excludeBookingId ? { id: { not: opts.excludeBookingId } } : {}),
+          OR: [{ blockFrom: { lt: rangeTo }, blockTo: { gt: rangeFrom } }, { serviceDate: { in: calendarDates } }],
+        },
+        select: { expertId: true, blockFrom: true, blockTo: true, serviceDate: true },
+      }),
+    () =>
+      db.appointment.findMany({
+        where: { staff: ofExperts, status: { in: SALON_BUSY }, appointmentDate: { in: calendarDates } },
+        select: { staffId: true, appointmentDate: true, startTime: true, endTime: true },
+      }),
+  ]);
 
   const dayKey = (d: Date) => d.toISOString().slice(0, 10);
   const startBound = toMinutes(settings.dayStartBound) ?? 0;
@@ -353,6 +399,10 @@ export type AvailableArgs = {
   now?: Date;
   excludeBookingId?: string;
   db?: Db;
+  /** Already loaded by the caller (`loadCart(offeringIds)`), so it isn't read twice. */
+  cart?: Cart;
+  /** Already loaded by the caller (`eligibleExperts` for that cart), ids only. */
+  eligibleIds?: string[];
 };
 
 const expertProblem = async (expertId: string, cart: Cart, db: Db) => {
@@ -372,9 +422,12 @@ const expertProblem = async (expertId: string, cart: Cart, db: Db) => {
  */
 export const availableFor = async (args: AvailableArgs) => {
   const db = args.db ?? prisma;
-  const cart = await loadCart(args.offeringIds, db);
-  const experts = await eligibleExperts({ salonId: cart.salonId, audience: cart.audience, offeringIds: cart.items.map((i) => i.id) }, db);
-  let ids = experts.map((e) => e.id);
+  const cart = args.cart ?? (await loadCart(args.offeringIds, db));
+  let ids =
+    args.eligibleIds ??
+    (await eligibleExperts({ salonId: cart.salonId, audience: cart.audience, offeringIds: cart.items.map((i) => i.id) }, db)).map(
+      (e) => e.id,
+    );
   if (args.expertId) {
     if (!ids.includes(args.expertId)) throw await expertProblem(args.expertId, cart, db);
     ids = [args.expertId];

@@ -128,8 +128,8 @@ const generated = (p: HomePolicy, advanceMinor: number, lang: DisclaimerLang): s
 
   if (p.policy === "FREE") {
     return lang === "bn"
-      ? `ফ্রি বাতিল: ভিজিটের আগে যেকোনো সময় বাতিল করলে আপনার ${x} অগ্রিম ওয়ালেটে ফেরত আসবে।${noShow}`
-      : `Free cancellation: cancel any time before the visit and your ${x} advance comes back to your wallet.${noShow}`;
+      ? `ফ্রি বাতিল: ভিজিটের আগে যেকোনো সময় বাতিল করলে আপনার ${x} অগ্রিম যে বিকাশ বা কার্ড থেকে দিয়েছেন সেখানেই ফেরত যাবে।${noShow}`
+      : `Free cancellation: cancel any time before the visit and your ${x} advance is refunded to the bKash account or card you paid with.${noShow}`;
   }
 
   if (p.policy === "WINDOW") {

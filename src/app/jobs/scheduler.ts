@@ -34,6 +34,7 @@ import { releaseJobLock, tryJobLock } from "./jobLock";
 import {
   closeStaleVisits,
   expireUnpaidHomeBookings,
+  sweepHomeRefunds,
   flagLateExperts,
   runHomeRetention,
   sendHomeReminders,
@@ -264,6 +265,9 @@ export const JOBS: JobDef[] = [
   // checked in but never completed are closed as completed instead.
   // Home Service: an unpaid visit frees its time once the payment window ends.
   { name: "home.expire", everyMs: MINUTE, safeToRunNow: true, run: expireUnpaidHomeBookings },
+  // Home visits are paid at the gateway: what a visit doesn't keep goes back
+  // there. Runs right after each event too; this is the net under them.
+  { name: "home.refunds", everyMs: 10 * MINUTE, safeToRunNow: true, run: sweepHomeRefunds },
   // A visit left IN_PROGRESS 3 h past its end is closed and settled; an
   // expert not there 45 min after the start is flagged (no-shows are Phase 8).
   { name: "home.stale", everyMs: 5 * MINUTE, safeToRunNow: false, run: closeStaleVisits },

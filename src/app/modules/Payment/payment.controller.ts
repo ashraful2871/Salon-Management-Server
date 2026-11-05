@@ -9,6 +9,7 @@ import { PaymentService } from "./payment.service";
 import { PaymentIntentService } from "./paymentIntent.service";
 import { audit } from "../../utils/audit";
 import { assertAdminPermission } from "../Admin/admin.middleware";
+import prisma from "../../shared/prisma";
 
 const createPayment = catchAsync(async (req: Request, res: Response) => {
   await assertAdminPermission(req, "finance.payouts");
@@ -109,13 +110,25 @@ const WALLET_PAGE = `${config.frontend_url}/dashboard/wallet`;
  * that has to guess. The transaction id rides along on all three: it is what
  * the page polls with, and what the customer quotes to support.
  */
-const resultPage = (
+const resultPage = async (
   outcome: "success" | "failed" | "cancelled",
   tranId?: string,
 ) => {
   // An owner's dues payment goes back to Money, which toasts from the param.
   if (tranId?.startsWith("DUES-")) {
     return `${config.frontend_url}/dashboard/money?dues=${outcome}&tran=${encodeURIComponent(tranId)}`;
+  }
+  // A home visit's advance goes straight back to the visit's own page: the
+  // wallet is not part of paying for it. The page reads the booking itself;
+  // `pay` only picks the first sentence.
+  if (tranId?.startsWith("HOME-")) {
+    const intent = await prisma.paymentIntent
+      .findUnique({ where: { transactionId: tranId }, select: { referenceId: true, provider: true } })
+      .catch(() => null);
+    if (intent?.referenceId) {
+      const q = new URLSearchParams({ via: intent.provider.toLowerCase(), pay: outcome, tran: tranId });
+      return `${config.frontend_url}/home-service/booking/${encodeURIComponent(intent.referenceId)}?${q.toString()}`;
+    }
   }
   const url = `${WALLET_PAGE}/payment/${outcome}`;
   return tranId ? `${url}?tran=${encodeURIComponent(tranId)}` : url;
@@ -152,7 +165,7 @@ const gatewayPayload = (req: Request) => ({
   ...((req.body ?? {}) as Record<string, string>),
 });
 
-const handleSuccessRedirect = (req: Request, res: Response) => {
+const handleSuccessRedirect = async (req: Request, res: Response) => {
   const payload = gatewayPayload(req);
 
   // Settle during the redirect as well as on the IPN, so localhost development
@@ -168,7 +181,7 @@ const handleSuccessRedirect = (req: Request, res: Response) => {
     );
   }
 
-  res.redirect(resultPage("success", payload.tran_id));
+  res.redirect(await resultPage("success", payload.tran_id));
 };
 
 /**
@@ -177,7 +190,7 @@ const handleSuccessRedirect = (req: Request, res: Response) => {
  * happened; if that lookup fails the intent stays pending and the
  * reconciliation sweep picks it up.
  */
-const handleFailRedirect = (req: Request, res: Response) => {
+const handleFailRedirect = async (req: Request, res: Response) => {
   const payload = gatewayPayload(req);
 
   if (payload.tran_id) {
@@ -191,10 +204,10 @@ const handleFailRedirect = (req: Request, res: Response) => {
     );
   }
 
-  res.redirect(resultPage("failed", payload.tran_id));
+  res.redirect(await resultPage("failed", payload.tran_id));
 };
 
-const handleCancelRedirect = (req: Request, res: Response) => {
+const handleCancelRedirect = async (req: Request, res: Response) => {
   const payload = gatewayPayload(req);
 
   if (payload.tran_id) {
@@ -208,7 +221,7 @@ const handleCancelRedirect = (req: Request, res: Response) => {
     );
   }
 
-  res.redirect(resultPage("cancelled", payload.tran_id));
+  res.redirect(await resultPage("cancelled", payload.tran_id));
 };
 
 const runReconciliation = catchAsync(async (req: Request, res: Response) => {
@@ -318,10 +331,10 @@ const handleBkashCallback = async (req: Request, res: Response) => {
   try {
     const { outcome, transactionId } =
       await PaymentIntentService.settleBkashCallback(paymentID, status);
-    res.redirect(resultPage(outcome, transactionId));
+    res.redirect(await resultPage(outcome, transactionId));
   } catch (error) {
     console.error("[payment.bkash] callback failed:", (error as Error).message);
-    res.redirect(resultPage("failed"));
+    res.redirect(await resultPage("failed"));
   }
 };
 

@@ -237,6 +237,13 @@ router.get(
   validateRequest(HomeValidation.bookingId),
   HomeController.ownerReassignCandidates,
 );
+// An "any available expert" visit: the branch picks who goes.
+router.post(
+  "/owner/bookings/:id/assign",
+  auth(...BUSINESS_ROLES),
+  validateRequest(HomeValidation.assign, { replaceBody: true }),
+  HomeController.ownerAssign,
+);
 router.post(
   "/owner/bookings/:id/reassign",
   auth(...BUSINESS_ROLES),
