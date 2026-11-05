@@ -568,6 +568,7 @@ export const reschedule = async (actor: Actor, id: string, body: RescheduleBody)
       blockFrom: true,
       blockTo: true,
       audience: true,
+      expertAssignedAt: true,
       items: { select: { offeringId: true } },
       salon: { select: { status: true, isDeleted: true, bookingPause: true } },
     },
@@ -610,6 +611,7 @@ export const reschedule = async (actor: Actor, id: string, body: RescheduleBody)
   const endAt = new Date(startAt.getTime() + durationMs);
   const blockFrom = new Date(startAt.getTime() - before);
   const blockTo = new Date(endAt.getTime() + after);
+  let needsExpert = false;
   const taken = () =>
     body.expertId === "ANY"
       ? fail(StatusCodes.CONFLICT, "No expert is free at that time. Pick another.", "NO_EXPERT_FREE")
@@ -649,6 +651,16 @@ export const reschedule = async (actor: Actor, id: string, body: RescheduleBody)
           }
         }
         if (!chosen) throw taken();
+        // Who does it now: the customer named them, or the same expert keeps
+        // the visit as it was; any other move leaves it for the branch to assign.
+        const picked = !!body.expertId && body.expertId !== "ANY";
+        const assignment =
+          picked
+            ? { expertAssignedAt: new Date(), expertAssignedById: actor.userId }
+            : chosen.id === b.expertId
+              ? {}
+              : { expertAssignedAt: null, expertAssignedById: null };
+        needsExpert = "expertAssignedAt" in assignment ? assignment.expertAssignedAt === null : b.expertAssignedAt === null;
 
         const n = await tx.homeBooking.updateMany({
           where: { id: b.id, status: HomeBookingStatus.CONFIRMED, startAt: b.startAt, rescheduleCount: b.rescheduleCount },
@@ -660,6 +672,7 @@ export const reschedule = async (actor: Actor, id: string, body: RescheduleBody)
             serviceDate: new Date(`${body.date}T00:00:00Z`),
             expertId: chosen.id,
             expertAudience: chosen.audience,
+            ...assignment,
             rescheduleCount: { increment: 1 },
             startCodeTries: 0,
             reminder24At: null,
@@ -684,6 +697,8 @@ export const reschedule = async (actor: Actor, id: string, body: RescheduleBody)
     if (isExclusionViolation(e) || isContention(e)) throw taken();
     throw e;
   }
+  // The branch picks (again) who goes at the new time.
+  if (needsExpert) homeNotice(id, { kind: "needs_expert" });
   return getBooking(actor.userId, id);
 };
 
@@ -692,7 +707,10 @@ export const reschedule = async (actor: Actor, id: string, body: RescheduleBody)
 // ---------------------------------------------------------------------------
 
 const myJob = async (userId: string, id: string) => {
-  const b = await prisma.homeBooking.findFirst({ where: { id, expert: { staff: { userId } } }, select: { id: true } });
+  const b = await prisma.homeBooking.findFirst({
+    where: { id, expertAssignedAt: { not: null }, expert: { staff: { userId } } },
+    select: { id: true },
+  });
   if (!b) throw new ApiError(StatusCodes.NOT_FOUND, "Job not found");
 };
 
@@ -893,8 +911,11 @@ export const rehomeExpertBookings = async (expertId: string, fallback: "SALON_CA
             await moveToExpertTx(tx, { ...b, offeringIds }, target, {
               actorId: a.ctx?.actorUserId ?? null,
               actorRole: a.actorRole,
-              reason: `Reassigned to ${target.staff.user.name}: ${a.reason}`,
+              reason: `Time held with ${target.staff.user.name}, waiting for the branch to assign: ${a.reason}`,
             });
+            // Never picked for the branch: the move only keeps the time. The
+            // branch assigns who actually goes (assignExpert).
+            await tx.homeBooking.update({ where: { id: b.id }, data: { expertAssignedAt: null, expertAssignedById: null } });
             await auditTx(tx, a.ctx, {
               action: "homeService.booking_reassign",
               entityType: "HomeBooking",
@@ -908,7 +929,7 @@ export const rehomeExpertBookings = async (expertId: string, fallback: "SALON_CA
           { maxWait: 10_000, timeout: 20_000 },
         );
         moved = true;
-        homeNotice(b.id, { kind: "reassigned", fromExpertId: expertId });
+        homeNotice(b.id, { kind: "needs_expert", tellCustomer: true });
         break;
       } catch (e) {
         if (e instanceof ApiError || isExclusionViolation(e) || isContention(e)) continue;

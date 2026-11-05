@@ -245,6 +245,7 @@ const jobView = (b: JobRow, noShowWaitMinutes: number, now = new Date()) => {
 const myJobWhere = (userId: string, id: string): Prisma.HomeBookingWhereInput => ({
   id,
   status: { notIn: UNPAID },
+  expertAssignedAt: { not: null },
   expert: { staff: { userId } },
 });
 
@@ -260,6 +261,8 @@ export const listMyJobs = async (userId: string, date?: string) => {
     prisma.homeBooking.findMany({
       where: {
         status: { notIn: UNPAID },
+        // An unassigned visit only holds this expert's time; it isn't theirs until the salon assigns it.
+        expertAssignedAt: { not: null },
         expert: { staff: { userId } },
         serviceDate: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T00:00:00Z`) },
       },
@@ -440,6 +443,7 @@ const BOARD = {
   subtotalMinor: true,
   travelFeeMinor: true,
   createdAt: true,
+  expertAssignedAt: true,
   expert: { select: { id: true, audience: true, staff: { select: { user: { select: { name: true } } } } } },
   customer: { select: { name: true } },
 } satisfies Prisma.HomeBookingSelect;
@@ -456,6 +460,9 @@ const boardView = (b: BoardRow) => ({
   endAt: b.endAt,
   salon: b.salon,
   expert: { id: b.expert.id, name: b.expert.staff.user.name, audience: b.expert.audience },
+  /** False: "any available expert", waiting for the branch to assign someone (`expert` only holds the time). */
+  expertAssigned: b.expertAssignedAt !== null,
+  expertAssignedAt: b.expertAssignedAt,
   customerName: b.customer.name,
   recipientName: b.recipientName,
   contactPhone: b.contactPhone,
@@ -491,12 +498,19 @@ export const listOwnerBookings = async (user: AccessUser, q: BoardQuery) => {
   if (salonIds && salonIds.length === 0) return { meta: { page, limit: PAGE_SIZE, total: 0, heldMinor: 0 }, data: [] };
 
   const scope = salonIds ? { salonId: { in: salonIds } } : {};
+  // Still to be assigned: confirmed, nobody picked, today or later (a missed one
+  // is past saving and goes through the no-show / cancel paths instead).
+  const waiting: Prisma.HomeBookingWhereInput = {
+    status: HomeBookingStatus.CONFIRMED,
+    expertAssignedAt: null,
+    serviceDate: { gte: new Date(`${dhakaDay(new Date())}T00:00:00Z`) },
+  };
   const where: Prisma.HomeBookingWhereInput = {
     ...scope,
-    AND: [boardTab(q.tab)],
+    AND: [boardTab(q.tab), q.needsExpert ? waiting : {}],
     status: q.status ? q.status : { notIn: UNPAID },
     ...(q.audience ? { audience: q.audience } : {}),
-    ...(q.expertId ? { expertId: q.expertId } : {}),
+    ...(q.expertId ? { expertId: q.expertId, expertAssignedAt: { not: null } } : {}),
     ...(q.from || q.to
       ? {
           serviceDate: {
@@ -506,7 +520,7 @@ export const listOwnerBookings = async (user: AccessUser, q: BoardQuery) => {
         }
       : {}),
   };
-  const [total, rows, held] = await Promise.all([
+  const [total, rows, held, needsExpert] = await Promise.all([
     prisma.homeBooking.count({ where }),
     prisma.homeBooking.findMany({
       where,
@@ -520,8 +534,15 @@ export const listOwnerBookings = async (user: AccessUser, q: BoardQuery) => {
       where: { ...scope, advanceStatus: AdvanceStatus.HELD, status: { in: ACTIVE_BOOKING_STATUSES } },
       _sum: { advanceMinor: true },
     }),
+    // Also the whole branch: the "needs an expert" chip's count.
+    prisma.homeBooking.count({
+      where: { ...scope, ...waiting },
+    }),
   ]);
-  return { meta: { page, limit: PAGE_SIZE, total, heldMinor: held._sum.advanceMinor ?? 0 }, data: rows.map(boardView) };
+  return {
+    meta: { page, limit: PAGE_SIZE, total, heldMinor: held._sum.advanceMinor ?? 0, needsExpert },
+    data: rows.map(boardView),
+  };
 };
 
 const loadBoardBooking = async (user: AccessUser, id: string) => {
@@ -533,6 +554,7 @@ const loadBoardBooking = async (user: AccessUser, id: string) => {
       status: true,
       audience: true,
       expertId: true,
+      expertAssignedAt: true,
       startAt: true,
       blockFrom: true,
       blockTo: true,
@@ -609,6 +631,8 @@ export const moveToExpertTx = async (
 export const reassign = async (user: AccessUser, ctx: AuditCtx, id: string, expertId: string, reason: string) => {
   const b = await loadBoardBooking(user, id);
   if (b.status !== HomeBookingStatus.CONFIRMED) throw invalidState("Only a confirmed visit that hasn't started can be reassigned.");
+  // Nobody has it yet: that's an assignment, not a move.
+  if (!b.expertAssignedAt) return assignExpert(user, ctx, id, expertId);
   if (b.expertId === expertId) throw new ApiError(StatusCodes.BAD_REQUEST, "This expert already has the visit.");
 
   const target = await prisma.homeExpert.findUnique({
@@ -668,8 +692,10 @@ export const reassignCandidates = async (user: AccessUser, id: string) => {
     excludeBookingId: b.id,
   });
   const free = byDay.get(day)?.find((s) => s.startAt.getTime() === b.startAt.getTime())?.expertIds ?? [];
+  // Unassigned, the expert holding the time is a fine choice too (they are free for it by construction).
+  const ids = b.expertAssignedAt ? free.filter((expertId) => expertId !== b.expertId) : [...new Set([b.expertId, ...free])];
   const experts = await prisma.homeExpert.findMany({
-    where: { id: { in: free.filter((expertId) => expertId !== b.expertId) } },
+    where: { id: { in: ids }, isActive: true, removedAt: null },
     select: { id: true, rating: true, completedJobs: true, staff: { select: { user: { select: { name: true, profilePhoto: true } } } } },
     orderBy: { rating: "desc" },
   });
@@ -680,6 +706,89 @@ export const reassignCandidates = async (user: AccessUser, id: string) => {
     rating: e.rating,
     completedJobs: e.completedJobs,
   }));
+};
+
+/**
+ * The branch picks who does an "any available expert" visit. The visit has
+ * held one free expert's time since it was booked (so the time can't be sold
+ * twice); picking that expert just confirms them, picking another moves the
+ * visit with the same checks as a reassign. Only then does the expert see the
+ * job, and the customer gets an email with their name.
+ */
+export const assignExpert = async (user: AccessUser, ctx: AuditCtx, id: string, expertId: string) => {
+  const b = await loadBoardBooking(user, id);
+  if (b.status !== HomeBookingStatus.CONFIRMED) throw invalidState("Only a confirmed visit that hasn't started can be assigned.");
+  if (b.expertAssignedAt) throw invalidState("This visit already has an expert. Use Reassign to change them.");
+
+  const target = await prisma.homeExpert.findUnique({
+    where: { id: expertId },
+    select: {
+      id: true,
+      salonId: true,
+      audience: true,
+      staffId: true,
+      verification: true,
+      isActive: true,
+      removedAt: true,
+      staff: { select: { user: { select: { name: true } } } },
+    },
+  });
+  if (!target || target.salonId !== b.salonId || !target.isActive || target.removedAt || target.verification !== "VERIFIED") {
+    throw fail(StatusCodes.NOT_FOUND, "This expert isn't available.", "EXPERT_UNAVAILABLE");
+  }
+  if (target.audience !== b.audience) {
+    throw fail(
+      StatusCodes.BAD_REQUEST,
+      b.audience === HomeAudience.LADIES ? "A Ladies visit needs a female expert." : "A Gents visit needs a male expert.",
+      "EXPERT_GENDER_MISMATCH",
+    );
+  }
+
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`;
+        if (target.id !== b.expertId) {
+          await moveToExpertTx(tx, { ...b, offeringIds: b.items.map((i) => i.offeringId) }, target, {
+            actorId: ctx.actorUserId,
+            actorRole: user.role,
+            reason: `Assigned to ${target.staff.user.name}`,
+          });
+        } else {
+          await tx.homeBookingEvent.create({
+            data: {
+              bookingId: id,
+              fromStatus: HomeBookingStatus.CONFIRMED,
+              toStatus: HomeBookingStatus.CONFIRMED,
+              actorId: ctx.actorUserId,
+              actorRole: user.role,
+              reason: `Assigned to ${target.staff.user.name}`,
+            },
+          });
+        }
+        const n = await tx.homeBooking.updateMany({
+          where: { id, status: HomeBookingStatus.CONFIRMED, expertAssignedAt: null, expertId: target.id },
+          data: { expertAssignedAt: new Date(), expertAssignedById: ctx.actorUserId },
+        });
+        if (!n.count) throw invalidState();
+        await auditTx(tx, ctx, {
+          action: "homeService.booking_assign",
+          entityType: "HomeBooking",
+          entityId: id,
+          salonId: b.salonId,
+          before: { expertAssigned: false },
+          after: { expertId: target.id },
+          reason: null,
+        });
+      },
+      { maxWait: 10_000, timeout: 20_000 },
+    );
+  } catch (e) {
+    if (isExclusionViolation(e) || isContention(e)) throw slotTaken();
+    throw e;
+  }
+  homeNotice(id, { kind: "assigned" });
+  return getBoardBooking(id);
 };
 
 /** ARRIVED → IN_PROGRESS without the code (the customer can't find it, or it locked). */

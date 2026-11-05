@@ -1,7 +1,7 @@
 import { AdvanceStatus, HomeBookingStatus, IntentPurpose, IntentStatus, PaymentIntent } from "@prisma/client";
 import prisma from "../../shared/prisma";
 import { systemAuditCtx } from "../../utils/audit";
-import { PaymentIntentService, type IntentRefundResult } from "../Payment/paymentIntent.service";
+import { ESCROW_DESCRIPTION, PaymentIntentService, type IntentRefundResult } from "../Payment/paymentIntent.service";
 
 /**
  * Home visits are paid at bKash or SSLCommerz, never from the wallet. The
@@ -20,6 +20,13 @@ import { PaymentIntentService, type IntentRefundResult } from "../Payment/paymen
  * from the `home.refunds` sweep, which catches a crash between the two.
  * A refund the gateway refused is retried by the sweep up to MAX_FAILED times,
  * then left for an admin (Top-ups & Refunds lists it).
+ *
+ * Only escrow payments are refunded here. Before 2026-11-05 a home payment was
+ * an ordinary top-up: a cancellation released it to the customer's wallet as
+ * spendable money ("money returned to your wallet"), and much of it has been
+ * spent since. Those visits were settled under the old rules and are left
+ * alone; sending them to the gateway now would take wallet money the customer
+ * already used (the wallet refuses: "Insufficient available balance").
  */
 
 const MAX_FAILED = 3;
@@ -34,6 +41,22 @@ const WAS_HELD: AdvanceStatus[] = [
   AdvanceStatus.PARTIALLY_FORFEITED,
   AdvanceStatus.FORFEITED,
 ];
+
+/**
+ * Escrow payments, by intent id. New ones carry `metadata.escrow`; the
+ * description covers those taken between the switch and that flag.
+ */
+const escrowIntentIds = async (intentIds: string[]) => {
+  const rows = await prisma.walletTransaction.findMany({
+    where: {
+      referenceType: "TOPUP",
+      referenceId: { in: intentIds },
+      OR: [{ metadata: { path: ["escrow"], equals: true } }, { description: { startsWith: ESCROW_DESCRIPTION } }],
+    },
+    select: { referenceId: true },
+  });
+  return new Set(rows.map((r) => r.referenceId));
+};
 
 type BookingMoney = {
   id: string;
@@ -80,10 +103,13 @@ export const syncHomeRefund = async (bookingId: string, reason: string, opts: { 
       select: { id: true, code: true, status: true, advanceMinor: true, advanceStatus: true, refundedMinor: true, paymentIntentId: true },
     });
     if (!b) return summary;
-    const intents = await prisma.paymentIntent.findMany({
+    const paid = await prisma.paymentIntent.findMany({
       where: { purpose: IntentPurpose.HOME_BOOKING, referenceId: b.id, status: IntentStatus.SUCCESS },
       orderBy: { createdAt: "asc" },
     });
+    if (!paid.length) return summary;
+    const escrow = await escrowIntentIds(paid.map((i) => i.id));
+    const intents = paid.filter((i) => escrow.has(i.id));
     if (!intents.length) return summary;
 
     const due = gatewayRefundsDue(b, intents);
@@ -127,6 +153,11 @@ export const sweepHomeRefunds = async () => {
     FROM home_bookings b
     JOIN payment_intents i ON i."referenceId" = b.id AND i.purpose = 'HOME_BOOKING' AND i.status = 'SUCCESS'
     WHERE b.status <> 'PENDING_PAYMENT'
+      AND EXISTS (
+        SELECT 1 FROM wallet_transactions w
+        WHERE w."referenceType" = 'TOPUP' AND w."referenceId" = i.id
+          AND (w.metadata->>'escrow' = 'true' OR w.description LIKE ${ESCROW_DESCRIPTION + "%"})
+      )
       AND i."completedAt" < ${settledBefore}
       AND i."completedAt" > ${since}
       AND (

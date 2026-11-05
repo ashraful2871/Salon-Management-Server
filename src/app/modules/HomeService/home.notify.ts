@@ -38,6 +38,10 @@ export type HomeNotice =
   | { kind: "completed" }
   | { kind: "ended"; outcome: Outcome; balanceReleasedMinor: number }
   | { kind: "reassigned"; fromExpertId: string }
+  /** The branch picked the expert for an "any available expert" visit. */
+  | { kind: "assigned" }
+  /** A visit (re)scheduled with no expert assigned: the branch has to pick one. */
+  | { kind: "needs_expert"; tellCustomer?: boolean }
   | { kind: "appeal"; approved: boolean; refundedMinor: number };
 
 const ROW = {
@@ -63,6 +67,7 @@ const ROW = {
   noShowParty: true,
   disclaimerText: true,
   policySnapshot: true,
+  expertAssignedAt: true,
   customer: { select: { name: true, email: true } },
   salon: { select: { name: true, phone: true } },
   expert: { select: { staff: { select: { userId: true, user: { select: { name: true } } } } } },
@@ -117,8 +122,12 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
   try {
     const b = await prisma.homeBooking.findUnique({ where: { id: bookingId }, select: ROW });
     if (!b) return;
-    const expertName = b.expert.staff.user.name;
-    const expertUserId = b.expert.staff.userId;
+    // Unassigned ("any available expert", the branch hasn't picked yet): the
+    // expert on the row only holds the time, so nobody hears their name and
+    // they hear nothing.
+    const assigned = b.expertAssignedAt !== null;
+    const expertName = assigned ? b.expert.staff.user.name : "Being assigned by the salon";
+    const expertUserId = assigned ? b.expert.staff.userId : null;
     const services = b.items.map((i) => i.nameSnapshot).join(", ");
     const at = when(b.startAt);
     const name = b.customer.name || "there";
@@ -143,7 +152,9 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
             heading: "Your home visit is booked",
             name,
             lines: [
-              `${expertName} from ${b.salon.name} will come to you on ${at}.`,
+              assigned
+                ? `${expertName} from ${b.salon.name} will come to you on ${at}.`
+                : `${b.salon.name} will assign a verified expert for your visit on ${at}. We'll email you their name as soon as they do.`,
               `Your ${formatBDT(b.advanceMinor)} advance is held by ${SITE_NAME}; the salon is paid after the visit. ${
                 b.balanceMinor > 0 ? `${formatBDT(b.balanceMinor)} is left to pay on the day.` : ""
               }`.trim(),
@@ -156,6 +167,15 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
             cta: myVisit,
           }),
         );
+        if (!assigned) {
+          await toBranch(b.salonId, "home.booking.needs_expert", {
+            title: `New home visit ${b.code}: assign an expert`,
+            body: `${at} · ${services}. The customer chose any available expert. Pick who goes on your Home Service board.`,
+            link: boardLink,
+            dedupeKey: `home.booking.needs_expert:${b.id}:new`,
+          });
+          return;
+        }
         await toBranchAndExpert(b.salonId, expertUserId, "home.booking.confirmed", {
           title: `Home visit ${b.code} booked`,
           body: `${firstName(expertName)} · ${at} · ${services}. ${formatBDT(b.advanceMinor)} advance held — paid to you after the visit.`,
@@ -174,13 +194,25 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
             heading: n.when === "24h" ? "Your home visit is tomorrow" : "Your home visit is in 2 hours",
             name,
             lines: [
-              `${expertName} is coming ${soon}, at ${at}.`,
+              assigned
+                ? `${expertName} is coming ${soon}, at ${at}.`
+                : `Your visit is ${soon}, at ${at}. ${b.salon.name} is assigning your expert, and we'll email you their name.`,
               "Keep your start code ready: it is on your visit page, and your expert needs it to begin.",
             ],
             rows: [...visitRows, ["Address", b.addressLine], ["Left to pay", formatBDT(b.balanceMinor)]],
             cta: myVisit,
           }),
         );
+        if (!assigned) {
+          // Nobody is going yet: the branch hears it again, louder as it nears.
+          await toBranch(b.salonId, "home.booking.needs_expert", {
+            title: `Assign an expert now: ${b.code} is ${soon}`,
+            body: `${at} · ${services}. No expert is assigned to this home visit yet.`,
+            link: boardLink,
+            dedupeKey: `home.booking.needs_expert:${b.id}:${n.when}:${b.startAt.getTime()}`,
+          });
+          return;
+        }
         await notify([expertUserId], "home.booking.reminder", {
           title: `Home visit ${soon}: ${b.code}`,
           body: `${at} · ${b.area ?? "address shown 2 hours before"} · ${services}`,
@@ -286,14 +318,68 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
               ? `Expert didn't arrive: ${b.code}`
               : `Customer not home: ${b.code}`
             : `Home visit ${b.code} cancelled`,
-          body: `${at} · ${firstName(expertName)}. ${salonLine}`,
+          body: `${at} · ${assigned ? firstName(expertName) : "no expert assigned"}. ${salonLine}`,
           link: boardLink,
           dedupeKey: `${event}:${b.id}`,
         });
         return;
       }
 
+      case "needs_expert": {
+        if (assigned) return;
+        if (n.tellCustomer) {
+          await emailCustomer(
+            b.customer.email,
+            `Your home visit ${b.code} is getting a new expert`,
+            getHomeVisitTemplate({
+              heading: "Your expert has changed",
+              name,
+              lines: [
+                `The expert we told you about can no longer do your visit on ${at}. Your time is kept, and ${b.salon.name} is assigning another verified expert.`,
+                "We'll email you their name as soon as they do. Your start code stays the same.",
+              ],
+              rows: visitRows,
+              cta: myVisit,
+            }),
+          );
+        }
+        await toBranch(b.salonId, "home.booking.needs_expert", {
+          title: `Assign an expert: ${b.code} moved to ${at}`,
+          body: `${services}. The customer moved this visit; pick who goes at the new time.`,
+          link: boardLink,
+          dedupeKey: `home.booking.needs_expert:${b.id}:moved:${b.startAt.getTime()}`,
+        });
+        return;
+      }
+
+      case "assigned": {
+        await emailCustomer(
+          b.customer.email,
+          `Your expert for home visit ${b.code}: ${expertName}`,
+          getHomeVisitTemplate({
+            heading: "Your expert is assigned",
+            name,
+            lines: [
+              `${b.salon.name} assigned ${expertName} to your home visit on ${at}.`,
+              "They are verified by our team. Read them your start code when they arrive, not before.",
+            ],
+            rows: [...visitRows, ["Address", b.addressLine], ["Left to pay", formatBDT(b.balanceMinor)]],
+            cta: myVisit,
+          }),
+        );
+        await notify([expertUserId], "home.booking.assigned", {
+          title: `New home visit for you: ${b.code}`,
+          body: `${at} · ${b.area ?? "address shown 2 hours before"} · ${services}`,
+          link: jobLink,
+          salonId: b.salonId,
+          dedupeKey: `home.booking.assigned:${b.id}:${b.expertId}`,
+        });
+        return;
+      }
+
       case "reassigned": {
+        // Before the branch has picked anyone, a move only shifted the hold: nobody to tell.
+        if (!assigned) return;
         await emailCustomer(
           b.customer.email,
           `New expert for your home visit ${b.code}`,

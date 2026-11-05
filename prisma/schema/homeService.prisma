@@ -169,6 +169,11 @@ model HomeBooking {
 
   startCodeTries Int              @default(0)
   confirmedAt    DateTime?        @db.Timestamptz(3)
+  /// When the salon (or the customer, by picking someone) fixed who does the
+  /// visit. Null for an "any available expert" booking the salon hasn't
+  /// assigned yet: `expertId` is then only a hold on the time, shown to nobody.
+  expertAssignedAt   DateTime?    @db.Timestamptz(3)
+  expertAssignedById String?
   enRouteAt      DateTime?        @db.Timestamptz(3)
   arrivedAt      DateTime?        @db.Timestamptz(3)
   startedAt      DateTime?        @db.Timestamptz(3)

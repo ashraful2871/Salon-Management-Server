@@ -70,7 +70,7 @@ export const customerReport = async (actor: Actor, id: string, body: SafetyRepor
 /** POST /jobs/:id/report: only the assigned expert, else 404. */
 export const expertReport = async (userId: string, id: string, body: SafetyReportBody) => {
   const b = await prisma.homeBooking.findFirst({
-    where: { id, expert: { staff: { userId } } },
+    where: { id, expertAssignedAt: { not: null }, expert: { staff: { userId } } },
     select: { id: true, status: true },
   });
   if (!b) throw new ApiError(StatusCodes.NOT_FOUND, "Job not found");

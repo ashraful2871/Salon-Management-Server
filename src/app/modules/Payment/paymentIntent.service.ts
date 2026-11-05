@@ -346,7 +346,7 @@ const creditSettledIntent = async (
           amount: intent.amountMinor,
           description:
             intent.purpose === IntentPurpose.HOME_BOOKING
-              ? `Home visit payment via ${settled.method ?? provider.displayName}`
+              ? `${ESCROW_DESCRIPTION}${settled.method ?? provider.displayName}`
               : `Top-up via ${settled.method ?? provider.displayName}`,
           referenceType: "TOPUP",
           referenceId: intent.id,
@@ -359,6 +359,8 @@ const creditSettledIntent = async (
             method: settled.method ?? null,
             provider: intent.provider,
             gatewayEnv: provider.isTestMode() ? "sandbox" : "live",
+            // Held for the visit, never spendable: what home.refund.ts may send back.
+            ...(intent.purpose === IntentPurpose.HOME_BOOKING ? { escrow: true } : {}),
           },
           // The final replay guard: even if every check above is passed twice,
           // this key means the money only lands once.
@@ -945,6 +947,9 @@ export type IntentRefundResult = {
  * A definite "no" from the gateway puts the money back in the wallet and
  * returns FAILED; a timeout returns UNKNOWN (the wallet stays debited).
  */
+/** The escrow credit of a home-visit payment starts with this (home.refund.ts relies on it). */
+export const ESCROW_DESCRIPTION = "Home visit payment via ";
+
 const refundIntent = async (
   intent: PaymentIntent,
   opts: {

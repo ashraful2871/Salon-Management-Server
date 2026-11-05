@@ -526,6 +526,10 @@ export const createBooking = async (actor: Actor, body: CreateBookingBody, idemp
             expertId: chosen.id,
             audience: q.cart.audience,
             expertAudience: chosen.audience,
+            // A picked expert is assigned now. "Any available expert" only
+            // holds this one's time: the branch picks who goes (assignExpert).
+            expertAssignedAt: specific ? now : null,
+            expertAssignedById: specific ? actor.userId : null,
             status: HomeBookingStatus.PENDING_PAYMENT,
             startAt: q.startAt,
             endAt: q.endAt,
@@ -799,6 +803,7 @@ const SUMMARY = {
   feeMinor: true,
   refundedMinor: true,
   createdAt: true,
+  expertAssignedAt: true,
   salon: { select: { id: true, name: true, area: true, images: true } },
   expert: { select: EXPERT_CARD },
   items: { select: { nameSnapshot: true } },
@@ -820,7 +825,13 @@ const summaryOf = (b: Prisma.HomeBookingGetPayload<{ select: typeof SUMMARY }>) 
   refundedMinor: b.refundedMinor,
   createdAt: b.createdAt,
   salon: { id: b.salon.id, name: b.salon.name, area: b.salon.area, image: b.salon.images[0] ?? null },
-  expert: expertCardOf(b.expert),
+  // Null until the branch assigns someone to an "any available expert"
+  // visit: the expert on the row only holds the time and may still change.
+  expert: b.expertAssignedAt ? expertCardOf(b.expert) : null,
+  expertAssigned: b.expertAssignedAt !== null,
+  expertAssignedAt: b.expertAssignedAt,
+  /** Where "Book again" starts: any expert who does the cart, with "any" kept when it was chosen. */
+  bookAgain: { expertId: b.expert.id, any: b.expertAssignedAt === null },
   services: b.items.map((i) => i.nameSnapshot),
 });
 

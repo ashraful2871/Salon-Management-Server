@@ -165,7 +165,14 @@ const adminExpertGender = catchAsync(async (req: Request, res: Response) => {
 
 // ---------------------------------------------------------------- public reads
 
-const viewerOf = (req: Request) => (req.user?.userId ? { userId: String(req.user.userId) } : undefined);
+const viewerOf = (req: Request) =>
+  req.user?.userId
+    ? {
+        userId: String(req.user.userId),
+        // Set by optionalAuth from the user it already read; absent → one lookup later.
+        ...(typeof req.user.isTest === "boolean" ? { isTest: req.user.isTest } : {}),
+      }
+    : undefined;
 
 const publicCatalog = catchAsync(async (req: Request, res: Response) => {
   ok(res, "Home Service catalog", await Public.getCatalog(viewerOf(req), req.query));
@@ -280,6 +287,7 @@ const ownerBookings = catchAsync(async (req: Request, res: Response) => {
     status: q.status as Lifecycle.BoardQuery["status"],
     audience: q.audience as HomeAudience | undefined,
     expertId: q.expertId,
+    needsExpert: q.needsExpert === "1" || q.needsExpert === "true" ? "1" : undefined,
     from: q.from,
     to: q.to,
     page: Math.max(1, Number(q.page) || 1),
@@ -294,6 +302,10 @@ const ownerReassignCandidates = catchAsync(async (req: Request, res: Response) =
 const ownerReassign = catchAsync(async (req: Request, res: Response) => {
   const data = await Lifecycle.reassign(withAccessCache(req), ctxOf(req), id(req), req.body.expertId, req.body.reason);
   ok(res, "Visit reassigned", data);
+});
+
+const ownerAssign = catchAsync(async (req: Request, res: Response) => {
+  ok(res, "Expert assigned", await Lifecycle.assignExpert(withAccessCache(req), ctxOf(req), id(req), req.body.expertId));
 });
 
 const ownerOverrideStart = catchAsync(async (req: Request, res: Response) => {
@@ -455,6 +467,7 @@ export const HomeController = {
   ownerBookings,
   ownerReassignCandidates,
   ownerReassign,
+  ownerAssign,
   ownerOverrideStart,
   quote,
   createBooking,
