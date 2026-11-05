@@ -641,8 +641,9 @@ export const SETTINGS = {
   }),
   "homeService.gentsEnabled": def<boolean>({
     ...bool(),
-    // Off at launch: Home Service opens with Ladies only (decided 2026-11-04).
-    default: false,
+    // On since 2026-11-05: every seeded Gents/Unisex salon serves Gents at home
+    // (it was off at launch, 2026-11-04). The frontend's HOME_SERVICE_DEFAULTS agrees.
+    default: true,
     group: "flags",
     label: "Gents at Home",
     help: "Off hides the Gents side and stops new Gents home bookings.",
