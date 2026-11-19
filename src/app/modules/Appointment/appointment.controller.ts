@@ -58,6 +58,17 @@ const bookAppointment = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const quoteAppointment = catchAsync(async (req: Request, res: Response) => {
+  const result = await AppointmentService.quoteAppointment(req.user!.userId, req.body);
+
+  sendResponse(res, {
+    statusCode: StatusCodes.OK,
+    success: true,
+    message: "Booking quoted",
+    data: result,
+  });
+});
+
 const getAllAppointments = catchAsync(async (req: Request, res: Response) => {
   await asAdmin(req, "bookings.view");
   const userId = req.user?.userId;
@@ -419,6 +430,7 @@ export const AppointmentController = {
   getCalendar,
   reschedule,
   bookAppointment,
+  quoteAppointment,
   bookWalkIn,
   getAllAppointments,
   getMyAppointments,

@@ -29,6 +29,8 @@ export type BillableAppointment = {
   totalMinor: number;
   /** Taken off at checkout; absent on rows selected without it (= 0). */
   discountMinor?: number;
+  /** Platform-funded referral discount; absent = 0. Never lowers `billableMinor`. */
+  promoDiscountMinor?: number;
   depositMinor: number;
   /** Rest of the bill paid in the app (owner Phase 15); absent = 0. */
   prepaidMinor?: number;
@@ -41,7 +43,17 @@ export type BillableAppointment = {
 export const billableMinor = (a: { totalMinor: number; discountMinor?: number | null }) =>
   Math.max(a.totalMinor - (a.discountMinor ?? 0), 0);
 
+/** What the customer pays in all: the billable amount less the platform's
+ *  referral discount (the platform pays the salon that part). Cash figures use
+ *  this; commission and salon earnings use `billableMinor`. */
+export const customerPaysMinor = (a: {
+  totalMinor: number;
+  discountMinor?: number | null;
+  promoDiscountMinor?: number | null;
+}) => Math.max(billableMinor(a) - (a.promoDiscountMinor ?? 0), 0);
+
 export const paymentSummary = (a: BillableAppointment) => {
+  const promoMinor = Math.max(a.promoDiscountMinor ?? 0, 0);
   // A HELD deposit has left the customer's wallet just as surely as an APPLIED
   // one; it only has not been booked to the salon yet.
   const depositPaidMinor =
@@ -68,6 +80,7 @@ export const paymentSummary = (a: BillableAppointment) => {
   ) {
     return {
       billableMinor: billableMinor(a),
+      promoMinor,
       depositPaidMinor,
       prepaidPaidMinor,
       paidInApp,
@@ -77,8 +90,10 @@ export const paymentSummary = (a: BillableAppointment) => {
     };
   }
 
+  // The referral discount is the platform's to pay, so the counter collects
+  // that much less.
   const amountDueMinor = Math.max(
-    billableMinor(a) - depositPaidMinor - prepaidPaidMinor - paidAtCounterMinor,
+    billableMinor(a) - promoMinor - depositPaidMinor - prepaidPaidMinor - paidAtCounterMinor,
     0,
   );
 
@@ -92,6 +107,7 @@ export const paymentSummary = (a: BillableAppointment) => {
 
   return {
     billableMinor: billableMinor(a),
+    promoMinor,
     depositPaidMinor,
     prepaidPaidMinor,
     paidInApp,
@@ -107,4 +123,4 @@ export const withPaymentSummary = <T extends BillableAppointment>(a: T) => ({
   ...paymentSummary(a),
 });
 
-export const AppointmentBilling = { billableMinor, paymentSummary, withPaymentSummary };
+export const AppointmentBilling = { billableMinor, customerPaysMinor, paymentSummary, withPaymentSummary };

@@ -24,7 +24,8 @@ export type SettingGroup =
   | "retention"
   | "system"
   | "content"
-  | "homeService";
+  | "homeService"
+  | "referral";
 
 export type SettingKind = "int" | "number" | "boolean" | "announcement" | "list" | "text" | "choice";
 
@@ -83,6 +84,16 @@ const num = (min: number, max: number) =>
 const bool = () => ({ schema: z.boolean(), kind: "boolean" as const });
 const text = (max: number) => ({ schema: z.string().trim().max(max), kind: "text" as const });
 const envText = (name: string) => () => raw(name);
+/** The referral share text: up to 280 chars and it must carry the code or the link. */
+const shareText = () => ({
+  schema: z
+    .string()
+    .trim()
+    .min(1)
+    .max(280)
+    .refine((t) => t.includes("{code}") || t.includes("{link}"), "Include {code} or {link}"),
+  kind: "text" as const,
+});
 const choice = <const T extends readonly [string, ...string[]]>(options: T) =>
   ({ schema: z.enum(options), kind: "choice" as const, options });
 /** A Dhaka wall-clock time, "HH:MM". */
@@ -933,6 +944,200 @@ export const SETTINGS = {
     help: "How many upcoming home visits one customer can hold at once.",
     tier: 3,
   }),
+
+  /* ------------------------------------------------------------ referral */
+  // Every number in the program. Each reward snapshots its percent, cap,
+  // minimum, scope and expiry when issued, so a change here only affects
+  // rewards issued after it.
+  "referral.enabled": def<boolean>({
+    ...bool(),
+    default: false,
+    group: "flags",
+    label: "Referral program",
+    help: "Kill switch: off pauses the program. Codes stop attaching at sign-up and the invite and Refer & earn pages say it is paused. Rewards already due for referrals made while it was on are still issued.",
+    public: true,
+    tier: 2,
+  }),
+  "referral.redemptionsEnabled": def<boolean>({
+    ...bool(),
+    default: true,
+    group: "flags",
+    label: "Referral rewards at checkout",
+    help: "Kill switch: off hides rewards from booking prices and no new booking can use one. Bookings that already hold a reward keep their discount.",
+    public: true,
+    tier: 2,
+  }),
+  "referral.refereePercent": def<number>({
+    ...int(1, 50),
+    default: 5,
+    group: "referral",
+    label: "Friend's discount (%)",
+    help: "Off the friend's first booking (salon or Home Service per scope). Issued rewards keep the percent they were issued with.",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "referral.refereeMaxDiscountMinor": def<number>({
+    ...int(0, 500_000),
+    default: 30_000,
+    group: "referral",
+    label: "Friend's discount cap (poisha)",
+    help: "The most the friend's discount takes off one booking; 0 means no cap. Issued rewards keep the cap they were issued with.",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "referral.refereeValidDays": def<number>({
+    ...int(1, 365),
+    default: 30,
+    group: "referral",
+    label: "Friend's discount lasts (days)",
+    help: "How long the friend has to use their discount once their email is verified. Issued rewards keep their expiry date.",
+    public: true,
+    tier: 3,
+  }),
+  "referral.refereeScope": def<"ALL" | "SALON" | "HOME">({
+    ...choice(["ALL", "SALON", "HOME"]),
+    default: "ALL",
+    group: "referral",
+    label: "Friend's discount works on",
+    help: "ALL: a salon booking or a Home Service visit. SALON: salon bookings only. HOME: Home Service visits only. Issued rewards keep their scope.",
+    public: true,
+    tier: 3,
+  }),
+  "referral.referrerPercent": def<number>({
+    ...int(1, 50),
+    default: 10,
+    group: "referral",
+    label: "Referrer's reward (%)",
+    help: "Off one booking for the customer who shared the code, earned for each friend who qualifies. Issued rewards keep the percent they were issued with.",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "referral.referrerMaxDiscountMinor": def<number>({
+    ...int(0, 500_000),
+    default: 50_000,
+    group: "referral",
+    label: "Referrer's reward cap (poisha)",
+    help: "The most one referrer reward takes off a booking; 0 means no cap. Issued rewards keep the cap they were issued with.",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "referral.referrerValidDays": def<number>({
+    ...int(1, 365),
+    default: 90,
+    group: "referral",
+    label: "Referrer's reward lasts (days)",
+    help: "How long the referrer has to use each reward after earning it. Issued rewards keep their expiry date.",
+    public: true,
+    tier: 3,
+  }),
+  "referral.referrerScope": def<"ALL" | "SALON" | "HOME">({
+    ...choice(["ALL", "SALON", "HOME"]),
+    default: "SALON",
+    group: "referral",
+    label: "Referrer's reward works on",
+    help: "ALL: a salon booking or a Home Service visit. SALON: salon bookings only. HOME: Home Service visits only. Issued rewards keep their scope.",
+    public: true,
+    tier: 3,
+  }),
+  "referral.referrerTrigger": def<"FIRST_BOOKING_COMPLETED" | "REFEREE_VERIFIED">({
+    ...choice(["FIRST_BOOKING_COMPLETED", "REFEREE_VERIFIED"]),
+    default: "FIRST_BOOKING_COMPLETED",
+    group: "referral",
+    label: "When the referrer earns",
+    help: "FIRST_BOOKING_COMPLETED: when the friend completes their first booking made on the site. REFEREE_VERIFIED: as soon as the friend verifies their email, before they have booked (easier to abuse).",
+    public: true,
+    approval: true,
+    tier: 3,
+  }),
+  "referral.minOrderMinor": def<number>({
+    ...int(0, 1_000_000),
+    default: 0,
+    group: "referral",
+    label: "Minimum booking for a reward (poisha)",
+    help: "A reward applies only when the booked services reach this amount (a Home Service travel fee never counts), and the friend's first booking must reach it for the referrer to earn. 0 means no minimum. Issued rewards keep the minimum they were issued with.",
+    public: true,
+    tier: 3,
+  }),
+  "referral.qualifyWindowDays": def<number>({
+    ...int(7, 365),
+    default: 60,
+    group: "referral",
+    label: "Days a friend has to qualify",
+    help: "The friend must complete their first booking within this many days of joining for the referrer to earn. After that the referral expires; the friend keeps their own discount until it runs out.",
+    tier: 3,
+  }),
+  "referral.maxRewardsPerMonth": def<number>({
+    ...int(0, 1_000),
+    default: 10,
+    group: "referral",
+    label: "Referrer rewards per month",
+    help: "The most referrer rewards one customer can earn in a calendar month; 0 means no cap. Friends who join past the cap still get their own discount.",
+    public: true,
+    tier: 3,
+  }),
+  "referral.maxRewardsLifetime": def<number>({
+    ...int(0, 10_000),
+    default: 50,
+    group: "referral",
+    label: "Referrer rewards in total",
+    help: "The most referrer rewards one customer can ever earn; 0 means no cap. Friends who join past the cap still get their own discount.",
+    tier: 3,
+  }),
+  "referral.attributionDays": def<number>({
+    ...int(1, 90),
+    default: 30,
+    group: "referral",
+    label: "Invite link remembered for (days)",
+    help: "How long a clicked invite link is remembered in the visitor's browser before they sign up. The last link clicked wins, and a code typed in the sign-up form beats any link.",
+    public: true,
+    tier: 3,
+  }),
+  "referral.restoreOnCancel": def<boolean>({
+    ...bool(),
+    default: true,
+    group: "referral",
+    label: "Give the reward back on cancel",
+    help: "On: a reward used on a booking that is cancelled (or a Home Service visit left unpaid) goes back to the customer while it is still valid. Off: the reward is lost.",
+    public: true,
+    tier: 3,
+  }),
+  "referral.restoreOnNoShow": def<boolean>({
+    ...bool(),
+    default: false,
+    group: "referral",
+    label: "Give the reward back on a no-show",
+    help: "On: a customer who doesn't turn up keeps their reward. Off: a no-show uses it up (an upheld no-show appeal still gives it back).",
+    tier: 3,
+  }),
+  "referral.holdFlagged": def<boolean>({
+    ...bool(),
+    default: true,
+    group: "referral",
+    label: "Hold suspicious referrer rewards",
+    help: "On: a referrer reward with a risk flag (same device or network, many sign-ups in a day, disposable email, reused phone, booking closed automatically) waits for an admin review before the customer can use it. Off: it is issued at once.",
+    tier: 3,
+  }),
+  "referral.velocityPerDay": def<number>({
+    ...int(1, 100),
+    default: 5,
+    group: "referral",
+    label: "Sign-ups per code per day before flagging",
+    help: "More sign-ups than this on one code within 24 h flags them as unusual. Nobody is refused; the referrer's reward is held for review when 'Hold suspicious referrer rewards' is on.",
+    tier: 3,
+  }),
+  "referral.shareMessage": def<string>({
+    ...shareText(),
+    default: "Get {percent}% off your first booking on {site} with my code {code}: {link}",
+    group: "referral",
+    label: "Share message",
+    help: "What customers send when they share their code. Placeholders: {percent} {code} {link} {site} {cap}. It must include {code} or {link}.",
+    public: true,
+    tier: 3,
+  }),
 };
 
 export type SettingKey = keyof typeof SETTINGS;
@@ -948,6 +1153,7 @@ export const settingPermission = (key: SettingKey) => {
   if (group === "flags") return "flags.manage" as const;
   if (group === "content") return "content.manage" as const;
   if (group === "homeService") return "homeservice.policy" as const;
+  if (group === "referral") return "referrals.policy" as const;
   return "settings.manage" as const;
 };
 

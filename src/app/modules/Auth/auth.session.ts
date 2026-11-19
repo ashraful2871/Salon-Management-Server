@@ -39,7 +39,16 @@ export type TwoFactorRequired = {
   redirect?: string;
 };
 
-export type AuthResult = SignedIn | VerificationRequired | TwoFactorRequired;
+/**
+ * Only on a Google sign-in that carried an invite code (`rf`): whether it was
+ * attached, and if not why - REFERRAL_NOT_NEW_ACCOUNT (the account already
+ * existed) or a refusal code. A Google sign-in never fails over a code.
+ */
+export type ReferralOutcome = { applied: boolean; reason?: string };
+
+export type AuthResult = (SignedIn | VerificationRequired | TwoFactorRequired) & {
+  referral?: ReferralOutcome;
+};
 
 /** Admin and agent sessions must sign in again 12 h after the original sign-in. */
 export const ADMIN_SESSION_MAX_SECONDS = 12 * 60 * 60;

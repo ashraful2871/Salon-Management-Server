@@ -75,7 +75,10 @@ export type Block =
         endTime: string | null;
       };
       priceMinor: number;
+      /** The referral reward applied automatically (the best one), or null. */
+      promo?: { label: string; discountMinor: number } | null;
       depositMinor: number;
+      /** price − promo − deposit − prepaid. */
       dueAtSalonMinor: number;
       /** ISO instant, or null when free cancellation has already lapsed. */
       freeCancellationUntil: string | null;

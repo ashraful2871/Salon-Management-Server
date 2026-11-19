@@ -409,3 +409,20 @@ export const homeSearchLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, message: "Too many searches. Try again in a minute." },
 });
+
+/**
+ * The public invite-code lookup (GET /referrals/code/:code). Thirty a minute
+ * per visitor covers a person opening a link and typing a code; a script
+ * guessing codes runs out at once. Per visitor via clientIp, as geoLimiter.
+ */
+export const referralLookupLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many code checks. Please wait a minute and try again.",
+  },
+});

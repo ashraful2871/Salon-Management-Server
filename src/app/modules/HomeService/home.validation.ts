@@ -186,6 +186,8 @@ const quoteFields = {
   recipientIsWoman: z.boolean().optional(),
   contactPhone: loose(40),
   notes: loose(2000).optional(),
+  /** Referral reward: absent = the best one, null = none, an id = that one. */
+  rewardId: z.string().uuid().nullable().optional(),
 };
 
 const quote = z.object({ body: z.object(quoteFields) });

@@ -1,16 +1,27 @@
 import { z } from "zod";
 
+const bookingFields = {
+  salonId: z.string().nonempty({ message: "Salon ID is required" }),
+  serviceId: z.string().nonempty({ message: "Service ID is required" }),
+  staffId: z.string().optional(),
+  counterId: z.string().nonempty({ message: "Counter ID is required" }),
+  slotId: z.string().nonempty({ message: "Slot ID is required" }),
+  /** Pay the whole bill from the wallet now (owner Phase 15). */
+  payInFull: z.boolean().optional(),
+  /** Referral reward: absent = the best one, null = none, an id = that one. */
+  rewardId: z.string().uuid().nullable().optional(),
+};
+
 const bookAppointmentValidation = z.object({
   body: z.object({
-    salonId: z.string().nonempty({ message: "Salon ID is required" }),
-    serviceId: z.string().nonempty({ message: "Service ID is required" }),
-    staffId: z.string().optional(),
-    counterId: z.string().nonempty({ message: "Counter ID is required" }),
-    slotId: z.string().nonempty({ message: "Slot ID is required" }),
+    ...bookingFields,
     notes: z.string().optional(),
-    /** Pay the whole bill from the wallet now (owner Phase 15). */
-    payInFull: z.boolean().optional(),
   }),
+});
+
+/** `POST /appointments/quote`: the booking body without notes. */
+const quoteAppointmentValidation = z.object({
+  body: z.object(bookingFields),
 });
 
 const walkInValidation = z.object({
@@ -121,6 +132,7 @@ const refundValidation = z.object({
 export const AppointmentValidation = {
   refundValidation,
   bookAppointmentValidation,
+  quoteAppointmentValidation,
   walkInValidation,
   updateAppointmentStatusValidation,
   appealNoShowValidation,

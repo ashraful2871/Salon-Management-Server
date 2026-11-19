@@ -16,6 +16,7 @@ import type { AdminContext } from "../admin.middleware";
 import { parseListQuery } from "../admin.query";
 import { maskEmail, maskPhone } from "../admin.service";
 import { REASON_LABELS, STATUS_REASON_CODES } from "./users.validation";
+import { onEmailVerified } from "../../Referral/referral.attach";
 
 import { SITE_NAME } from "../../../utils/brand";
 const DAY = 24 * 60 * 60 * 1000;
@@ -636,6 +637,8 @@ const verifyEmail = async (admin: AdminContext, ctx: AuditCtx | undefined, id: s
       reason,
     });
   });
+  // A pending invite becomes JOINED with its welcome reward. Never throws.
+  await onEmailVerified(id);
   return { id, emailVerified: true };
 };
 

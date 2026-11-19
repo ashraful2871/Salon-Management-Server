@@ -26,6 +26,7 @@ import { InvitationRoutes } from "../modules/Admin/invitations/invitation.routes
 import { SettingsRoutes } from "../modules/Settings/settings.routes";
 import { OwnerRoutes } from "../modules/Owner/owner.routes";
 import { TeamRoutes } from "../modules/Team/team.routes";
+import { ReferralRoutes } from "../modules/Referral/referral.routes";
 
 const router = express.Router();
 
@@ -133,6 +134,11 @@ const moduleRoutes = [
   {
     path: "/owner",
     route: OwnerRoutes,
+  },
+  {
+    // Invite codes, the Refer page and my rewards (customers + the public lookup).
+    path: "/referrals",
+    route: ReferralRoutes,
   },
   {
     // /salons/:salonId/members|invitations and /invitations/* (branch teams)

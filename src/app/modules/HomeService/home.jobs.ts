@@ -2,6 +2,7 @@ import { HomeBookingStatus } from "@prisma/client";
 import prisma from "../../shared/prisma";
 import { deleteExpertDocs } from "./home.expertSetup";
 import { notifyHomeBooking } from "./home.notify";
+import { onBookingEndedTx } from "../Referral/referral.lifecycle";
 
 /**
  * Home Service timer jobs (registered in jobs/scheduler.ts). Each move is a
@@ -9,24 +10,35 @@ import { notifyHomeBooking } from "./home.notify";
  * ever moves a booking once.
  */
 
-/** `home.expire`: unpaid bookings past their payment window → EXPIRED, freeing the time. */
+/**
+ * `home.expire`: unpaid bookings past their payment window → EXPIRED, freeing
+ * the time. One transaction, so a referral reward goes back with the expiry
+ * it belongs to (and stays reserved if the run fails).
+ */
 export const expireUnpaidHomeBookings = async () => {
-  const rows = await prisma.$queryRaw<{ id: string }[]>`
-    UPDATE home_bookings SET status = 'EXPIRED', "updatedAt" = now()
-    WHERE status = 'PENDING_PAYMENT' AND "expiresAt" < now()
-    RETURNING id`;
-  if (rows.length) {
-    await prisma.homeBookingEvent.createMany({
-      data: rows.map((r) => ({
-        bookingId: r.id,
-        fromStatus: HomeBookingStatus.PENDING_PAYMENT,
-        toStatus: HomeBookingStatus.EXPIRED,
-        actorRole: "SYSTEM",
-        reason: "Not paid in time",
-      })),
-    });
-  }
-  return { expired: rows.length };
+  const expired = await prisma.$transaction(
+    async (tx) => {
+      const rows = await tx.$queryRaw<{ id: string }[]>`
+        UPDATE home_bookings SET status = 'EXPIRED', "updatedAt" = now()
+        WHERE status = 'PENDING_PAYMENT' AND "expiresAt" < now()
+        RETURNING id`;
+      if (rows.length) {
+        await tx.homeBookingEvent.createMany({
+          data: rows.map((r) => ({
+            bookingId: r.id,
+            fromStatus: HomeBookingStatus.PENDING_PAYMENT,
+            toStatus: HomeBookingStatus.EXPIRED,
+            actorRole: "SYSTEM",
+            reason: "Not paid in time",
+          })),
+        });
+        for (const r of rows) await onBookingEndedTx(tx, { homeBookingId: r.id }, "EXPIRED_UNPAID");
+      }
+      return rows.length;
+    },
+    { maxWait: 10_000, timeout: 60_000 },
+  );
+  return { expired };
 };
 
 // home.stale (IN_PROGRESS long past its end → COMPLETED + settled) and

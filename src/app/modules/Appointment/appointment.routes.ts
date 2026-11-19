@@ -18,6 +18,15 @@ router.post(
   AppointmentController.bookAppointment,
 );
 
+// The review page's figures (reward applied, other rewards, bill split). Same
+// customers-only answer as booking; nothing is written.
+router.post(
+  "/quote",
+  auth(),
+  validateRequest(AppointmentValidation.quoteAppointmentValidation),
+  AppointmentController.quoteAppointment,
+);
+
 // A walk-in or phone customer, entered at the counter. No deposit.
 router.post(
   "/walk-in",

@@ -377,6 +377,7 @@ const compact = (result: TurnResult, extra: Record<string, unknown> = {}): Recor
           date: dateLabel(block.slot.date),
           time: block.slot.startTime.slice(0, 5),
           price: money(block.priceMinor),
+          ...(block.promo ? { referralReward: `${block.promo.label}: -${money(block.promo.discountMinor)}` } : {}),
           deposit: money(block.depositMinor),
           dueAtSalon: money(block.dueAtSalonMinor),
           customerMustTapConfirm: true,

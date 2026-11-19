@@ -1,0 +1,121 @@
+/// One per customer. The code is upper-case; lookups normalize input first.
+model ReferralCode {
+  userId        String    @id
+  code          String    @unique
+  blockedAt     DateTime?
+  blockedReason String?
+  /// Last 5 HMACs of the device cookie / IP seen on the owner's Refer page (fraud signal).
+  deviceHashes  String[]  @default([])
+  ipHashes      String[]  @default([])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("referral_codes")
+}
+
+/// One per referee, ever (`refereeId` is unique). Attached only when the
+/// account is created. CHECK `referrals_not_self` refuses self-referral.
+model Referral {
+  id                      String          @id @default(uuid())
+  referrerId              String
+  refereeId               String          @unique
+  /// The code as it was when attached.
+  code                    String
+  channel                 ReferralChannel
+  status                  ReferralStatus  @default(PENDING_VERIFICATION)
+  riskFlags               String[]        @default([])
+  refereeIpHash           String?
+  refereeDeviceHash       String?
+  joinedAt                DateTime?
+  qualifiedAt             DateTime?
+  qualifyingAppointmentId String?         @unique
+  qualifyingHomeBookingId String?         @unique
+  /// Why no referrer reward was issued: CAP_MONTH | CAP_LIFETIME | REFERRER_INELIGIBLE | PROGRAM_OFF
+  referrerRewardSkip      String?
+  reviewedById            String?
+  reviewedAt              DateTime?
+  reviewNote              String?
+  rejectedReason          String?
+  isTest                  Boolean         @default(false)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  referrer User             @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Restrict)
+  referee  User             @relation("ReferredBy", fields: [refereeId], references: [id], onDelete: Restrict)
+  rewards  ReferralReward[]
+  events   ReferralEvent[]
+
+  @@index([referrerId, status, createdAt])
+  @@index([status, createdAt])
+  @@map("referrals")
+}
+
+/// Terms are snapshotted on the row; later settings changes never touch it.
+/// `appointmentId` / `homeBookingId` are plain ids (no FK), so the booking
+/// modules keep no relation to this one and a released reward can clear them.
+/// CHECKs: `referral_rewards_numbers`, `referral_rewards_one_booking` (RESERVED /
+/// REDEEMED ⇔ exactly one booking id), `referral_rewards_kind_source`; partial
+/// unique `referral_rewards_welcome_phone` (one used welcome reward per phone).
+model ReferralReward {
+  id               String       @id @default(uuid())
+  userId           String
+  /// Null for MANUAL_GRANT.
+  referralId       String?
+  kind             RewardKind
+  status           RewardStatus
+  percentBps       Int
+  /// 0 = no cap.
+  maxDiscountMinor Int
+  minOrderMinor    Int          @default(0)
+  scope            RewardScope
+  firstBookingOnly Boolean      @default(false)
+  expiresAt        DateTime
+  appointmentId    String?      @unique
+  homeBookingId    String?      @unique
+  discountMinor    Int          @default(0)
+  /// Set on reserve for REFEREE_WELCOME.
+  phoneHash        String?
+  remindedAt       DateTime?
+  reservedAt       DateTime?
+  redeemedAt       DateTime?
+  revokedAt        DateTime?
+  revokedById      String?
+  revokeReason     String?
+  grantedById      String?
+  grantReason      String?
+  /// TIME | FIRST_BOOKING_DONE | ACCOUNT_CLOSED
+  expiredReason    String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  referral Referral?       @relation(fields: [referralId], references: [id], onDelete: Restrict)
+  events   ReferralEvent[]
+
+  @@unique([referralId, kind])
+  @@index([userId, status, expiresAt])
+  @@index([status, expiresAt])
+  @@map("referral_rewards")
+}
+
+/// Append-only timeline (attached, verified, issued, reserved, released, redeemed,
+/// expired, qualified, flagged, approved, rejected, revoked, granted, code_reset, blocked).
+model ReferralEvent {
+  id         String    @id @default(uuid())
+  referralId String?
+  rewardId   String?
+  type       String
+  /// Null = system.
+  actorId    String?
+  data       Json?
+  createdAt  DateTime  @default(now())
+
+  referral Referral?       @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  reward   ReferralReward? @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+
+  @@index([referralId, createdAt])
+  @@index([rewardId, createdAt])
+  @@map("referral_events")
+}

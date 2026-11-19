@@ -1517,6 +1517,9 @@ const handleChooseSlot = async (
         counterId: counter.id,
         slotId: slot.id,
         staffId: state.staffId ?? null,
+        // The best referral reward, as on the review page. The chat offers no
+        // way to switch it off; the review page does.
+        rewardId: undefined,
       });
     } catch (error) {
       return because(
@@ -1528,8 +1531,10 @@ const handleChooseSlot = async (
   }
 
   const priceMinor = quote?.totalMinor ?? service.priceMinor;
+  const promo = quote?.promo ?? null;
+  const promoMinor = promo?.discountMinor ?? 0;
   const depositMinor = quote?.depositMinor ?? resolveDepositMinor(salon, priceMinor);
-  const dueAtSalonMinor = priceMinor - depositMinor;
+  const dueAtSalonMinor = priceMinor - promoMinor - depositMinor;
 
   // Free cancellation closes `cancellationWindowMin` before the chair is due —
   // the same arithmetic `isWithinFreeCancellation` does after booking.
@@ -1560,7 +1565,9 @@ const handleChooseSlot = async (
 
   // Pay the whole bill now (owner Phase 15), when the platform and the salon
   // both allow it. The rest of the bill is held with the deposit in one hold.
-  const prepaidMinor = quote?.prepayAllowed ? priceMinor - depositMinor : 0;
+  const prepaidMinor = quote?.prepayAllowed ? priceMinor - promoMinor - depositMinor : 0;
+  // Signed with the figures, so Confirm can tell when the reward moved.
+  const promoClaims = promo ? { rd: promo.rewardId, rm: promo.discountMinor } : {};
 
   if (quote && ctx.userId && ctx.conversationId) {
     const held = await holdSlot(slot.id, ctx.userId, HOLD_MINUTES);
@@ -1586,6 +1593,7 @@ const handleChooseSlot = async (
       ...(state.staffId ? { stf: state.staffId } : {}),
       pm: priceMinor,
       dm: depositMinor,
+      ...promoClaims,
       exp: expiresAt,
     });
     if (prepaidMinor > 0) {
@@ -1600,6 +1608,7 @@ const handleChooseSlot = async (
         pm: priceMinor,
         dm: depositMinor,
         pp: prepaidMinor,
+        ...promoClaims,
         exp: expiresAt,
       });
     }
@@ -1631,6 +1640,7 @@ const handleChooseSlot = async (
         endTime: slot.endTime,
       },
       priceMinor,
+      promo: promo ? { label: promo.label, discountMinor: promo.discountMinor } : null,
       depositMinor,
       dueAtSalonMinor,
       freeCancellationUntil,
@@ -1652,8 +1662,8 @@ const handleChooseSlot = async (
         ? {
             prepay: {
               prepaidMinor,
-              payNowMinor: priceMinor,
-              shortfallMinor: Math.max(priceMinor - wallet.availableMinor, 0),
+              payNowMinor: priceMinor - promoMinor,
+              shortfallMinor: Math.max(priceMinor - promoMinor - wallet.availableMinor, 0),
               ...(prepayToken ? { confirmToken: prepayToken } : {}),
             },
           }
@@ -1744,7 +1754,7 @@ const handleChooseSlot = async (
   else delete next.quoteToken;
 
   return {
-    text: `${moveLine}${service.name} at ${salon.name}, ${dateLabel(state.date)} at ${slot.startTime}. ${formatBDT(priceMinor)} in total: ${dueLine}${holdLine}`,
+    text: `${moveLine}${service.name} at ${salon.name}, ${dateLabel(state.date)} at ${slot.startTime}. ${formatBDT(priceMinor)} in total${promo ? `, ${formatBDT(promoMinor)} off with your ${promo.label.toLowerCase()}` : ""}: ${dueLine}${holdLine}`,
     blocks,
     state: next,
   };

@@ -1326,3 +1326,71 @@ export const getHomeVisitTemplate = (notice: {
      ${notice.footnote ? `<p style="color:#7f8c8d;font-size:12px;">${escapeHtml(notice.footnote)}</p>` : ""}`,
   );
 };
+
+/* ------------------------------------------------------------- referrals */
+
+/** The reward terms every referral email states; every figure is the reward's own snapshot. */
+type RewardTermsText = {
+  /** "5" or "5.5", no % sign. */
+  percent: string;
+  /** "৳300", or null for no cap. */
+  cap: string | null;
+  /** "৳500", or null for no minimum. */
+  minOrder: string | null;
+  /** "salon and home bookings" | "salon bookings" | "home visits". */
+  scopeText: string;
+  /** "19 Dec 2026" (Asia/Dhaka). */
+  expiresOn: string;
+};
+
+const rewardTermsRows = (t: RewardTermsText, extra: [string, string][] = []) => {
+  const rows: [string, string][] = [
+    ["Discount", `${t.percent}% off`],
+    ["Up to", t.cap ?? "No limit"],
+    ...(t.minOrder ? ([["Minimum order", t.minOrder]] as [string, string][]) : []),
+    ["Use it on", t.scopeText],
+    ["Use it by", t.expiresOn],
+    ...extra,
+  ];
+  return `<table style="width:100%;border-collapse:collapse;border-top:1px solid #eef1f3;margin:18px 0;">${rows
+    .map(
+      ([label, value]) => `
+    <tr>
+      <td style="padding:10px 0;color:#7f8c8d;font-size:13px;border-bottom:1px solid #eef1f3;">${escapeHtml(label)}</td>
+      <td style="padding:10px 0;text-align:right;font-size:13px;color:#2c3e50;border-bottom:1px solid #eef1f3;">${escapeHtml(value)}</td>
+    </tr>`,
+    )
+    .join("")}</table>`;
+};
+
+/** To a new customer who signed up with a friend's code, once their email is verified. */
+export const getReferralWelcomeTemplate = (notice: RewardTermsText & { name: string; friendName: string | null; ctaUrl: string }) =>
+  moneyLayout(
+    `Your ${escapeHtml(notice.percent)}% welcome reward is ready`,
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>${notice.friendName ? `Thanks for joining ${SITE_NAME} with ${escapeHtml(notice.friendName)}'s invite. ` : ""}You get <strong>${escapeHtml(notice.percent)}% off your first booking</strong>. It is applied for you when you book; there is no code to type.</p>
+     ${rewardTermsRows(notice)}
+     ${buttonLink(notice.ctaUrl, "Find a salon")}
+     <p style="color:#7f8c8d;font-size:12px;">One reward per booking. It works on your first booking only.</p>`,
+  );
+
+/** To a referrer when their friend's first booking earns them a reward. */
+export const getReferralEarnedTemplate = (notice: RewardTermsText & { name: string; friendName: string; ctaUrl: string }) =>
+  moneyLayout(
+    `You earned a ${escapeHtml(notice.percent)}% reward`,
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p><strong>${escapeHtml(notice.friendName)}</strong> completed their first booking on ${SITE_NAME}, so you get <strong>${escapeHtml(notice.percent)}% off</strong> one of your bookings. It is applied for you when you book.</p>
+     ${rewardTermsRows(notice)}
+     ${buttonLink(notice.ctaUrl, "See your rewards")}
+     <p style="color:#7f8c8d;font-size:12px;">Keep inviting friends: every friend's first booking earns you another reward.</p>`,
+  );
+
+/** A few days before an unused reward runs out. */
+export const getReferralExpiringTemplate = (notice: RewardTermsText & { name: string; ctaUrl: string }) =>
+  moneyLayout(
+    `Your ${escapeHtml(notice.percent)}% reward expires on ${escapeHtml(notice.expiresOn)}`,
+    `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>You still have <strong>${escapeHtml(notice.percent)}% off</strong> waiting on ${SITE_NAME}. Book before <strong>${escapeHtml(notice.expiresOn)}</strong> and it is applied for you.</p>
+     ${rewardTermsRows(notice)}
+     ${buttonLink(notice.ctaUrl, "Book now")}`,
+  );

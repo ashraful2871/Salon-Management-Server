@@ -32,6 +32,10 @@ export type ConfirmPayload = {
   dm: number;
   /** Prepaid part when the customer chose to pay in full (owner Phase 15). */
   pp?: number;
+  /** Referral reward applied at the summary and its discount (absent = none).
+   *  `dm` was already the deposit, so the discount is `rm`. */
+  rd?: string;
+  rm?: number;
   /** Epoch ms. Matches the slot hold, so a token outlives its hold by nothing. */
   exp: number;
 };
@@ -108,6 +112,8 @@ export const peekConfirm = (token: unknown): ConfirmPayload | null => {
     Number.isInteger(payload.pm) &&
     Number.isInteger(payload.dm) &&
     (payload.pp === undefined || Number.isInteger(payload.pp)) &&
+    (payload.rd === undefined || typeof payload.rd === "string") &&
+    (payload.rm === undefined || Number.isInteger(payload.rm)) &&
     Number.isFinite(payload.exp);
 
   return wellFormed ? payload : null;

@@ -29,6 +29,8 @@ import { ACTIVE_BOOKING_STATUSES } from "./home.expertSetup";
 import { startCodeFor } from "./home.lifecycle";
 import { priceCart } from "./home.money";
 import { homeNotice } from "./home.notify";
+import { onBookingEndedTx } from "../Referral/referral.lifecycle";
+import { quotePromo, reattachAfterLatePaymentTx, reserveTx } from "../Referral/referral.rewards";
 import { isBranchBookable, loadHomeFlags } from "./home.owner";
 import {
   buildDisclaimer,
@@ -150,6 +152,9 @@ const quoteHashOf = (parts: {
   startAt: Date;
   expertId: string;
   offeringIds: string[];
+  /** The referral reward applied (null = none) and its discount. */
+  rewardId: string | null;
+  promoDiscountMinor: number;
 }) =>
   createHash("sha256")
     .update(
@@ -159,6 +164,8 @@ const quoteHashOf = (parts: {
         startAt: parts.startAt.toISOString(),
         expertId: parts.expertId,
         offeringIds: [...parts.offeringIds].sort(),
+        rewardId: parts.rewardId ?? "none",
+        promoDiscountMinor: parts.promoDiscountMinor,
       }),
     )
     .digest("hex");
@@ -331,7 +338,20 @@ const runChecks = async (actor: Actor, body: QuoteBody) => {
     getSetting("homeService.paymentWindowMinutes"),
     currentPolicy(),
   ]);
-  const price = priceCart(cart.items, profile, { advancePercent, commissionPercent, travelFeeMaxMinor });
+  const priceSettings = { advancePercent, commissionPercent, travelFeeMaxMinor };
+  // The referral reward (platform-funded) comes off the services subtotal,
+  // never the travel fee; the cart is re-priced with it so the advance is
+  // taken on the smaller total.
+  const base = priceCart(cart.items, profile, priceSettings);
+  const rewards = await quotePromo({
+    userId: actor.userId,
+    kind: "HOME",
+    baseMinor: base.subtotalMinor,
+    requested: body.rewardId,
+  });
+  const price = rewards.applied
+    ? priceCart(cart.items, profile, priceSettings, rewards.applied.discountMinor)
+    : base;
   const { commissionBps, ...customerPrice } = price;
   const quoteHash = quoteHashOf({
     price: customerPrice,
@@ -339,6 +359,8 @@ const runChecks = async (actor: Actor, body: QuoteBody) => {
     startAt,
     expertId: body.expertId,
     offeringIds: body.offeringIds,
+    rewardId: rewards.applied?.rewardId ?? null,
+    promoDiscountMinor: price.promoDiscountMinor,
   });
 
   return {
@@ -355,6 +377,11 @@ const runChecks = async (actor: Actor, body: QuoteBody) => {
     address: { ...address, contactPhone, recipientIsWoman: body.recipientIsWoman ?? null },
     price,
     commissionBps,
+    /** The applied reward (or null) and the others that fit this cart. */
+    promo: rewards.applied,
+    rewardOptions: rewards.options,
+    /** Server only: what `reserveTx` writes for a welcome reward. Never sent. */
+    promoPhoneHash: rewards.phoneHash,
     paymentWindowMinutes,
     policy,
     quoteHash,
@@ -376,6 +403,8 @@ const quoteView = (q: Checked, body: QuoteBody) => {
     distanceKm: q.distanceKm,
     items: q.cart.items.map((i) => ({ id: i.id, name: i.name, durationMin: i.durationMin, priceMinor: i.priceMinor })),
     ...price,
+    promo: q.promo,
+    rewardOptions: q.rewardOptions,
     policy: policySnapshotOf(q.policy),
     policyVersion: q.policy.version,
     disclaimer: disclaimersOf(q.policy, q.price.advanceMinor),
@@ -424,6 +453,8 @@ export const expireStaleOf = async (tx: Tx, expertId: string) => {
         reason: "Not paid in time",
       })),
     });
+    // An unpaid visit gives its referral reward back (restoreOnCancel).
+    for (const r of rows) await onBookingEndedTx(tx, { homeBookingId: r.id }, "EXPIRED_UNPAID");
   }
 };
 
@@ -548,6 +579,10 @@ export const createBooking = async (actor: Actor, body: CreateBookingBody, idemp
             contactPhone: q.address.contactPhone,
             notes: q.address.notes,
             subtotalMinor: q.price.subtotalMinor,
+            // Snapshot of the referral discount; the reward is reserved right
+            // after this insert, in the same transaction.
+            promoDiscountMinor: q.price.promoDiscountMinor,
+            promoLabel: q.promo?.label ?? null,
             travelFeeMinor: q.price.travelFeeMinor,
             totalMinor: q.price.totalMinor,
             advancePercent: q.price.advancePercent,
@@ -573,6 +608,19 @@ export const createBooking = async (actor: Actor, body: CreateBookingBody, idemp
           },
           select: { id: true },
         });
+        // The reward belongs to this visit from now on. Another tab spending
+        // it first (409 REWARD_UNAVAILABLE) or a phone already used for a
+        // welcome reward (400 REWARD_NOT_APPLICABLE) rolls the booking back.
+        // A replay never gets here: it returns the stored booking above.
+        if (q.promo) {
+          await reserveTx(tx, {
+            rewardId: q.promo.rewardId,
+            userId: actor.userId,
+            homeBookingId: booking.id,
+            discountMinor: q.promo.discountMinor,
+            phoneHash: q.promoPhoneHash,
+          });
+        }
         return booking.id;
       },
       { maxWait: 10_000, timeout: 20_000 },
@@ -611,6 +659,7 @@ const expireOne = async (tx: Tx, id: string, reason: string) => {
     await tx.homeBookingEvent.create({
       data: { bookingId: id, fromStatus: HomeBookingStatus.PENDING_PAYMENT, toStatus: HomeBookingStatus.EXPIRED, actorRole: "SYSTEM", reason },
     });
+    await onBookingEndedTx(tx, { homeBookingId: id }, "EXPIRED_UNPAID");
   }
 };
 
@@ -700,6 +749,10 @@ export const confirmPaidHomeBooking = async (
         data: { status: HomeBookingStatus.CONFIRMED, advanceStatus: AdvanceStatus.HELD, confirmedAt: now },
       });
       if (!moved.count) throw fail(StatusCodes.CONFLICT, "This booking changed. Refresh and try again.", "INVALID_STATE");
+      // Still PENDING_PAYMENT, its reward never left. Re-opened from EXPIRED,
+      // the expiry gave it back: take it again if it is still there (the
+      // booking keeps its discount either way - snapshots are never rewritten).
+      if (b.status === HomeBookingStatus.EXPIRED) await reattachAfterLatePaymentTx(tx, { homeBookingId: b.id });
       await tx.homeBookingEvent.create({
         data: {
           bookingId: b.id,
@@ -797,6 +850,8 @@ const SUMMARY = {
   endAt: true,
   expiresAt: true,
   totalMinor: true,
+  promoDiscountMinor: true,
+  promoLabel: true,
   advanceMinor: true,
   balanceMinor: true,
   advanceStatus: true,
@@ -818,6 +873,9 @@ const summaryOf = (b: Prisma.HomeBookingGetPayload<{ select: typeof SUMMARY }>) 
   endAt: b.endAt,
   expiresAt: b.status === HomeBookingStatus.PENDING_PAYMENT ? b.expiresAt : null,
   totalMinor: b.totalMinor,
+  /** Referral reward taken off the services (already out of `totalMinor`). */
+  promoDiscountMinor: b.promoDiscountMinor,
+  promoLabel: b.promoLabel,
   advanceMinor: b.advanceMinor,
   balanceMinor: b.balanceMinor,
   advanceStatus: b.advanceStatus,

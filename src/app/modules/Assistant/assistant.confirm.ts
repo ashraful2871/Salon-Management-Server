@@ -51,6 +51,8 @@ type CardAppointment = {
   token: string | null;
   serialNumber: number | null;
   totalMinor: number;
+  /** The referral reward on the booking (absent on older callers = 0). */
+  promoDiscountMinor?: number;
   depositMinor: number;
   prepaidMinor: number;
   salon: { name: string; address: string; phone: string };
@@ -104,7 +106,8 @@ const confirmedBlock = async (
   });
 
   const dueAtSalonMinor = Math.max(
-    appointment.totalMinor - appointment.depositMinor - appointment.prepaidMinor,
+    // Cash expected at the counter, net of the platform-paid referral reward.
+    appointment.totalMinor - (appointment.promoDiscountMinor ?? 0) - appointment.depositMinor - appointment.prepaidMinor,
     0,
   );
 
@@ -156,7 +159,8 @@ const confirmedTurn = async (
   state: AssistantState,
 ): Promise<TurnResult> => {
   const dueAtSalonMinor = Math.max(
-    appointment.totalMinor - appointment.depositMinor - appointment.prepaidMinor,
+    // Cash expected at the counter, net of the platform-paid referral reward.
+    appointment.totalMinor - (appointment.promoDiscountMinor ?? 0) - appointment.depositMinor - appointment.prepaidMinor,
     0,
   );
 
@@ -313,6 +317,8 @@ const confirmBooking = async (input: ConfirmInput) => {
       slotId: payload.sid,
       staffId: payload.stf ?? null,
       payInFull: (payload.pp ?? 0) > 0,
+      // The best reward now, compared with the one signed at the summary.
+      rewardId: undefined,
     });
   } catch (error) {
     throw new AssistantConfirmError(
@@ -332,7 +338,10 @@ const confirmBooking = async (input: ConfirmInput) => {
   if (
     quote.totalMinor !== payload.pm ||
     quote.depositMinor !== payload.dm ||
-    quote.prepaidMinor !== (payload.pp ?? 0)
+    quote.prepaidMinor !== (payload.pp ?? 0) ||
+    // The referral reward was used elsewhere, expired, or a better one came.
+    (quote.promo?.discountMinor ?? 0) !== (payload.rm ?? 0) ||
+    (quote.promo?.rewardId ?? undefined) !== payload.rd
   ) {
     throw new AssistantConfirmError(
       StatusCodes.CONFLICT,
@@ -351,6 +360,8 @@ const confirmBooking = async (input: ConfirmInput) => {
       slotId: payload.sid,
       ...(input.notes ? { notes: input.notes } : {}),
       ...((payload.pp ?? 0) > 0 ? { payInFull: true } : {}),
+      // Exactly the reward the customer saw (null = none was shown).
+      rewardId: payload.rd ?? null,
       bookedVia: "ASSISTANT",
     });
 

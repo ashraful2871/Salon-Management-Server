@@ -44,6 +44,10 @@ model User {
   notificationPrefs      NotificationPref[]
   homeBookings           HomeBooking[]
   addresses              CustomerAddress[]
+  referralCode           ReferralCode?
+  referralsMade          Referral[]              @relation("ReferralsMade")
+  referredBy             Referral?               @relation("ReferredBy")
+  referralRewards        ReferralReward[]
 
   @@index([status, suspendedUntil])
   @@index([createdAt])

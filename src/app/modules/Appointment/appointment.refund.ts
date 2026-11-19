@@ -10,7 +10,7 @@ import { assertBookingPermission } from "../../utils/salonAccess";
 import { formatBDT } from "../../utils/money";
 import { WalletService } from "../Wallet/wallet.service";
 import { SettlementService } from "../Settlement/settlement.service";
-import { billableMinor } from "./appointment.billing";
+import { customerPaysMinor } from "./appointment.billing";
 import { heldMinor } from "./appointment.deposit";
 
 /**
@@ -81,9 +81,11 @@ export const refundCompleted = async (
         );
       }
 
+      // Cash the customer paid: with a referral promo the app took at most
+      // billable − promo, so that is what "in full" means here.
       const full =
         refundedMinor + payload.amountMinor === appliedMinor &&
-        appliedMinor >= billableMinor(appointment);
+        appliedMinor >= customerPaysMinor(appointment);
 
       await WalletService.mutate(
         {

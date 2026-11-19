@@ -510,6 +510,8 @@ export const getBooking = async (id: string) => {
       contactPhone: true,
       notes: true,
       subtotalMinor: true,
+      promoDiscountMinor: true,
+      promoLabel: true,
       travelFeeMinor: true,
       advancePercent: true,
       balanceMinor: true,

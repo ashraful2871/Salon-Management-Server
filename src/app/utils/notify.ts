@@ -45,6 +45,13 @@ export const NOTIFY_EVENTS = [
   "home.expert.verified",
   "home.expert.rejected",
   "home.branch.reviewed",
+  // Referrals (modules/Referral/referral.notify.ts sends all of them).
+  "referral.welcome",
+  "referral.joined",
+  "referral.reward_earned",
+  "referral.reward_held",
+  "referral.reward_expiring",
+  "referral.reward_revoked",
 ] as const;
 
 export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
@@ -54,13 +61,15 @@ export const isNotifyEvent = (v: unknown): v is NotifyEvent =>
 
 type EventInfo = {
   label: string;
-  group: "Bookings" | "Reviews" | "Money" | "Business";
+  group: "Bookings" | "Reviews" | "Money" | "Business" | "Rewards";
   email: boolean;
   inApp: boolean;
   /** Money, payout-account and business events reach the owner only. */
   ownerOnly: boolean;
   /** Security/money notices whose email cannot be switched off. */
   emailLocked?: boolean;
+  /** Customer-only events stay out of the business accounts' preferences. Default "business". */
+  audience?: "business" | "customer";
 };
 
 /** Defaults for anyone who has not changed a preference. */
@@ -102,6 +111,13 @@ export const EVENT_INFO: Record<NotifyEvent, EventInfo> = {
   "home.expert.verified": { label: "Home expert verified", group: "Business", email: true, inApp: true, ownerOnly: true },
   "home.expert.rejected": { label: "Home expert not verified", group: "Business", email: true, inApp: true, ownerOnly: true },
   "home.branch.reviewed": { label: "Home Service approved, rejected or suspended", group: "Business", email: true, inApp: true, ownerOnly: true },
+  // Referrals reach customers only.
+  "referral.welcome": { label: "Welcome reward ready", group: "Rewards", email: true, inApp: true, ownerOnly: false, audience: "customer" },
+  "referral.joined": { label: "A friend joined with your code", group: "Rewards", email: false, inApp: true, ownerOnly: false, audience: "customer" },
+  "referral.reward_earned": { label: "Referral reward earned", group: "Rewards", email: true, inApp: true, ownerOnly: false, audience: "customer" },
+  "referral.reward_held": { label: "Referral reward under review", group: "Rewards", email: false, inApp: true, ownerOnly: false, audience: "customer" },
+  "referral.reward_expiring": { label: "Reward about to expire", group: "Rewards", email: true, inApp: true, ownerOnly: false, audience: "customer" },
+  "referral.reward_revoked": { label: "Reward withdrawn", group: "Rewards", email: false, inApp: true, ownerOnly: false, audience: "customer" },
 };
 
 export const BOOKING_EMAIL_MODES = ["EVERY", "DIGEST", "NONE"] as const;

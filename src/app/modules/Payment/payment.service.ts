@@ -78,7 +78,8 @@ const createPayment = async (
   // The amount is the server's to decide. `totalMinor` was captured when the
   // booking was made, so a later price change cannot alter an agreed bill; a
   // deposit the customer has paid - still held or already applied - comes off
-  // what is still owed.
+  // what is still owed. Cash expected, so the referral promo (on the row)
+  // comes off too.
   const { amountDueMinor: amountMinor } = paymentSummary({
     ...appointment,
     totalMinor: appointment.totalMinor || appointment.service.priceMinor,

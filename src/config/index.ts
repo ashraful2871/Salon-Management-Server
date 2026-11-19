@@ -36,6 +36,10 @@ interface Config {
     /** Shown by the in-visit Help button (and in safety emails). */
     supportPhone: string;
   };
+  referral: {
+    /** HMAC key for device ids, IPs and phones in the referral fraud checks. */
+    hashSecret: string | undefined;
+  };
   sslcz: {
     storeId: string;
     storePasswd: string;
@@ -197,6 +201,13 @@ const config = {
     docsPreset: env("CLOUDINARY_HOME_DOCS_PRESET") || "home_expert_docs",
     // Same number as the frontend's lib/site.ts until SUPPORT_PHONE is set.
     supportPhone: env("SUPPORT_PHONE") || "01759030544",
+  },
+  /**
+   * Referrals. `hashSecret` HMACs device ids, IPs and normalized phones so the
+   * fraud checks can compare them without storing raw values. Render only.
+   */
+  referral: {
+    hashSecret: env("REFERRAL_HASH_SECRET") || undefined,
   },
   /**
    * Email. `provider` pins the transport ("resend" | "smtp"); left empty, the

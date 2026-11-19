@@ -33,6 +33,8 @@
     "seed:dhaka": "ts-node-dev --transpile-only ./src/scripts/seedDhakaSalons.ts",
     "hair:check": "ts-node-dev --transpile-only ./src/scripts/hairTryOnCheck.ts",
     "home:check": "ts-node-dev --transpile-only ./src/scripts/homeServiceCheck.ts",
+    "referral:check": "ts-node-dev --transpile-only ./src/scripts/referralCheck.ts",
+    "referral:math": "ts-node-dev --transpile-only ./src/scripts/referralMathCheck.ts",
     "hair:spike": "ts-node-dev --transpile-only ./src/scripts/hairTryOnSpike.ts",
     "admin:create": "ts-node-dev --transpile-only ./src/scripts/adminCreate.ts",
     "admin:reset-mfa": "ts-node-dev --transpile-only ./src/scripts/adminResetMfa.ts",
