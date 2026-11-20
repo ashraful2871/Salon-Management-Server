@@ -85,25 +85,35 @@ export const findReferrerByCode = async (raw: string, db: Db = prisma): Promise<
 };
 
 /**
- * A new code for this customer (admin action, Phase 6): the old code stops
- * working immediately. Writes a `code_reset` event.
+ * A new code for this customer (admin action), inside the caller's
+ * transaction: the old code stops working immediately. Writes a `code_reset`
+ * event (also when the customer had no code yet and one is made).
  */
-export const resetCode = async (userId: string, actorId: string | null) =>
-  prisma.$transaction(async (tx) => {
-    const current = await tx.referralCode.findUnique({ where: { userId }, include: { user: { select: { name: true } } } });
-    if (!current) return ensureCode(userId, tx);
+export const resetCodeTx = async (tx: Prisma.TransactionClient, userId: string, actorId: string | null) => {
+  const current = await tx.referralCode.findUnique({ where: { userId }, include: { user: { select: { name: true } } } });
+  if (!current) {
+    const row = await ensureCode(userId, tx);
+    await tx.referralEvent.create({
+      data: { type: "code_reset", actorId, data: { userId, oldCode: null, newCode: row.code } },
+    });
+    return { before: null, row };
+  }
 
-    const prefix = codePrefix(current.user.name);
-    for (let attempt = 0; attempt < 7; attempt++) {
-      const code = newCode(prefix, attempt < 5 ? 8 : 10);
-      if (code === current.code) continue;
-      const taken = await tx.referralCode.findUnique({ where: { code }, select: { userId: true } });
-      if (taken) continue;
-      const row = await tx.referralCode.update({ where: { userId }, data: { code } });
-      await tx.referralEvent.create({
-        data: { type: "code_reset", actorId, data: { userId, oldCode: current.code, newCode: code } },
-      });
-      return row;
-    }
-    throw new ApiError(StatusCodes.INTERNAL_SERVER_ERROR, "Could not create a new referral code. Please try again.");
-  });
+  const prefix = codePrefix(current.user.name);
+  for (let attempt = 0; attempt < 7; attempt++) {
+    const code = newCode(prefix, attempt < 5 ? 8 : 10);
+    if (code === current.code) continue;
+    const taken = await tx.referralCode.findUnique({ where: { code }, select: { userId: true } });
+    if (taken) continue;
+    const row = await tx.referralCode.update({ where: { userId }, data: { code } });
+    await tx.referralEvent.create({
+      data: { type: "code_reset", actorId, data: { userId, oldCode: current.code, newCode: code } },
+    });
+    return { before: current.code, row };
+  }
+  throw new ApiError(StatusCodes.INTERNAL_SERVER_ERROR, "Could not create a new referral code. Please try again.");
+};
+
+/** `resetCodeTx` in a transaction of its own. */
+export const resetCode = async (userId: string, actorId: string | null) =>
+  prisma.$transaction(async (tx) => (await resetCodeTx(tx, userId, actorId)).row);

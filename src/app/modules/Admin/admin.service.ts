@@ -420,6 +420,25 @@ const inbox = async (admin: AdminContext): Promise<InboxItem[]> => {
     );
   }
 
+  // Referrer rewards held for review (one per referral at most).
+  if (has("referrals.manage")) {
+    items.push(
+      prisma.referralReward
+        .aggregate({
+          where: { status: "PENDING_REVIEW", referralId: { not: null } },
+          _count: { _all: true },
+          _min: { createdAt: true },
+        })
+        .then((agg) => ({
+          key: "referrals.review",
+          count: agg._count._all,
+          oldestAt: agg._min.createdAt,
+          tone: "warning" as const,
+          href: "/dashboard/admin/referrals/review",
+        })),
+    );
+  }
+
   if (has("appeals.resolve")) {
     items.push(
       prisma.homeBooking

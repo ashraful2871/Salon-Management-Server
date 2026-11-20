@@ -14,6 +14,7 @@ import {
 } from "./referral.math";
 import { hmac } from "./referral.risk";
 import { loadReferralSettings } from "./referral.settings";
+import { countAfterCommit } from "./referral.metrics";
 
 /**
  * Rewards on bookings, shared by salon appointments and home visits: quote,
@@ -155,9 +156,10 @@ const flagPhoneReused = async (db: Db, referralId: string | null, rewardId: stri
     data: { riskFlags: { push: "PHONE_REUSED" } },
   });
   if (count > 0) {
-    await db.referralEvent.create({
+    const ev = await db.referralEvent.create({
       data: { referralId, rewardId, type: "flagged", data: { flags: ["PHONE_REUSED"] } },
     });
+    countAfterCommit(ev.id, [{ metric: "flagged", dimension: "flag:phone_reused" }]);
   }
 };
 
@@ -426,7 +428,7 @@ const spendCore = async (tx: Prisma.TransactionClient, ref: BookingRef, type: st
     data: { status: RewardStatus.REDEEMED, redeemedAt: new Date() },
   });
   if (count === 0) return null;
-  await tx.referralEvent.create({
+  const ev = await tx.referralEvent.create({
     data: {
       referralId: reward.referralId,
       rewardId: reward.id,
@@ -434,6 +436,12 @@ const spendCore = async (tx: Prisma.TransactionClient, ref: BookingRef, type: st
       data: { ...refWhere(ref), discountMinor: reward.discountMinor },
     },
   });
+  // A no-show using the reward up is not a redemption.
+  if (type === "redeemed") {
+    countAfterCommit(ev.id, [
+      { metric: "rewards_redeemed", dimension: "appointmentId" in ref ? "booking:salon" : "booking:home" },
+    ]);
+  }
   return { rewardId: reward.id, status: RewardStatus.REDEEMED };
 };
 

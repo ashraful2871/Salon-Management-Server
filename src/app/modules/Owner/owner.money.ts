@@ -17,6 +17,7 @@ import {
   destinationLabel,
   PREPAID_OWED_DESCRIPTION,
   PREPAID_REVERSED_DESCRIPTION,
+  PROMO_SALON_DESCRIPTION,
   SALON_REFUND_DESCRIPTION,
 } from "../Settlement/settlement.service";
 import { describeAccount } from "./owner.payoutAccount";
@@ -46,6 +47,7 @@ export const TRANSACTION_TYPES = [
   "commission",
   "goodwill",
   "dues",
+  "promo",
   "payout_adjustment",
 ] as const;
 type TransactionType = (typeof TRANSACTION_TYPES)[number];
@@ -61,7 +63,20 @@ export const TYPE_DESCRIPTIONS: Record<Exclude<TransactionType, "payout_adjustme
   commission: [COMMISSION_DEDUCTED_DESCRIPTION, COMMISSION_RETURNED_DESCRIPTION],
   goodwill: ["Goodwill credit funded by salon"],
   dues: [DUES_PAID_DESCRIPTION, DUES_WAIVED_DESCRIPTION],
+  // The platform paying the salon the referral discount its customer got.
+  promo: [PROMO_SALON_DESCRIPTION],
 };
+
+/**
+ * How a ledger description is shown to the owner, where it differs from the
+ * stored text. A label map only: the rows stay SALON_PAYABLE with their
+ * original description.
+ */
+export const DESCRIPTION_LABELS: Record<string, string> = {
+  [PROMO_SALON_DESCRIPTION]: "Referral reimbursements",
+};
+
+export const displayDescription = (description: string) => DESCRIPTION_LABELS[description] ?? description;
 
 const KNOWN_DESCRIPTIONS = Object.values(TYPE_DESCRIPTIONS).flat();
 
@@ -143,7 +158,7 @@ const toTransaction = (row: EntryRow, cutoff: Date) => ({
   salonId: row.salonId,
   salonName: row.salon?.name ?? "Deleted branch",
   type: typeOf(row.description),
-  description: row.description,
+  description: displayDescription(row.description),
   amountMinor: row.amountMinor,
   bucket: bucketOf(row, cutoff),
   appointment: row.appointment

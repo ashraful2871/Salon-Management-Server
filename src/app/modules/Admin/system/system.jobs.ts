@@ -100,6 +100,7 @@ const ALERT_LABELS: Record<string, string> = {
   "storage.cap": "Database storage",
   "ai.coverage": "AI search index coverage",
   "appeals.due": "Appeals due soon",
+  "referral.mismatch": "Referral discounts that disagree with the ledger",
 };
 
 export const alertLabel = (key: string) =>
@@ -214,6 +215,21 @@ const CHECKS: Array<() => Promise<Check | Check[]>> = [
       },
     });
     return { key: "appeals.due", firing: count > 0, message: `${count} appeal(s) due within 6 hours or overdue`, data: { count } };
+  },
+  async () => {
+    // Read from the last referral.reconcile run, like wallet.drift from wallet.audit.
+    const run = await prisma.jobRun.findFirst({
+      where: { job: "referral.reconcile", status: JobRunStatus.OK },
+      orderBy: { startedAt: "desc" },
+      select: { summary: true, startedAt: true },
+    });
+    const mismatched = Number((run?.summary as { redeemedMismatch?: number } | null)?.redeemedMismatch ?? 0);
+    return {
+      key: "referral.mismatch",
+      firing: mismatched > 0,
+      message: `${mismatched} redeemed referral reward(s) whose PLATFORM_PROMO ledger lines do not match the discount (reconcile at ${run?.startedAt.toISOString() ?? "never"})`,
+      data: { mismatched },
+    };
   },
 ];
 
@@ -346,6 +362,7 @@ const INBOX_LABELS: Record<string, string> = {
   "jobs.failed": "Failing background jobs",
   "storage.cap": "Database storage",
   "ai.coverage": "AI index coverage",
+  "referrals.review": "Referral rewards held for review",
 };
 
 const dhakaHour = (at = new Date()) => new Date(at.getTime() + 6 * HOUR).getUTCHours();

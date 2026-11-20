@@ -10,6 +10,7 @@ import { qualifyTx } from "./referral.lifecycle";
 import { notifyJoined, notifyWelcome } from "./referral.notify";
 import { signalsOf, signupFlags, type SignupSignals } from "./referral.risk";
 import { loadReferralSettings } from "./referral.settings";
+import { countAfterCommit, kindDim } from "./referral.metrics";
 
 /**
  * Sign-up attach and email verification. A code attaches only inside the
@@ -124,13 +125,15 @@ export const attachOnSignupTx = async (
     },
     select: { id: true },
   });
-  await tx.referralEvent.create({
+  const attached = await tx.referralEvent.create({
     data: { referralId: referral.id, type: "attached", data: { channel: a.channel, flags: a.flags } },
   });
+  countAfterCommit(attached.id, [{ metric: "attached", dimension: `channel:${a.channel.toLowerCase()}` }]);
 
   let welcomeIssued = false;
   if (a.verified) {
-    await tx.referralEvent.create({ data: { referralId: referral.id, type: "verified" } });
+    const verified = await tx.referralEvent.create({ data: { referralId: referral.id, type: "verified" } });
+    countAfterCommit(verified.id, [{ metric: "joined" }]);
     welcomeIssued = !!(await issueWelcomeTx(tx, a.refereeId))?.issued;
   }
   return { referralId: referral.id, referrerId: a.referrer.userId, joined: a.verified, welcomeIssued };
@@ -174,7 +177,7 @@ export const issueWelcomeTx = async (tx: Prisma.TransactionClient, refereeId: st
   });
   if (count === 0) return { reward, issued: false };
 
-  await tx.referralEvent.create({
+  const issued = await tx.referralEvent.create({
     data: {
       referralId: referral.id,
       rewardId: reward.id,
@@ -188,6 +191,7 @@ export const issueWelcomeTx = async (tx: Prisma.TransactionClient, refereeId: st
       },
     },
   });
+  countAfterCommit(issued.id, [{ metric: "rewards_issued", dimension: kindDim("REFEREE_WELCOME") }]);
   // No booking needed under this trigger (b = null).
   if (s.referrerTrigger === "REFEREE_VERIFIED") await qualifyTx(tx, refereeId, null);
   return { reward, issued: true };
@@ -223,7 +227,8 @@ export const onEmailVerified = async (userId: string): Promise<void> => {
         where: { id: pending.id },
         select: { id: true, referrerId: true, referee: { select: { name: true } } },
       });
-      await tx.referralEvent.create({ data: { referralId: referral.id, type: "verified" } });
+      const verified = await tx.referralEvent.create({ data: { referralId: referral.id, type: "verified" } });
+      countAfterCommit(verified.id, [{ metric: "joined" }]);
       const welcome = await issueWelcomeTx(tx, userId);
       return { referral, welcomeIssued: !!welcome?.issued };
     });

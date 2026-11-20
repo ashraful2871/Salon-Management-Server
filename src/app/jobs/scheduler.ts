@@ -39,6 +39,11 @@ import {
   runHomeRetention,
   sendHomeReminders,
 } from "../modules/HomeService/home.jobs";
+import {
+  runReferralExpire,
+  runReferralReconcile,
+  runReferralReminders,
+} from "../modules/Referral/referral.jobs";
 
 /**
  * Periodic money work, the AI search index repair, retention, and the health
@@ -286,6 +291,13 @@ export const JOBS: JobDef[] = [
   { name: "assistant.reminders", everyMs: REMINDER_INTERVAL_MS, safeToRunNow: false, run: () => sendBookingReminders() },
   { name: "assistant.retention", everyMs: RETENTION_INTERVAL_MS, safeToRunNow: false, run: purgeConversations },
   { name: "auth.cleanup", everyMs: AUTH_CLEANUP_INTERVAL_MS, safeToRunNow: false, run: purgeAuthCodes },
+  // Referral program: lapsed rewards and referrals expire; reminders 3 days
+  // before a reward runs out (once a day from 10:00 Dhaka, customer emails, so
+  // timer only); the daily net under the booking hooks, which also reports
+  // redeemed rewards the ledger disagrees with (alert referral.mismatch).
+  { name: "referral.expire", everyMs: HOUR, safeToRunNow: true, run: () => runReferralExpire() },
+  { name: "referral.reminders", everyMs: 30 * MINUTE, safeToRunNow: false, run: () => runReferralReminders() },
+  { name: "referral.reconcile", everyMs: 24 * HOUR, safeToRunNow: true, run: runReferralReconcile },
   // Expired try-on photos and results, then a daily sweep of the Cloudinary
   // tag for anything the database lost track of.
   { name: "hair.cleanup", everyMs: HAIR_CLEANUP_INTERVAL_MS, safeToRunNow: false, run: () => purgeHairTryOn(rollupBeforeTryOnPurge) },

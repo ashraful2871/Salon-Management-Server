@@ -17,6 +17,7 @@ import { parseListQuery } from "../admin.query";
 import { maskEmail, maskPhone } from "../admin.service";
 import { REASON_LABELS, STATUS_REASON_CODES } from "./users.validation";
 import { onEmailVerified } from "../../Referral/referral.attach";
+import { user360Referral } from "../../Referral/referral.admin";
 
 import { SITE_NAME } from "../../../utils/brand";
 const DAY = 24 * 60 * 60 * 1000;
@@ -186,13 +187,17 @@ const getUser = async (admin: AdminContext, id: string) => {
   });
   if (!user) throw new ApiError(StatusCodes.NOT_FOUND, "User not found");
 
-  const [byStatus, upcoming] = await Promise.all([
+  const [byStatus, upcoming, referral] = await Promise.all([
     prisma.appointment.groupBy({
       by: ["status"],
       where: { customerId: id },
       _count: { _all: true },
     }),
     prisma.appointment.count({ where: upcomingWhere(id) }),
+    // Customers take part in the referral program; shown with referrals.view.
+    user.role === "CUSTOMER" && admin.permissions.includes("referrals.view")
+      ? user360Referral(id)
+      : Promise.resolve(null),
   ]);
   const count = (s: AppointmentStatus) => byStatus.find((b) => b.status === s)?._count._all ?? 0;
 
@@ -244,6 +249,8 @@ const getUser = async (admin: AdminContext, id: string) => {
           isFrozen: user.wallet.isFrozen,
         }
       : null,
+    // { code, blocked, referredBy, made: { total, qualified }, rewards: { available, redeemed, savedMinor } }
+    referral,
   };
 };
 

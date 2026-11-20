@@ -1374,16 +1374,29 @@ export const getReferralWelcomeTemplate = (notice: RewardTermsText & { name: str
      <p style="color:#7f8c8d;font-size:12px;">One reward per booking. It works on your first booking only.</p>`,
   );
 
-/** To a referrer when their friend's first booking earns them a reward. */
-export const getReferralEarnedTemplate = (notice: RewardTermsText & { name: string; friendName: string; ctaUrl: string }) =>
-  moneyLayout(
-    `You earned a ${escapeHtml(notice.percent)}% reward`,
-    `<p>Hi ${escapeHtml(notice.name)},</p>
+/**
+ * To a referrer when their friend's first booking earns them a reward, or
+ * (`fromTeam`) to a customer an admin granted a reward to.
+ */
+export const getReferralEarnedTemplate = (
+  notice: RewardTermsText & { name: string; friendName: string; ctaUrl: string; fromTeam?: boolean },
+) =>
+  notice.fromTeam
+    ? moneyLayout(
+        `You have a ${escapeHtml(notice.percent)}% reward`,
+        `<p>Hi ${escapeHtml(notice.name)},</p>
+     <p>From the ${SITE_NAME} team: you get <strong>${escapeHtml(notice.percent)}% off</strong> one of your bookings. It is applied for you when you book.</p>
+     ${rewardTermsRows(notice)}
+     ${buttonLink(notice.ctaUrl, "See your rewards")}`,
+      )
+    : moneyLayout(
+        `You earned a ${escapeHtml(notice.percent)}% reward`,
+        `<p>Hi ${escapeHtml(notice.name)},</p>
      <p><strong>${escapeHtml(notice.friendName)}</strong> completed their first booking on ${SITE_NAME}, so you get <strong>${escapeHtml(notice.percent)}% off</strong> one of your bookings. It is applied for you when you book.</p>
      ${rewardTermsRows(notice)}
      ${buttonLink(notice.ctaUrl, "See your rewards")}
      <p style="color:#7f8c8d;font-size:12px;">Keep inviting friends: every friend's first booking earns you another reward.</p>`,
-  );
+      );
 
 /** A few days before an unused reward runs out. */
 export const getReferralExpiringTemplate = (notice: RewardTermsText & { name: string; ctaUrl: string }) =>

@@ -237,6 +237,8 @@ const ACCOUNT_LABELS: Record<string, string> = {
   SALON_PAYABLE: "Salon payable",
   PLATFORM_REVENUE: "Platform revenue",
   GATEWAY_CLEARING: "Gateway clearing",
+  PLATFORM_CASH: "Platform cash",
+  PLATFORM_PROMO: "Referral promo (platform)",
 };
 
 const buildTimeline = (

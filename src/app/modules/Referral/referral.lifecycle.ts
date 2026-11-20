@@ -9,6 +9,7 @@ import {
   type BookingRef,
 } from "./referral.rewards";
 import { loadReferralSettings } from "./referral.settings";
+import { countAfterCommit, kindDim } from "./referral.metrics";
 
 /**
  * The only entry points booking code calls at the end of a booking (salon
@@ -161,13 +162,15 @@ export const qualifyTx = async (
   });
   if (moved.count === 0) return { qualified: false }; // a parallel completion got here first
 
-  await tx.referralEvent.create({
+  const qualified = await tx.referralEvent.create({
     data: {
       referralId: referral.id,
       type: "qualified",
       data: { ...(b ? { kind: b.kind, bookingId: b.id, billableMinor: b.billableMinor } : { trigger: "REFEREE_VERIFIED" }), flags },
     },
   });
+
+  countAfterCommit(qualified.id, [{ metric: "qualified", dimension: `booking:${b ? b.kind.toLowerCase() : "none"}` }]);
 
   if (skip) {
     await tx.referralEvent.create({ data: { referralId: referral.id, type: "referrer.skipped", data: { reason: skip } } });
@@ -198,7 +201,7 @@ export const qualifyTx = async (
   });
   if (count === 0) return { qualified: true, rewardId: reward.id, status: reward.status, skip: null };
 
-  await tx.referralEvent.create({
+  const issued = await tx.referralEvent.create({
     data: {
       referralId: referral.id,
       rewardId: reward.id,
@@ -213,10 +216,15 @@ export const qualifyTx = async (
       },
     },
   });
+  countAfterCommit(issued.id, [{ metric: "rewards_issued", dimension: kindDim("REFERRER_BONUS") }]);
   if (held) {
-    await tx.referralEvent.create({
+    const flagged = await tx.referralEvent.create({
       data: { referralId: referral.id, rewardId: reward.id, type: "flagged", data: { flags, held: true } },
     });
+    countAfterCommit(
+      flagged.id,
+      flags.map((f) => ({ metric: "flagged" as const, dimension: `flag:${f.toLowerCase()}` })),
+    );
   }
 
   queueNotice(reward.id, status, held ? notifyHeld : notifyEarned);

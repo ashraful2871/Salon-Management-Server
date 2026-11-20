@@ -125,25 +125,33 @@ export const notifyJoined = (referrerId: string, friend: string, referralId?: st
     });
   });
 
-/** To the referrer when their reward is issued (AVAILABLE). Used by Phase 4. */
+/**
+ * When a reward becomes usable (AVAILABLE): the referrer's reward, on issue or
+ * on an admin's approval, and a reward an admin granted ("From the team").
+ */
 export const notifyEarned = (rewardId: string) =>
   guarded("reward_earned", async () => {
     const reward = await loadReward(rewardId);
     if (!reward) return;
     const p = pct(reward.percentBps);
+    const fromTeam = reward.kind === "MANUAL_GRANT";
     const friend = friendName(reward.referral?.referee.name ?? "");
     const booked = !!(reward.referral?.qualifyingAppointmentId || reward.referral?.qualifyingHomeBookingId);
+    const why = fromTeam
+      ? `From the ${SITE_NAME} team: a reward for you.`
+      : `${friend} ${booked ? "completed their first booking" : "joined with your code"}.`;
     await notify([reward.userId], "referral.reward_earned", {
-      title: `You earned a ${p}% reward`,
-      body: `${friend} ${booked ? "completed their first booking" : "joined with your code"}. Get ${p}% off a booking${upTo(reward)}. Use it by ${dhakaDate(reward.expiresAt)}.`,
+      title: fromTeam ? `You have a ${p}% reward` : `You earned a ${p}% reward`,
+      body: `${why} Get ${p}% off a booking${upTo(reward)}. Use it by ${dhakaDate(reward.expiresAt)}.`,
       link: REWARDS_PATH,
       dedupeKey: `referral.reward_earned:${reward.id}`,
       email: {
-        subject: `You earned a ${p}% reward - ${SITE_NAME}`,
+        subject: `${fromTeam ? `You have a ${p}% reward` : `You earned a ${p}% reward`} - ${SITE_NAME}`,
         html: (name) =>
           getReferralEarnedTemplate({
             name,
             friendName: friend,
+            fromTeam,
             ...termsOf(reward),
             ctaUrl: `${config.frontend_url}${REWARDS_PATH}`,
           }),
