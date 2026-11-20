@@ -36,6 +36,13 @@ export const EVENT_ALLOW_LIST = {
     { key: "method", values: ["wallet", "bkash", "sslcommerz"] },
   ],
   home_out_of_area: [{ key: "audience", values: ["ladies", "gents"] }],
+  // Referrals: the invite landing, the Refer page's share buttons, the register
+  // form's code field. `funnel.link_opens` reads referral_landing_view state:valid.
+  referral_landing_view: [{ key: "state", values: ["valid", "invalid", "signed_in", "paused"] }],
+  referral_share: [
+    { key: "channel", values: ["whatsapp", "messenger", "facebook", "sms", "copy_link", "copy_code", "native"] },
+  ],
+  referral_code_entered: [{ key: "result", values: ["valid", "invalid"] }],
 } as const satisfies Record<string, readonly DimRule[]>;
 
 export type EventName = keyof typeof EVENT_ALLOW_LIST;
