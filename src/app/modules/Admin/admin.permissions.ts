@@ -46,6 +46,9 @@ export const ALL_PERMISSIONS = [
   "homeservice.manage",
   "homeservice.experts_verify",
   "homeservice.policy",
+  "referrals.view",
+  "referrals.manage",
+  "referrals.policy",
 ] as const;
 
 export type Permission = (typeof ALL_PERMISSIONS)[number];
@@ -82,6 +85,8 @@ export const ADMIN_ROLE_PERMISSIONS: Record<AdminRole, readonly Permission[]> = 
     "homeservice.view",
     "homeservice.manage",
     "homeservice.experts_verify",
+    "referrals.view",
+    "referrals.manage",
   ],
   FINANCE: [
     "users.view",
@@ -103,6 +108,8 @@ export const ADMIN_ROLE_PERMISSIONS: Record<AdminRole, readonly Permission[]> = 
     "audit.view",
     "homeservice.view",
     "homeservice.policy",
+    "referrals.view",
+    "referrals.policy",
   ],
   SUPPORT: [
     "users.view",
@@ -117,6 +124,7 @@ export const ADMIN_ROLE_PERMISSIONS: Record<AdminRole, readonly Permission[]> = 
     "support.reply",
     "support.assign",
     "homeservice.view",
+    "referrals.view",
   ],
   MODERATOR: [
     "users.view",
@@ -136,6 +144,7 @@ export const ADMIN_ROLE_PERMISSIONS: Record<AdminRole, readonly Permission[]> = 
     "settings.view",
     "system.view",
     "homeservice.view",
+    "referrals.view",
   ],
 };
 

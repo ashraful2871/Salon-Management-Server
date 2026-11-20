@@ -7,8 +7,11 @@ import prisma from "../../shared/prisma";
 import { AuditCtx, auditTx } from "../../utils/audit";
 import { AccessUser, assertSalonPermission, scopeSalonIds } from "../../utils/salonAccess";
 import { getSetting } from "../../utils/settings";
+import { formatBDT } from "../../utils/money";
+import { SITE_NAME } from "../../utils/brand";
 import { addDays, dhakaDay, isDay } from "../Analytics/analytics.days";
-import { writeJournal } from "../Settlement/settlement.service";
+import { PROMO_PLATFORM_DESCRIPTION, PROMO_SALON_DESCRIPTION, writeJournal } from "../Settlement/settlement.service";
+import { onBookingCompletedTx } from "../Referral/referral.lifecycle";
 import { lockStaff } from "../Staff/staff.schedule";
 import { WalletService } from "../Wallet/wallet.service";
 import { availableFor, computeSlots, expertCanTake, loadExpertDays, NotFreeReason, whyNotFree } from "./home.availability";
@@ -123,7 +126,12 @@ export const moveTx = async (tx: Tx, id: string, m: Move) => {
  * the door, so a cash visit can leave the business owing (dues). Idempotent
  * through `advanceStatus`.
  */
-export const settleHomeCompletedTx = async (tx: Tx, bookingId: string) => {
+export const settleHomeCompletedTx = async (
+  tx: Tx,
+  bookingId: string,
+  /** The expert's user id; null when the stale job closed it (→ AUTO_CLOSED). */
+  completedById: string | null,
+) => {
   const b = await tx.homeBooking.findUnique({
     where: { id: bookingId },
     select: {
@@ -138,6 +146,7 @@ export const settleHomeCompletedTx = async (tx: Tx, bookingId: string) => {
       balanceMinor: true,
       balanceMethod: true,
       subtotalMinor: true,
+      promoDiscountMinor: true,
       commissionBps: true,
       salon: { select: { ownerId: true } },
     },
@@ -165,11 +174,26 @@ export const settleHomeCompletedTx = async (tx: Tx, bookingId: string) => {
       // 0 at launch: writeJournal drops zero lines.
       { account: LedgerAccount.SALON_PAYABLE, amountMinor: -commissionMinor, description: `Platform commission - ${label}` },
       { account: LedgerAccount.PLATFORM_REVENUE, amountMinor: commissionMinor, description: `Platform commission - ${label}` },
+      // The referral discount the customer didn't pay: the platform owes it to
+      // the salon (marketing cost). 0 writes nothing.
+      { account: LedgerAccount.PLATFORM_PROMO, amountMinor: -b.promoDiscountMinor, description: PROMO_PLATFORM_DESCRIPTION },
+      { account: LedgerAccount.SALON_PAYABLE, amountMinor: b.promoDiscountMinor, description: PROMO_SALON_DESCRIPTION },
     ],
   });
 
   await tx.homeBooking.update({ where: { id: b.id }, data: { advanceStatus: AdvanceStatus.APPLIED } });
   await tx.homeExpert.update({ where: { id: b.expertId }, data: { completedJobs: { increment: 1 } } });
+
+  // The reserved reward is spent and the referral may qualify. Commission
+  // above stays on the full subtotal.
+  await onBookingCompletedTx(tx, {
+    kind: "HOME",
+    id: b.id,
+    customerId: b.customerId,
+    source: "PLATFORM",
+    billableMinor: b.subtotalMinor,
+    completedById,
+  });
   return { appliedMinor, commissionMinor };
 };
 
@@ -194,6 +218,8 @@ const JOB = {
   notes: true,
   balanceMinor: true,
   balanceMethod: true,
+  promoDiscountMinor: true,
+  promoLabel: true,
   startCodeTries: true,
   arrivedAt: true,
   salon: { select: { id: true, name: true } },
@@ -226,6 +252,13 @@ const jobView = (b: JobRow, noShowWaitMinutes: number, now = new Date()) => {
     /** What to collect at the door: 0 once the customer paid it in the app. */
     balanceMinor: paidInApp ? 0 : b.balanceMinor,
     balancePaidInApp: paidInApp,
+    /** Already out of the balance above: the platform pays it, so never ask the customer for it. */
+    promoDiscountMinor: b.promoDiscountMinor,
+    promoLabel: b.promoLabel,
+    promoLine:
+      b.promoDiscountMinor > 0
+        ? `Referral reward −${formatBDT(b.promoDiscountMinor)} (paid by ${SITE_NAME})`
+        : null,
     startCodeTriesLeft: Math.max(0, MAX_START_TRIES - b.startCodeTries),
     canSetOffFrom: new Date(b.startAt.getTime() - EN_ROUTE_FROM_MS),
     addressRevealAt: new Date(b.startAt.getTime() - ADDRESS_REVEAL_MS),
@@ -398,7 +431,7 @@ export const completeJob = async (userId: string, id: string, body: CompleteJobB
           balanceCollectedMinor: paidInApp ? b.balanceMinor : body.collectedMinor,
         },
       });
-      await settleHomeCompletedTx(tx, id);
+      await settleHomeCompletedTx(tx, id, userId);
     },
     { maxWait: 10_000, timeout: 20_000 },
   );
@@ -470,6 +503,9 @@ const boardView = (b: BoardRow) => ({
   notes: b.notes,
   services: b.items.map((i) => ({ name: i.nameSnapshot, durationMin: i.durationMin })),
   subtotalMinor: b.subtotalMinor,
+  /** Platform-funded referral reward: credited to the salon at completion. */
+  promoDiscountMinor: b.promoDiscountMinor,
+  promoLabel: b.promoLabel,
   travelFeeMinor: b.travelFeeMinor,
   totalMinor: b.totalMinor,
   advanceMinor: b.advanceMinor,
@@ -926,7 +962,7 @@ export const closeStaleVisits = async () => {
               balanceCollectedMinor: paidInApp ? b.balanceMinor : 0,
             },
           });
-          await settleHomeCompletedTx(tx, b.id);
+          await settleHomeCompletedTx(tx, b.id, null);
         },
         { maxWait: 10_000, timeout: 20_000 },
       );

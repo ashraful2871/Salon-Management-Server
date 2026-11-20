@@ -9,10 +9,12 @@ import { AuthService } from "./auth.service";
 import { completeGoogleFlow, startGoogleFlow } from "./auth.google";
 import { verifyTwoFactor as verifyTwoFactorCode } from "./auth.twoFactor";
 import { isGoogleEnabled } from "../../../config";
+import { signupCtxOf } from "../Referral/referral.attach";
+import { signalsOf } from "../Referral/referral.risk";
 
 import { SITE_NAME } from "../../utils/brand";
 const register = catchAsync(async (req: Request, res: Response) => {
-  const result = await AuthService.register(req.body, clientIp(req));
+  const result = await AuthService.register(req.body, clientIp(req), signupCtxOf(req));
 
   // With REQUIRE_EMAIL_VERIFICATION on, no session until the code: no cookies.
   if (result.status === "VERIFICATION_REQUIRED") {
@@ -253,7 +255,11 @@ const providers = catchAsync(async (_req: Request, res: Response) => {
 });
 
 const googleStart = catchAsync(async (req: Request, res: Response) => {
-  const result = startGoogleFlow(req.body);
+  const result = startGoogleFlow({
+    redirect: req.body?.redirect,
+    referralCode: req.body?.referralCode,
+    referralSource: signupCtxOf(req).channel,
+  });
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
@@ -264,7 +270,7 @@ const googleStart = catchAsync(async (req: Request, res: Response) => {
 });
 
 const googleCallback = catchAsync(async (req: Request, res: Response) => {
-  const result = await completeGoogleFlow({ ...req.body, ip: clientIp(req) });
+  const result = await completeGoogleFlow({ ...req.body, ip: clientIp(req), signals: signalsOf(req) });
 
   if (result.status === "SIGNED_IN") {
     setAuthCookies(res, result);

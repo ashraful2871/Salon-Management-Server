@@ -45,6 +45,8 @@ const registerValidation = z.object({
     dateOfBirth: z.string().optional(),
     address: z.string().optional(),
     role: z.enum(["CUSTOMER", "SALON_OWNER"]).optional(),
+    // An invite code; attached only to a CUSTOMER account, inside the user-create transaction.
+    referralCode: z.string().trim().max(20).optional(),
   }),
 });
 
@@ -138,6 +140,8 @@ const resetPasswordValidation = z.object({
 const googleStartValidation = z.object({
   body: z.object({
     redirect: z.string().max(300).optional(),
+    // Carried to the callback in the flow token (`rf`); used only if Google creates a new account.
+    referralCode: z.string().trim().max(20).optional(),
   }),
 });
 

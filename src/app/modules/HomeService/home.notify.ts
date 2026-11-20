@@ -57,6 +57,8 @@ const ROW = {
   customerId: true,
   expertId: true,
   totalMinor: true,
+  promoDiscountMinor: true,
+  promoLabel: true,
   advanceMinor: true,
   balanceMinor: true,
   balanceMethod: true,
@@ -73,6 +75,18 @@ const ROW = {
   expert: { select: { staff: { select: { userId: true, user: { select: { name: true } } } } } },
   items: { select: { nameSnapshot: true } },
 } as const;
+
+type PromoBits = { promoDiscountMinor: number; promoLabel: string | null };
+
+/** The referral reward row on a receipt (already out of the total), or nothing. */
+const promoRows = (b: PromoBits): [string, string][] =>
+  b.promoDiscountMinor > 0 ? [[b.promoLabel ?? "Referral reward", `−${formatBDT(b.promoDiscountMinor)}`]] : [];
+
+/** For the branch: the discount is the platform's, credited after the visit. */
+const promoNote = (b: PromoBits) =>
+  b.promoDiscountMinor > 0
+    ? ` Referral reward ${formatBDT(b.promoDiscountMinor)} paid by ${SITE_NAME}; don't collect it at the door.`
+    : "";
 
 const when = (d: Date) =>
   d.toLocaleString("en-GB", {
@@ -162,7 +176,13 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
             highlight: code
               ? { label: "Start code", value: code, note: "Read it to your expert when they arrive, not before." }
               : null,
-            rows: [...visitRows, ["Address", b.addressLine], ["Total", formatBDT(b.totalMinor)], ["Advance paid", formatBDT(b.advanceMinor)]],
+            rows: [
+              ...visitRows,
+              ["Address", b.addressLine],
+              ...promoRows(b),
+              ["Total", formatBDT(b.totalMinor)],
+              ["Advance paid", formatBDT(b.advanceMinor)],
+            ],
             disclaimer: b.disclaimerText,
             cta: myVisit,
           }),
@@ -178,7 +198,7 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
         }
         await toBranchAndExpert(b.salonId, expertUserId, "home.booking.confirmed", {
           title: `Home visit ${b.code} booked`,
-          body: `${firstName(expertName)} · ${at} · ${services}. ${formatBDT(b.advanceMinor)} advance held — paid to you after the visit.`,
+          body: `${firstName(expertName)} · ${at} · ${services}. ${formatBDT(b.advanceMinor)} advance held — paid to you after the visit.${promoNote(b)}`,
           link: boardLink,
           dedupeKey: `home.booking.confirmed:${b.id}`,
         });
@@ -251,6 +271,7 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
               ["Booking", b.code],
               ["Date", at],
               ["Services", services],
+              ...promoRows(b),
               ["Total", formatBDT(b.totalMinor)],
               ["Advance paid online", formatBDT(b.advanceMinor)],
               [
@@ -261,7 +282,8 @@ export const notifyHomeBooking = async (bookingId: string, n: HomeNotice) => {
             cta: { label: "Rate your expert", url: url(`${HOME_PATHS.customerBooking(b.id)}?review=1`) },
           }),
         );
-        const toSalon = b.advanceMinor + (paidInApp ? b.balanceMinor : 0);
+        // The platform also credits the referral discount at completion.
+        const toSalon = b.advanceMinor + (paidInApp ? b.balanceMinor : 0) + b.promoDiscountMinor;
         await toBranch(b.salonId, "home.booking.completed", {
           title: `Home visit ${b.code} completed`,
           body: `${firstName(expertName)} · ${services}. ${formatBDT(toSalon)} added to your pending balance.`,

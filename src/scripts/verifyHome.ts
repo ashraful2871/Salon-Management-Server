@@ -412,7 +412,7 @@ const run = async (tx: Prisma.TransactionClient) => {
       where: { id },
       data: { status: HomeBookingStatus.COMPLETED, completedAt, commissionBps: 1000, subtotalMinor: 120000, travelFeeMinor: 10000 },
     });
-    await settleHomeCompletedTx(tx, id);
+    await settleHomeCompletedTx(tx, id, null);
     return id;
   };
   await completed(new Date(edge + 10 * MIN)); // 00:10 Dhaka, still the day before in UTC

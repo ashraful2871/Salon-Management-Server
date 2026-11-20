@@ -36,18 +36,18 @@ const check = (name: string, ok: boolean, detail?: string) => {
 const EXPECTED: Record<string, string> = {
   SUPER_ADMIN: ALL_PERMISSIONS.join(" "),
   OPERATIONS:
-    "users.view users.view_pii users.manage users.role users.impersonate salons.view salons.review salons.manage bookings.view bookings.manage appeals.resolve finance.view finance.reconcile reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage system.view system.operate audit.view agents.manage homeservice.view homeservice.manage homeservice.experts_verify",
+    "users.view users.view_pii users.manage users.role users.impersonate salons.view salons.review salons.manage bookings.view bookings.manage appeals.resolve finance.view finance.reconcile reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage system.view system.operate audit.view agents.manage homeservice.view homeservice.manage homeservice.experts_verify referrals.view referrals.manage",
   FINANCE:
-    "users.view users.view_pii salons.view bookings.view finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export finance.payout_accounts analytics.view analytics.export settings.view system.view audit.view homeservice.view homeservice.policy",
+    "users.view users.view_pii salons.view bookings.view finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export finance.payout_accounts analytics.view analytics.export settings.view system.view audit.view homeservice.view homeservice.policy referrals.view referrals.policy",
   SUPPORT:
-    "users.view users.view_pii users.manage users.impersonate salons.view bookings.view bookings.manage appeals.resolve support.view support.reply support.assign homeservice.view",
+    "users.view users.view_pii users.manage users.impersonate salons.view bookings.view bookings.manage appeals.resolve support.view support.reply support.assign homeservice.view referrals.view",
   MODERATOR: "users.view users.manage salons.view bookings.view reviews.moderate support.view",
   ANALYST:
-    "users.view salons.view bookings.view finance.view analytics.view analytics.export settings.view system.view homeservice.view",
+    "users.view salons.view bookings.view finance.view analytics.view analytics.export settings.view system.view homeservice.view referrals.view",
 };
 
 const FULL_LIST =
-  "users.view users.view_pii users.manage users.role users.delete users.impersonate salons.view salons.review salons.manage salons.delete bookings.view bookings.manage appeals.resolve finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export finance.payout_accounts reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage settings.manage system.view system.operate audit.view agents.manage team.manage homeservice.view homeservice.manage homeservice.experts_verify homeservice.policy";
+  "users.view users.view_pii users.manage users.role users.delete users.impersonate salons.view salons.review salons.manage salons.delete bookings.view bookings.manage appeals.resolve finance.view finance.payouts finance.refunds finance.wallet_adjust finance.wallet_freeze finance.reconcile finance.export finance.payout_accounts reviews.moderate support.view support.reply support.assign content.manage analytics.view analytics.export settings.view flags.manage settings.manage system.view system.operate audit.view agents.manage team.manage homeservice.view homeservice.manage homeservice.experts_verify homeservice.policy referrals.view referrals.manage referrals.policy";
 
 const sorted = (s: string | readonly string[]) =>
   [...(typeof s === "string" ? s.split(" ") : s)].sort().join(" ");
@@ -163,7 +163,7 @@ const guardChecks = async () => {
   const wrongPerm = homeKeys.filter(
     (k) => settingPermission(k) !== (SWITCHES.includes(k) ? "flags.manage" : "homeservice.policy"),
   );
-  check(`${homeKeys.length} homeService.* keys: homeservice.policy (switches: flags.manage)`, homeKeys.length === 34 && wrongPerm.length === 0, wrongPerm.join(", "));
+  check(`${homeKeys.length} homeService.* keys: homeservice.policy (switches: flags.manage)`, homeKeys.length === 35 && wrongPerm.length === 0, wrongPerm.join(", "));
   const policyHolders = Object.entries(ADMIN_ROLE_PERMISSIONS).filter(([, p]) => p.includes("homeservice.policy")).map(([r]) => r);
   check("only SUPER_ADMIN + FINANCE can save homeService.* keys", policyHolders.sort().join() === "FINANCE,SUPER_ADMIN", policyHolders.join());
   const HOME_APPROVAL = "advancePercent commissionPercent customerCancelPolicy feeSalonSharePercent lateCancelPercent noShowPercent nonRefundableGraceMinutes salonCancelCreditMinor travelFeeMaxMinor";
@@ -176,6 +176,40 @@ const guardChecks = async () => {
   );
   const policy = SETTINGS["homeService.customerCancelPolicy"].schema;
   check("choice refuses a value outside its options", policy.safeParse("WINDOW").success && !policy.safeParse("SOMETIMES").success);
+
+  // Referral program: the referral group needs referrals.policy (FINANCE + SUPER_ADMIN only);
+  // its two kill switches are flags, public, tier 2, and the program ships off.
+  const refKeys = (Object.keys(SETTINGS) as Array<keyof typeof SETTINGS>).filter((k) => k.startsWith("referral."));
+  const REF_SWITCHES = ["referral.enabled", "referral.redemptionsEnabled"];
+  const refWrongPerm = refKeys.filter(
+    (k) => settingPermission(k) !== (REF_SWITCHES.includes(k) ? "flags.manage" : "referrals.policy"),
+  );
+  check(`${refKeys.length} referral.* keys: referrals.policy (switches: flags.manage)`, refKeys.length === 21 && refWrongPerm.length === 0, refWrongPerm.join(", "));
+  const refTiers = refKeys.filter((k) => SETTINGS[k].tier !== (REF_SWITCHES.includes(k) ? 2 : 3));
+  check("referral switches tier 2, every other referral key tier 3", refTiers.length === 0, refTiers.join(", "));
+  const refPolicyHolders = Object.entries(ADMIN_ROLE_PERMISSIONS).filter(([, p]) => p.includes("referrals.policy")).map(([r]) => r);
+  check("only SUPER_ADMIN + FINANCE can save referral.* keys", refPolicyHolders.sort().join() === "FINANCE,SUPER_ADMIN", refPolicyHolders.join());
+  const refManagers = Object.entries(ADMIN_ROLE_PERMISSIONS).filter(([, p]) => p.includes("referrals.manage")).map(([r]) => r);
+  check("only SUPER_ADMIN + OPERATIONS can manage referrals", refManagers.sort().join() === "OPERATIONS,SUPER_ADMIN", refManagers.join());
+  check("an AGENT holds no referral permission", !AGENT_PERMISSIONS.some((p) => p.startsWith("referrals.")));
+  const REF_APPROVAL = "refereeMaxDiscountMinor refereePercent referrerMaxDiscountMinor referrerPercent referrerTrigger";
+  const refApproval = refKeys.filter((k) => (SETTINGS[k] as { approval?: boolean }).approval).map((k) => k.slice("referral.".length));
+  check("referral approval (four-eyes) keys as agreed", sorted(refApproval) === REF_APPROVAL, refApproval.join(" "));
+  const REF_PRIVATE = "holdFlagged maxRewardsLifetime qualifyWindowDays restoreOnNoShow velocityPerDay";
+  const refPrivate = refKeys.filter((k) => !(SETTINGS[k] as { public?: boolean }).public).map((k) => k.slice("referral.".length));
+  check("referral private keys as agreed (the rest are public)", sorted(refPrivate) === REF_PRIVATE, refPrivate.join(" "));
+  check(
+    "referral launch defaults: program off, redemptions on",
+    SETTINGS["referral.enabled"].default === false && SETTINGS["referral.redemptionsEnabled"].default === true,
+  );
+  const share = SETTINGS["referral.shareMessage"].schema;
+  check(
+    "share message needs {code} or {link}, at most 280 chars",
+    share.safeParse("Use {code}").success && share.safeParse("Join: {link}").success &&
+      !share.safeParse("Get 5% off").success && !share.safeParse(`{code} ${"x".repeat(280)}`).success,
+  );
+  const pct = SETTINGS["referral.refereePercent"].schema;
+  check("referral percent bounds 1–50", pct.safeParse(1).success && pct.safeParse(50).success && !pct.safeParse(0).success && !pct.safeParse(51).success);
 
   check(
     "junk /events dropped",

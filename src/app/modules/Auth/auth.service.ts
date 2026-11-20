@@ -37,6 +37,15 @@ import {
   twoFactorGate,
   ADMIN_SESSION_MAX_SECONDS,
 } from "./auth.session";
+import {
+  attachOnSignupTx,
+  onEmailVerified,
+  precheckSignupCode,
+  prepareAttach,
+  refusalError,
+  type PreparedAttach,
+  type SignupReferralCtx,
+} from "../Referral/referral.attach";
 
 import { SITE_NAME } from "../../utils/brand";
 /**
@@ -65,8 +74,14 @@ const signedIn = (user: {
   user: { id: user.id, email: user.email, name: user.name, role: user.role },
 });
 
-const register = async (payload: any, ip?: string | null) => {
+/**
+ * `referral` (from the controller): how an invite code arrived and the
+ * request's hashed device/IP. Without it a code is still attached, with no
+ * risk signals and channel CODE.
+ */
+const register = async (payload: any, ip?: string | null, referral?: SignupReferralCtx) => {
   const email = normalizeEmail(payload.email);
+  const role = payload.role || "CUSTOMER";
 
   // Check if user already exists
   const existingUser = await prisma.user.findFirst({
@@ -79,6 +94,17 @@ const register = async (payload: any, ip?: string | null) => {
       StatusCodes.CONFLICT,
       "User already exists with this email",
     );
+  }
+
+  // An invite code only counts for a customer account (any other role ignores
+  // it silently). Checked before anything is created, so a bad code is a
+  // field error the person can fix, not a half-made account.
+  const referralCode = typeof payload.referralCode === "string" ? payload.referralCode.trim() : "";
+  let attach: PreparedAttach | null = null;
+  if (referralCode && role === "CUSTOMER") {
+    const pre = await precheckSignupCode({ code: referralCode, email, phone: payload.phone });
+    if (!pre.ok) throw refusalError(pre);
+    attach = await prepareAttach(pre.referrer, email, referral);
   }
 
   // Hash password
@@ -98,7 +124,7 @@ const register = async (payload: any, ip?: string | null) => {
             ? new Date(payload.dateOfBirth)
             : undefined,
           address: payload.address,
-          role: payload.role || "CUSTOMER",
+          role,
         },
         select: {
           id: true,
@@ -125,6 +151,11 @@ const register = async (payload: any, ip?: string | null) => {
         });
       }
 
+      // The only moment a code can attach: same transaction as the account.
+      if (attach) {
+        await attachOnSignupTx(tx, { ...attach, refereeId: user.id, verified: false });
+      }
+
       return user;
     },
   );
@@ -132,6 +163,9 @@ const register = async (payload: any, ip?: string | null) => {
   if (config.auth.requireEmailVerification) {
     return startEmailVerification(result, ip);
   }
+
+  // No code step: the account counts as verified now (welcome reward, "joined").
+  if (attach) await onEmailVerified(result.id);
 
   const { accessToken, refreshToken } = issueSession(result);
   const { sessionVersion: _sessionVersion, ...user } = result;
@@ -254,6 +288,8 @@ const verifyOtp = async (payload: { ticket: string; code: string }) => {
     where: { id: user.id, emailVerified: false },
     data: { emailVerified: true, emailVerifiedAt: new Date() },
   });
+  // A friend's invite becomes JOINED and gets its welcome reward. Never throws.
+  void onEmailVerified(user.id);
 
   const fresh = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
   assertCanSignIn(fresh);

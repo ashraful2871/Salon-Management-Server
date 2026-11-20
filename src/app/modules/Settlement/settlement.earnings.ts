@@ -6,6 +6,8 @@ import {
 } from "@prisma/client";
 import prisma from "../../shared/prisma";
 import { payoutScope, realPayoutWhere } from "./settlement.buckets";
+// Read at call time only (settlement.service imports this file too).
+import { PROMO_SALON_DESCRIPTION } from "./settlement.service";
 import { getSettingSync } from "../../utils/settings";
 import {
   dateOnly,
@@ -135,6 +137,8 @@ const emptySalonEarnings = () => ({
   netEarningsMinor: 0,
   depositsCollectedMinor: 0,
   counterCollectedMinor: 0,
+  /** "Referral reimbursements": referral discounts the platform paid the salon (salon bookings + home visits). */
+  promoReimbursedMinor: 0,
   depositsHeldMinor: 0,
   payableMinor: 0,
   processingPayoutMinor: 0,
@@ -190,6 +194,7 @@ export const getSalonEarnings = async (
     monthCommission,
     monthlyGross,
     monthlyCommission,
+    promo,
   ] = await Promise.all([
     // What customers were billed on bookings that actually happened.
     prisma.appointment.aggregate({
@@ -287,12 +292,24 @@ export const getSalonEarnings = async (
         AND a."appointmentDate" >= ${start}
       GROUP BY 1
     `,
+    // Referral reimbursements: the SALON_PAYABLE leg of a booking's promo
+    // (never a separate account), split into salon bookings and home visits.
+    prisma.$queryRaw<Array<{ salonMinor: number; homeMinor: number }>>`
+      SELECT COALESCE(SUM(l."amountMinor") FILTER (WHERE l."appointmentId" IS NOT NULL), 0)::int AS "salonMinor",
+             COALESCE(SUM(l."amountMinor") FILTER (WHERE l."appointmentId" IS NULL), 0)::int AS "homeMinor"
+      FROM ledger_entries l
+      WHERE l.account = 'SALON_PAYABLE'
+        AND l."salonId" IN (${ids})
+        AND l.description = ${PROMO_SALON_DESCRIPTION}
+    `,
   ]);
 
   const grossBookingsMinor = (sum(completed._sum.totalMinor) - sum(completed._sum.discountMinor));
   const commissionMinor = sum(commission._sum.amountMinor);
   const depositsCollectedMinor = sum(depositsApplied._sum.depositMinor);
   const completedBookings = completed._count;
+  const promoSalonMinor = Number(promo[0]?.salonMinor ?? 0);
+  const promoReimbursedMinor = promoSalonMinor + Number(promo[0]?.homeMinor ?? 0);
 
   const byStatus = (status: PayoutStatus) =>
     sum(payoutsByStatus.find((row) => row.status === status)?._sum.netMinor);
@@ -305,11 +322,13 @@ export const getSalonEarnings = async (
     commissionMinor,
     netEarningsMinor: grossBookingsMinor - commissionMinor,
     depositsCollectedMinor,
-    // The rest of the bill is settled face to face at the salon.
+    // The rest of the bill is settled face to face at the salon, less the
+    // referral discount, which the platform pays instead of the customer.
     counterCollectedMinor: Math.max(
       0,
-      grossBookingsMinor - depositsCollectedMinor,
+      grossBookingsMinor - depositsCollectedMinor - promoSalonMinor,
     ),
+    promoReimbursedMinor,
     depositsHeldMinor: sum(depositsHeld._sum.depositMinor),
     payableMinor: sum(payable._sum.amountMinor),
     processingPayoutMinor:
@@ -389,6 +408,7 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
     forfeited,
     monthlyGross,
     monthlyCommission,
+    promo,
   ] = await Promise.all([
     prisma.appointment.aggregate({
       where: { status: "COMPLETED", appointmentDate: inRange, ...realSalon },
@@ -475,11 +495,19 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
         ${sqlTest}
       GROUP BY 1
     `,
+    // Platform-funded referral discounts, a marketing cost: the PLATFORM_PROMO
+    // legs of completed bookings, by createdAt, filtered like the commission.
+    prisma.ledgerEntry.aggregate({
+      where: { account: LedgerAccount.PLATFORM_PROMO, createdAt: inRange, ...realLedger },
+      _sum: { amountMinor: true },
+    }),
   ]);
 
   const grossBookingsMinor = (sum(completed._sum.totalMinor) - sum(completed._sum.discountMinor));
   const platformRevenueMinor = sum(platformRevenue._sum.amountMinor);
   const completedBookings = completed._count;
+  // The ledger keeps the cost negative; reported as a positive cost.
+  const promoCostMinor = -sum(promo._sum.amountMinor);
 
   const byStatus = (status: PayoutStatus) => {
     const row = payoutsByStatus.find((entry) => entry.status === status);
@@ -512,6 +540,8 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
     forfeitedCount: forfeited._count,
     topupVolumeMinor: sum(topups._sum.amount),
     topupCount: topups._count,
+    promoCostMinor,
+    netRevenueMinor: platformRevenueMinor - promoCostMinor,
     completedBookings,
     averageTicketMinor:
       completedBookings > 0
@@ -535,6 +565,9 @@ export const getPlatformEarnings = async (range: EarningsRange = {}) => {
  *                     completed before that was stamped)
  *   commissionMinor   PLATFORM_REVENUE ledger entries by `createdAt`
  *   topupVolumeMinor  TOPUP wallet transactions by `createdAt`
+ *   promoMinor        platform-funded referral discounts (−PLATFORM_PROMO, so
+ *                     a positive cost) by `createdAt`; the customer is the
+ *                     booking's, salon or home (see `promoFrom`)
  *
  * `from`/`to` are UTC instants (`to` exclusive). Without `includeTest`, test
  * salons and test customers are left out. `area`/`channel` narrow the booking
@@ -556,9 +589,10 @@ export type DailyMoney = {
   completed: number;
   commissionMinor: number;
   topupVolumeMinor: number;
+  promoMinor: number;
 };
 
-const utcTs = (at: Date) => Prisma.sql`(${at.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
+const utcTs =(at: Date) => Prisma.sql`(${at.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
 const dhakaDay = (col: string) =>
   Prisma.raw(`to_char((${col} AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Dhaka', 'YYYY-MM-DD')`);
 const COMPLETED_AT = `COALESCE(a."completedAt", a."appointmentDate")`;
@@ -575,8 +609,25 @@ const completedIn = (f: MoneyFilter) => Prisma.sql`
   ${f.includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false AND u."isTest" = false`}
   ${narrow(f)}`;
 
+/**
+ * PLATFORM_PROMO lines with their salon and customer (a salon appointment's
+ * or a home visit's). Without test data, test salons, test customers and rows
+ * whose salon was deleted are left out. Shared by `getDailyMoney` and
+ * `getReferralCost`, so analytics and the referral overview agree.
+ */
+const promoFrom = Prisma.sql`
+  FROM ledger_entries l
+  LEFT JOIN salons s ON s.id = l."salonId"
+  LEFT JOIN appointments a ON a.id = l."appointmentId"
+  LEFT JOIN home_bookings hb ON hb.id = l."homeBookingId"
+  LEFT JOIN users u ON u.id = COALESCE(a."customerId", hb."customerId")`;
+const promoIn = (f: Pick<MoneyFilter, "from" | "to" | "includeTest">) => Prisma.sql`
+  l.account = 'PLATFORM_PROMO'
+  AND l."createdAt" >= ${utcTs(f.from)} AND l."createdAt" < ${utcTs(f.to)}
+  ${f.includeTest ? Prisma.empty : Prisma.sql`AND s."isTest" = false AND COALESCE(u."isTest", false) = false`}`;
+
 export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
-  const [gmv, commission, topups] = await Promise.all([
+  const [gmv, commission, topups, promo] = await Promise.all([
     prisma.$queryRaw<Array<{ day: string; gmv: number; n: number }>>`
       SELECT ${dhakaDay(COMPLETED_AT)} AS day,
              COALESCE(SUM(a."totalMinor" - a."discountMinor"), 0)::float AS gmv, COUNT(*)::int AS n
@@ -609,13 +660,18 @@ export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
         AND t."createdAt" >= ${utcTs(f.from)} AND t."createdAt" < ${utcTs(f.to)}
         ${f.includeTest ? Prisma.empty : Prisma.sql`AND u."isTest" = false`}
       GROUP BY 1`,
+    prisma.$queryRaw<Array<{ day: string; v: number }>>`
+      SELECT ${dhakaDay(`l."createdAt"`)} AS day, COALESCE(-SUM(l."amountMinor"), 0)::float AS v
+      ${promoFrom}
+      WHERE ${promoIn(f)} ${narrow(f)}
+      GROUP BY 1`,
   ]);
 
   const byDay = new Map<string, DailyMoney>();
   const row = (day: string) => {
     let r = byDay.get(day);
     if (!r) {
-      r = { day, gmvMinor: 0, completed: 0, commissionMinor: 0, topupVolumeMinor: 0 };
+      r = { day, gmvMinor: 0, completed: 0, commissionMinor: 0, topupVolumeMinor: 0, promoMinor: 0 };
       byDay.set(day, r);
     }
     return r;
@@ -623,7 +679,57 @@ export const getDailyMoney = async (f: MoneyFilter): Promise<DailyMoney[]> => {
   for (const g of gmv) Object.assign(row(g.day), { gmvMinor: g.gmv, completed: g.n });
   for (const c of commission) row(c.day).commissionMinor = c.v;
   for (const t of topups) row(t.day).topupVolumeMinor = t.v;
+  for (const p of promo) row(p.day).promoMinor = p.v;
   return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+};
+
+export type ReferralCost = {
+  /** −PLATFORM_PROMO over the range: what referral discounts cost us. */
+  costMinor: number;
+  byDay: Array<{ day: string; costMinor: number }>;
+  /** Per reward kind; `UNLINKED` = a line whose booking holds no reward any more. */
+  byKind: Array<{ kind: string; costMinor: number }>;
+  /** Per referrer: the welcome rewards their friends used + the rewards they used themselves. */
+  byReferrer: Array<{ referrerId: string; costMinor: number }>;
+};
+
+/**
+ * The referral program's cost for the admin overview, from the same lines and
+ * filters as `getDailyMoney().promoMinor`. A line is tied to its reward by the
+ * booking the reward was redeemed on (both booking ids are unique on rewards),
+ * and through the reward's referral to a referrer; manual grants have none.
+ */
+export const getReferralCost = async (f: { from: Date; to: Date; includeTest: boolean }): Promise<ReferralCost> => {
+  const rows = await prisma.$queryRaw<Array<{ day: string; kind: string | null; referrerId: string | null; v: number }>>`
+    SELECT ${dhakaDay(`l."createdAt"`)} AS day,
+           COALESCE(ra.kind, rh.kind)::text AS kind,
+           rf."referrerId" AS "referrerId",
+           COALESCE(-SUM(l."amountMinor"), 0)::float AS v
+    ${promoFrom}
+    LEFT JOIN referral_rewards ra ON l."appointmentId" IS NOT NULL AND ra."appointmentId" = l."appointmentId"
+    LEFT JOIN referral_rewards rh ON l."homeBookingId" IS NOT NULL AND rh."homeBookingId" = l."homeBookingId"
+    LEFT JOIN referrals rf ON rf.id = COALESCE(ra."referralId", rh."referralId")
+    WHERE ${promoIn(f)}
+    GROUP BY 1, 2, 3`;
+
+  const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v);
+  const days = new Map<string, number>();
+  const kinds = new Map<string, number>();
+  const referrers = new Map<string, number>();
+  let costMinor = 0;
+  for (const r of rows) {
+    const v = Number(r.v);
+    costMinor += v;
+    add(days, r.day, v);
+    add(kinds, r.kind ?? "UNLINKED", v);
+    if (r.referrerId) add(referrers, r.referrerId, v);
+  }
+  return {
+    costMinor,
+    byDay: [...days].map(([day, v]) => ({ day, costMinor: v })).sort((a, b) => a.day.localeCompare(b.day)),
+    byKind: [...kinds].map(([kind, v]) => ({ kind, costMinor: v })),
+    byReferrer: [...referrers].map(([referrerId, v]) => ({ referrerId, costMinor: v })).sort((a, b) => b.costMinor - a.costMinor),
+  };
 };
 
 /** Completed GMV over a range, grouped by salon area (the geo report). */
@@ -821,6 +927,7 @@ export const SettlementEarnings = {
   getSalonEarnings,
   getPlatformEarnings,
   getDailyMoney,
+  getReferralCost,
   getMoneyByArea,
   getMoneyBySalon,
 };

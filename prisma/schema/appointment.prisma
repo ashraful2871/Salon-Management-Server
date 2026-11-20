@@ -42,6 +42,11 @@ model Appointment {
   /// Counter tip, the salon's own money: never commissioned, never in billable.
   /// The same amount sits on `Payment.tipMinor`.
   tipMinor       Int           @default(0)
+  /// Platform-funded (referral) discount. The customer pays billable − promo;
+  /// the platform credits promo to the salon at completion; commission ignores it.
+  /// CHECK `appointments_promo`: 0 ≤ promo ≤ totalMinor.
+  promoDiscountMinor Int     @default(0)
+  promoLabel         String?
 
   /// Whether we brought this customer to the salon. Drives commission: a
   /// salon's own repeat customer is never commissioned.

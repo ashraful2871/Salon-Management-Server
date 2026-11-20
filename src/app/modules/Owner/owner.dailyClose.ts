@@ -81,7 +81,8 @@ const COUNTER_METHODS: PaymentMethod[] = [
   PaymentMethod.MOBILE_BANKING,
 ];
 
-/** What the counter took at `salonId` on Dhaka day `date`, by method (poisha). */
+/** What the counter took at `salonId` on Dhaka day `date`, by method (poisha).
+ *  Cash expected: `Payment.amountMinor` is already net of any referral promo. */
 export const expectedForDay = async (
   salonId: string,
   date: string,

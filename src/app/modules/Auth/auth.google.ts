@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import { OAuth2Client, TokenPayload } from 'google-auth-library';
-import { Prisma, User } from '@prisma/client';
+import { Prisma, ReferralChannel, User } from '@prisma/client';
 import { StatusCodes } from 'http-status-codes';
 import ApiError from '../../Error/error';
 import prisma from '../../shared/prisma';
@@ -10,7 +10,25 @@ import { authKey } from '../../utils/authKeys';
 import { normalizeEmail } from '../../utils/normalizeEmail';
 import { sendEmail } from '../../utils/emailSender';
 import { getGoogleLinkedNoticeTemplate } from '../../utils/emailTemplates';
-import { AuthResult, issueSession, startEmailVerification, twoFactorGate } from './auth.session';
+import {
+  AuthResult,
+  ReferralOutcome,
+  issueSession,
+  startEmailVerification,
+  twoFactorGate,
+} from './auth.session';
+import { normalizeCode } from '../Referral/referral.math';
+import type { SignupSignals } from '../Referral/referral.risk';
+import {
+  attachOnSignupTx,
+  notifyAfterJoin,
+  onEmailVerified,
+  precheckSignupCode,
+  prepareAttach,
+  type AttachResult,
+  type PreparedAttach,
+  type SignupReferralCtx,
+} from '../Referral/referral.attach';
 
 import { SITE_NAME } from "../../utils/brand";
 /**
@@ -54,12 +72,31 @@ const exchangeFailed = () =>
     'GOOGLE_EXCHANGE_FAILED'
   );
 
-type Flow = { st: string; nn: string; cv: string; rd: string | null };
+/**
+ * `rf`: the invite code (normalized) the sign-up started with, `rs`: how it
+ * arrived (LINK when the start request carried `X-Referral-Source: link`).
+ */
+type Flow = {
+  st: string;
+  nn: string;
+  cv: string;
+  rd: string | null;
+  rf: string | null;
+  rs: ReferralChannel | null;
+};
 
 /** `existing`: the Google account was already linked; `new`: linked now to an account we had; `created`: a new account. */
 type Linked = 'existing' | 'new' | 'created';
 
-export const startGoogleFlow = ({ redirect }: { redirect?: string | null }) => {
+export const startGoogleFlow = ({
+  redirect,
+  referralCode,
+  referralSource,
+}: {
+  redirect?: string | null;
+  referralCode?: string | null;
+  referralSource?: ReferralChannel | null;
+}) => {
   if (!isGoogleEnabled()) throw disabled();
 
   const state = b64url(randomBytes(32));
@@ -84,7 +121,15 @@ export const startGoogleFlow = ({ redirect }: { redirect?: string | null }) => {
       include_granted_scopes: 'true',
     }).toString();
 
-  const flow: Flow = { st: state, nn: nonce, cv: verifier, rd: safeRedirect(redirect) ?? null };
+  const rf = typeof referralCode === 'string' ? normalizeCode(referralCode) : null;
+  const flow: Flow = {
+    st: state,
+    nn: nonce,
+    cv: verifier,
+    rd: safeRedirect(redirect) ?? null,
+    rf,
+    rs: rf ? (referralSource ?? 'CODE') : null,
+  };
   const flowToken = jwt.sign(flow, authKey('oauth-flow'), {
     audience: FLOW_AUDIENCE,
     expiresIn: '10m',
@@ -108,7 +153,15 @@ const readFlow = (flowToken: string): Flow => {
       throw new Error('malformed flow token');
     }
 
-    return { st: p.st, nn: p.nn, cv: p.cv, rd: typeof p.rd === 'string' ? p.rd : null };
+    return {
+      st: p.st,
+      nn: p.nn,
+      cv: p.cv,
+      rd: typeof p.rd === 'string' ? p.rd : null,
+      // Tokens issued before invite codes carry neither.
+      rf: typeof p.rf === 'string' ? p.rf : null,
+      rs: p.rs === 'LINK' || p.rs === 'CODE' ? p.rs : null,
+    };
   } catch {
     throw stateMismatch();
   }
@@ -119,11 +172,14 @@ export const completeGoogleFlow = async ({
   state,
   flowToken,
   ip,
+  signals,
 }: {
   code: string;
   state: string;
   flowToken: string;
   ip?: string | null;
+  /** The callback request's hashed device/IP, for a referral attach (controller: `signalsOf(req)`). */
+  signals?: () => SignupSignals;
 }): Promise<AuthResult> => {
   if (!isGoogleEnabled()) throw disabled();
 
@@ -165,7 +221,10 @@ export const completeGoogleFlow = async ({
       );
     }
 
-    const { result, linked } = await resolveGoogleAccount({ ...p, email: p.email }, ip);
+    const { result, linked } = await resolveGoogleAccount({ ...p, email: p.email }, ip, {
+      rf: flow.rf,
+      referral: { channel: flow.rs ?? 'CODE', signals: signals ?? noSignals },
+    });
     log(result.status, linked);
 
     return { ...result, redirect: flow.rd ?? undefined };
@@ -185,16 +244,26 @@ const assertAvailable = (user: Pick<User, 'isDeleted' | 'status'>) => {
   }
 };
 
+const noSignals = (): SignupSignals => ({ ipHash: null, deviceHash: null });
+
 /**
  * Finds or makes the account behind a verified Google identity. The ID token's
  * payload must already be checked (signature, audience, nonce, email_verified).
+ *
+ * `opts.rf` is the invite code from the flow token. It attaches only when
+ * Google creates the account, inside the same transaction; a refused code is
+ * skipped, never an error, and the result says so in `referral`. Exported for
+ * the in-process checks.
  */
-const resolveGoogleAccount = async (
+export const resolveGoogleAccount = async (
   p: TokenPayload & { email: string },
   ip?: string | null,
+  opts: { rf?: string | null; referral?: SignupReferralCtx } = {},
   retry = true
 ): Promise<{ result: AuthResult; linked: Linked }> => {
   const email = normalizeEmail(p.email);
+  let referral: ReferralOutcome | undefined;
+  let joined: AttachResult | null = null;
   const byProvider = {
     provider_providerUserId: { provider: 'GOOGLE' as const, providerUserId: p.sub },
   };
@@ -217,6 +286,7 @@ const resolveGoogleAccount = async (
     if (identity) {
       user = identity.user;
       linked = 'existing';
+      if (opts.rf) referral = { applied: false, reason: 'REFERRAL_NOT_NEW_ACCOUNT' };
     } else {
       const existing = await prisma.user.findFirst({
         where: { email: { equals: email, mode: 'insensitive' } },
@@ -226,6 +296,7 @@ const resolveGoogleAccount = async (
         // Checked before linking, so a blocked or deleted account is left untouched.
         assertAvailable(existing);
         linked = 'new';
+        if (opts.rf) referral = { applied: false, reason: 'REFERRAL_NOT_NEW_ACCOUNT' };
 
         if (existing.emailVerified) {
           await prisma.authIdentity.create({ data: identityData(existing.id) });
@@ -254,9 +325,24 @@ const resolveGoogleAccount = async (
         }
 
         user = await prisma.user.findUniqueOrThrow({ where: { id: existing.id } });
+        // A reclaimed account that signed up with a code is verified now.
+        if (!existing.emailVerified && user.emailVerified) await onEmailVerified(user.id);
       } else {
         linked = 'created';
-        user = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+
+        // Hard checks before the account exists; a refusal only skips the attach.
+        let attach: PreparedAttach | null = null;
+        if (opts.rf) {
+          const pre = await precheckSignupCode({ code: opts.rf, email });
+          if (pre.ok) {
+            attach = await prepareAttach(pre.referrer, email, opts.referral);
+            referral = { applied: true };
+          } else {
+            referral = { applied: false, reason: pre.code };
+          }
+        }
+
+        const made = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
           const created = await tx.user.create({
             data: {
               email,
@@ -269,18 +355,27 @@ const resolveGoogleAccount = async (
             },
           });
           await tx.authIdentity.create({ data: identityData(created.id) });
-          return created;
+          const attached = attach
+            ? await attachOnSignupTx(tx, { ...attach, refereeId: created.id, verified: created.emailVerified })
+            : null;
+          return { created, attached };
         });
+        user = made.created;
+        if (made.attached?.joined) joined = made.attached;
       }
     }
   } catch (e) {
     // Two callbacks raced on the same email or sub: the other one won, so this
     // pass will find what it made.
     if (retry && e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      return resolveGoogleAccount(p, ip, false);
+      return resolveGoogleAccount(p, ip, opts, false);
     }
     throw e;
   }
+
+  // Created already verified: the welcome reward was issued in the transaction.
+  if (joined) await notifyAfterJoin({ ...joined, refereeId: user.id, refereeName: user.name });
+  const withReferral = (r: AuthResult): AuthResult => (referral ? { ...r, referral } : r);
 
   assertAvailable(user);
 
@@ -288,19 +383,19 @@ const resolveGoogleAccount = async (
 
   // A new account while GOOGLE_SIGNUP_REQUIRES_OTP is on, or a reclaimed unverified one.
   if (!user.emailVerified) {
-    return { result: await startEmailVerification(user, ip), linked };
+    return { result: withReferral(await startEmailVerification(user, ip)), linked };
   }
 
   // ADMIN/AGENT with 2FA on: the frontend sends them to /login/2fa?ticket=…
   const challenge = await twoFactorGate(user);
-  if (challenge) return { result: challenge, linked };
+  if (challenge) return { result: withReferral(challenge), linked };
 
   return {
-    result: {
+    result: withReferral({
       status: 'SIGNED_IN',
       ...issueSession(user),
       user: { id: user.id, email: user.email, name: user.name, role: user.role },
-    },
+    }),
     linked,
   };
 };

@@ -81,9 +81,14 @@ const markRead = catchAsync(async (req: Request, res: Response) => {
   ok(res, "Marked as read", { updated: count, unread });
 });
 
-/** Events this account can receive: money and business events reach owners only. */
+/**
+ * Events this account can receive: money and business events reach owners
+ * only, and customer events (referrals) no business account.
+ */
 const eventsFor = (role: string) =>
-  NOTIFY_EVENTS.filter((e) => role === "SALON_OWNER" || !EVENT_INFO[e].ownerOnly);
+  NOTIFY_EVENTS.filter(
+    (e) => EVENT_INFO[e].audience !== "customer" && (role === "SALON_OWNER" || !EVENT_INFO[e].ownerOnly),
+  );
 
 const prefsView = async (userId: string, role: string) => {
   const [rows, owner] = await Promise.all([

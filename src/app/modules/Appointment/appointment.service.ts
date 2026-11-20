@@ -45,6 +45,8 @@ import { AppointmentIdentity } from "./appointment.identity";
 import { attentionWhere, isAttentionKind } from "./appointment.attention";
 import { assertNotClosed } from "../Salon/salon.closure";
 import { assertNoHomeVisit, assertStaffWorking, lockStaff } from "../Staff/staff.schedule";
+import { onBookingEndedTx } from "../Referral/referral.lifecycle";
+import { quotePromo, reserveTx } from "../Referral/referral.rewards";
 
 import { SITE_NAME } from "../../utils/brand";
 /**
@@ -121,6 +123,10 @@ const cancelInTx = async (appointmentId: string, options: CancelOptions) => {
       const cancelled = await tx.appointment.findUniqueOrThrow({
         where: { id: appointmentId },
       });
+
+      // Every cancel (customer, salon, admin, system) gives a reserved
+      // referral reward back, in this same transaction.
+      await onBookingEndedTx(tx, { appointmentId }, "CANCELLED");
 
       if (cancelled.slotId) {
         await tx.slot.updateMany({
@@ -305,6 +311,9 @@ type ClaimSlotInput = {
   staffId?: string | null;
   notes?: string;
   totalMinor: number;
+  /** Platform-funded referral discount (0 / absent = none) and its label. */
+  promoDiscountMinor?: number;
+  promoLabel?: string | null;
   depositMinor: number;
   /** The rest of the bill paid in the app (owner Phase 15); held with the deposit. */
   prepaidMinor?: number;
@@ -436,6 +445,10 @@ const claimSlotAndCreate = async (
       status: AppointmentStatus.CONFIRMED,
       bookedVia: input.bookedVia ?? BookingChannel.WEB,
       totalMinor: input.totalMinor,
+      // Snapshot of the referral discount; the reward is reserved right after
+      // this, in the same transaction.
+      promoDiscountMinor: input.promoDiscountMinor ?? 0,
+      promoLabel: input.promoLabel ?? null,
       depositMinor: input.depositMinor,
       prepaidMinor: input.prepaidMinor ?? 0,
       depositStatus:
@@ -508,6 +521,8 @@ const quoteBooking = async (
     staffId?: string | null;
     /** Pay the whole bill now (owner Phase 15). */
     payInFull?: boolean;
+    /** Referral reward: undefined = the best one, null = none, an id = that one. */
+    rewardId?: string | null;
   },
 ) => {
   // Only customer accounts book. Every booking path (the booking page and the
@@ -630,10 +645,22 @@ const quoteBooking = async (
   // onto the appointment now, so a later price or policy change cannot rewrite
   // a deal the customer already agreed to.
   const totalMinor = service.priceMinor;
+
+  // The referral reward (platform-funded): quoted on the full price, and the
+  // customer's share of the bill is what is left after it.
+  const rewards = await quotePromo({
+    userId,
+    kind: "SALON",
+    baseMinor: totalMinor,
+    requested: payload.rewardId,
+  });
+  const promoMinor = rewards.applied?.discountMinor ?? 0;
+  const payableMinor = totalMinor - promoMinor;
+
   // Read async first so the sync read inside resolveDepositMinor is fresh.
   const paymentsOn = await getSetting("booking.depositsEnabled");
   const depositMinor = paymentsOn
-    ? AppointmentDeposit.resolveDepositMinor(salon, totalMinor)
+    ? AppointmentDeposit.resolveDepositMinor(salon, payableMinor)
     : 0;
 
   // Paying the whole bill now (owner Phase 15): the platform switch and the
@@ -643,7 +670,7 @@ const quoteBooking = async (
   const prepayAllowed =
     paymentsOn &&
     salon.acceptsPrepay &&
-    totalMinor > depositMinor &&
+    payableMinor > depositMinor &&
     (await getSetting("booking.prepayEnabled"));
   if (payload.payInFull && !prepayAllowed) {
     throw new ApiError(
@@ -653,7 +680,10 @@ const quoteBooking = async (
         : "Bookings are free right now - nothing is paid in the app. Pay at the salon.",
     );
   }
-  const prepaidMinor = payload.payInFull ? totalMinor - depositMinor : 0;
+  const prepaidMinor = payload.payInFull ? payableMinor - depositMinor : 0;
+  // Cash expected at the counter: the bill less the platform's promo and
+  // whatever the app takes now.
+  const dueAtSalonMinor = Math.max(payableMinor - depositMinor - prepaidMinor, 0);
 
   return {
     user,
@@ -663,9 +693,38 @@ const quoteBooking = async (
     staff,
     counter,
     totalMinor,
+    /** The applied reward, or null. */
+    promo: rewards.applied,
+    rewardOptions: rewards.options,
+    promoMinor,
+    /** Server only: the hash `reserveTx` writes for a welcome reward. Never send it. */
+    promoPhoneHash: rewards.phoneHash,
     depositMinor,
     prepaidMinor,
+    dueAtSalonMinor,
     prepayAllowed,
+  };
+};
+
+/**
+ * `POST /appointments/quote`: what the review page shows before Confirm - the
+ * reward applied (or the one asked for), the other rewards that fit, and the
+ * split of the bill. Every check `bookAppointment` runs; nothing is booked or
+ * reserved.
+ */
+const quoteAppointment = async (
+  userId: string,
+  payload: Parameters<typeof quoteBooking>[1],
+) => {
+  const q = await quoteBooking(userId, payload);
+  return {
+    totalMinor: q.totalMinor,
+    promo: q.promo,
+    rewardOptions: q.rewardOptions,
+    depositMinor: q.depositMinor,
+    prepaidMinor: q.prepaidMinor,
+    dueAtSalonMinor: q.dueAtSalonMinor,
+    prepayAllowed: !!q.prepayAllowed,
   };
 };
 
@@ -675,8 +734,18 @@ const bookAppointment = async (
   userId: string,
   payload: any,
 ): Promise<Awaited<ReturnType<typeof claimSlotAndCreate>>> => {
-  const { user, slot, salon, totalMinor, depositMinor, prepaidMinor } =
-    await quoteBooking(userId, payload);
+  const {
+    user,
+    slot,
+    salon,
+    totalMinor,
+    depositMinor,
+    prepaidMinor,
+    promo,
+    promoMinor,
+    promoPhoneHash,
+    dueAtSalonMinor,
+  } = await quoteBooking(userId, payload);
   // One hold covers the deposit and any prepaid bill.
   const holdMinor = depositMinor + prepaidMinor;
 
@@ -697,6 +766,8 @@ const bookAppointment = async (
           staffId: payload.staffId,
           notes: payload.notes,
           totalMinor,
+          promoDiscountMinor: promoMinor,
+          promoLabel: promo?.label ?? null,
           depositMinor,
           prepaidMinor,
           source: AppointmentSource.PLATFORM,
@@ -704,6 +775,18 @@ const bookAppointment = async (
           // WEB. Same transaction, same emails, same token either way.
           bookedVia: payload.bookedVia,
         });
+
+        // The reward is this booking's from now on. Another tab spending it
+        // first is a 409 that rolls the slot claim back with it.
+        if (promo) {
+          await reserveTx(tx, {
+            rewardId: promo.rewardId,
+            userId,
+            appointmentId: createdAppointment.id,
+            discountMinor: promo.discountMinor,
+            phoneHash: promoPhoneHash,
+          });
+        }
 
         if (holdMinor > 0) {
           await WalletService.holdDeposit(
@@ -751,6 +834,9 @@ const bookAppointment = async (
     year: "numeric",
   });
 
+  // "৳1,000 − ৳50 referral reward · pay ৳950 at the salon" on both emails.
+  const promoText = promoMinor > 0 ? ` − ${formatBDT(promoMinor)} referral reward` : "";
+
   // Send email notification asynchronously
   if (user?.email) {
     const emailHtml = getBookingConfirmationTemplate(
@@ -760,10 +846,12 @@ const bookAppointment = async (
       formattedDate,
       appointment.startTime,
       prepaidMinor > 0
-        ? `${formatBDT(totalMinor)} (paid in full in the app, nothing due at the salon)`
+        ? `${formatBDT(totalMinor)}${promoText} (paid in full in the app, nothing due at the salon)`
         : depositMinor > 0
-          ? `${formatBDT(totalMinor)} (${formatBDT(depositMinor)} deposit held, ${formatBDT(totalMinor - depositMinor)} due at the salon)`
-          : `${formatBDT(totalMinor)} (free booking - pay at the salon)`,
+          ? `${formatBDT(totalMinor)}${promoText} (${formatBDT(depositMinor)} deposit held, ${formatBDT(dueAtSalonMinor)} due at the salon)`
+          : promoMinor > 0
+            ? `${formatBDT(totalMinor)}${promoText} · pay ${formatBDT(dueAtSalonMinor)} at the salon`
+            : `${formatBDT(totalMinor)} (free booking - pay at the salon)`,
       {
         token: appointment.token,
         serialNumber: appointment.serialNumber,
@@ -804,7 +892,11 @@ const bookAppointment = async (
             token: appointment.token,
             date: formattedDate,
             time: bookingTime,
-            dueAtCounter: formatBDT(totalMinor - depositMinor - prepaidMinor),
+            // Cash expected: the promo is paid to the salon by the platform.
+            dueAtCounter:
+              promoMinor > 0
+                ? `${formatBDT(dueAtSalonMinor)} (${formatBDT(totalMinor)}${promoText}, paid by ${SITE_NAME})`
+                : formatBDT(dueAtSalonMinor),
           }),
       },
     },
@@ -1788,6 +1880,7 @@ export const AppointmentService = {
   // Exported for the assistant, which quotes a price in the chat and re-quotes
   // it at Confirm. Read-only: it never books.
   quoteBooking,
+  quoteAppointment,
   // The same customers-only rule for the chat's wallet and top-up.
   assertCustomer,
   customerOnlyMessage,

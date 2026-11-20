@@ -150,6 +150,11 @@ model HomeBooking {
 
   subtotalMinor         Int
   travelFeeMinor        Int
+  /// Platform-funded (referral) discount on the services only, never the travel fee.
+  /// `totalMinor = subtotalMinor − promoDiscountMinor + travelFeeMinor`.
+  /// CHECK `home_bookings_promo`: 0 ≤ promo ≤ subtotalMinor.
+  promoDiscountMinor    Int            @default(0)
+  promoLabel            String?
   totalMinor            Int
   advancePercent        Int
   advanceMinor          Int

@@ -95,8 +95,12 @@ const instants = (r: Range) => ({ from: dayStart(r.from), to: dayStart(addDays(r
 const dayKey = (col: string) => Prisma.raw(`to_char(${col}, 'YYYY-MM-DD')`);
 const VALID_TIME = Prisma.raw(`a."startTime" ~ '^[0-2][0-9]:[0-5][0-9]$'`);
 
-/** Ledger descriptions that are money the salon earned from customers. */
-const REVENUE_TYPES = new Set(["booking", "prepaid", "refund", "no_show", "late_cancel"]);
+/**
+ * Ledger descriptions that are money the salon earned from customers. A
+ * referral reimbursement (`promo`) is part of the bill the customer did not
+ * pay at the counter, so it counts as revenue too.
+ */
+const REVENUE_TYPES = new Set(["booking", "prepaid", "refund", "no_show", "late_cancel", "promo"]);
 
 // ---------------------------------------------------------------------------
 // Shared figures

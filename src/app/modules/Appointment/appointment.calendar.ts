@@ -105,6 +105,9 @@ const getCalendar = async (user: AccessUser, query: CalendarQuery) => {
         counterId: true,
         serviceId: true,
         totalMinor: true,
+        // Cash expected: a bill the promo covers in full reads PAID, not UNPAID.
+        promoDiscountMinor: true,
+        prepaidMinor: true,
         depositMinor: true,
         depositStatus: true,
         payment: { select: { amountMinor: true, status: true } },

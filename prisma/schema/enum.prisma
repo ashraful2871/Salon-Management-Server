@@ -230,6 +230,42 @@ enum LedgerAccount {
   CUSTOMER_WALLET
   GATEWAY_CLEARING
   PLATFORM_CASH
+  /// Platform-funded discounts (referral rewards). Negative = marketing cost.
+  PLATFORM_PROMO
+}
+
+enum ReferralStatus {
+  PENDING_VERIFICATION
+  JOINED
+  QUALIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum ReferralChannel {
+  LINK
+  CODE
+}
+
+enum RewardKind {
+  REFEREE_WELCOME
+  REFERRER_BONUS
+  MANUAL_GRANT
+}
+
+enum RewardStatus {
+  PENDING_REVIEW
+  AVAILABLE
+  RESERVED
+  REDEEMED
+  EXPIRED
+  REVOKED
+}
+
+enum RewardScope {
+  ALL
+  SALON
+  HOME
 }
 
 enum CommissionScope {

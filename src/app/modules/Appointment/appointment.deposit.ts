@@ -24,6 +24,8 @@ import {
 import { WalletService } from "../Wallet/wallet.service";
 import { SettlementService } from "../Settlement/settlement.service";
 import { billableMinor } from "./appointment.billing";
+import { onBookingCompletedTx, onBookingEndedTx } from "../Referral/referral.lifecycle";
+import { restoreAfterAppealTx } from "../Referral/referral.rewards";
 
 /**
  * What happens to a deposit, and when.
@@ -295,6 +297,17 @@ export const settleCompletedTx = async (
     commissionMinor,
   );
 
+  // The reserved reward is spent and the referral may qualify. The commission
+  // base above is unchanged: the promo never lowers what the salon earns.
+  await onBookingCompletedTx(tx, {
+    kind: "SALON",
+    id: appointment.id,
+    customerId: appointment.customerId,
+    source: appointment.source,
+    billableMinor: billableMinor(appointment),
+    completedById: appointment.completedById,
+  });
+
   return appointment;
 };
 
@@ -510,6 +523,12 @@ export const settleForfeitedTx = async (
   const appointment = await loadForSettlement(tx, appointmentId);
   if (!appointment) return null;
 
+  // Before the deposit check: a free booking (nothing held) still uses up its
+  // referral reward on a no-show.
+  if (appointment.status === "NO_SHOW") {
+    await onBookingEndedTx(tx, { appointmentId: appointment.id }, "NO_SHOW");
+  }
+
   if (
     appointment.depositStatus !== DepositStatus.HELD ||
     heldMinor(appointment) <= 0
@@ -716,6 +735,8 @@ export const resolveAppeal = async (
               : appointment.depositStatus,
         },
       });
+      // The no-show is overturned, so a referral reward it used up comes back.
+      await restoreAfterAppealTx(tx, { appointmentId });
       return { updated, salonName: appointment.salon.name };
     },
     { timeout: 15000, maxWait: 10000 },

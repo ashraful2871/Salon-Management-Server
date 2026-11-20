@@ -148,6 +148,9 @@ const toReceipt = (appointment: ReceiptSource, discountApplied = false) => {
     discountMinor: appointment.discountMinor,
     discountReason: appointment.discountReason,
     billableMinor,
+    /** Referral reward the platform pays the salon; the counter collected that much less. */
+    promoDiscountMinor: appointment.promoDiscountMinor,
+    promoLabel: appointment.promoLabel,
     tipMinor: appointment.tipMinor,
     depositPaidMinor,
     prepaidPaidMinor,
@@ -320,15 +323,19 @@ const checkout = async (
   // A deposit (or a bill prepaid in the app) already left the customer's
   // wallet, so it can't be discounted away - a salon refunds that instead;
   // neither can money the counter has already taken.
-  const { depositPaidMinor, prepaidPaidMinor, paidAtCounterMinor } = paymentSummary(appointment);
+  // The platform's referral discount is already off the customer's share, so
+  // the salon's own discount can only come out of what is left.
+  const { promoMinor, depositPaidMinor, prepaidPaidMinor, paidAtCounterMinor } = paymentSummary(appointment);
   const maxDiscountMinor = Math.max(
-    appointment.totalMinor - depositPaidMinor - prepaidPaidMinor - paidAtCounterMinor,
+    appointment.totalMinor - promoMinor - depositPaidMinor - prepaidPaidMinor - paidAtCounterMinor,
     0,
   );
   if (discountMinor > maxDiscountMinor) {
     throw new ApiError(
       StatusCodes.BAD_REQUEST,
-      `The discount can be at most ${formatBDT(maxDiscountMinor)} (the bill less what is already paid)`,
+      promoMinor > 0
+        ? `The discount can be at most ${formatBDT(maxDiscountMinor)} (the bill less the referral reward and what is already paid)`
+        : `The discount can be at most ${formatBDT(maxDiscountMinor)} (the bill less what is already paid)`,
     );
   }
 
@@ -459,6 +466,8 @@ const cashSummary = async (
     select: {
       status: true,
       totalMinor: true,
+      // Cash expected: the outstanding figure is net of the platform's promo.
+      promoDiscountMinor: true,
       depositMinor: true,
       prepaidMinor: true,
       depositStatus: true,

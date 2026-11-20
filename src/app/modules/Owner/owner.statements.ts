@@ -12,7 +12,7 @@ import { assertOwnerOf, withAccessCache } from "../../utils/salonAccess";
 import { getSetting } from "../../utils/settings";
 import { dayStart, dhakaDay } from "../Analytics/analytics.days";
 import { destinationLabel } from "../Settlement/settlement.service";
-import { TYPE_DESCRIPTIONS, typeOf } from "./owner.money";
+import { displayDescription, TYPE_DESCRIPTIONS, typeOf } from "./owner.money";
 
 /**
  * Owner statements (owner Phase 7): immutable snapshots of the ledger an owner
@@ -96,6 +96,8 @@ const FIELD_BY_TYPE = {
   commission: "commissionMinor",
   goodwill: "goodwillMinor",
   dues: "duesPaidMinor",
+  // "Referral reimbursements": referral discounts the platform paid the salon.
+  promo: "promoReimbursedMinor",
   payout_adjustment: "adjustmentsMinor",
 } as const;
 
@@ -107,6 +109,7 @@ const MOVEMENT_FIELDS = [
   "commissionMinor",
   "goodwillMinor",
   "duesPaidMinor",
+  "promoReimbursedMinor",
   "payoutsMinor",
   "adjustmentsMinor",
 ] as const;
@@ -642,7 +645,7 @@ const csvLines = async (row: StatementRow): Promise<CsvLine[]> => {
     date: e.createdAt,
     branch: e.salon?.name ?? "Deleted branch",
     type: typeOf(e.description),
-    description: e.description,
+    description: displayDescription(e.description),
     amountMinor: sign * e.amountMinor,
     bookingToken: e.appointment?.token ?? null,
     payoutId: e.payoutId,

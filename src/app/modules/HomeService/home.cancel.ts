@@ -28,6 +28,8 @@ import { Actor, expireStaleOf, getBooking, isContention, isExclusionViolation } 
 import { getBoardBooking, moveToExpertTx, moveTx } from "./home.lifecycle";
 import { homeNotice } from "./home.notify";
 import { syncHomeRefund } from "./home.refund";
+import { onBookingEndedTx } from "../Referral/referral.lifecycle";
+import { restoreAfterAppealTx } from "../Referral/referral.rewards";
 import { isBranchBookable, loadHomeFlags } from "./home.owner";
 import type { HomePolicy } from "./home.policy";
 import type { RescheduleBody } from "./home.validation";
@@ -375,6 +377,13 @@ export const endVisitTx = async (tx: Tx, args: EndArgs) => {
         : { noShowParty, noShowMarkedAt: now },
   });
   const settled = await settleHomeEndTx(tx, b.id, outcome);
+  // The referral reward: a customer no-show uses it up; every other end
+  // (cancels, door aborts, an expert who never came) gives it back.
+  await onBookingEndedTx(
+    tx,
+    { homeBookingId: b.id },
+    args.event.kind === "CUSTOMER_NO_SHOW" ? "NO_SHOW" : "CANCELLED",
+  );
 
   if (args.event.kind === "SALON_CANCEL") {
     await tx.homeExpert.update({ where: { id: b.expertId }, data: { cancelledBySalon: { increment: 1 } } });
@@ -1039,6 +1048,11 @@ const resolveAppealTx = async (ctx: AuditCtx | undefined, id: string, approve: b
     });
     if (!n.count) throw invalidState("This appeal was already decided.");
     const reversed = approve ? await reverseFeeTx(tx, id) : null;
+
+    // An upheld customer no-show: a referral reward it used up comes back.
+    if (approve && b.noShowParty === HomeNoShowParty.CUSTOMER) {
+      await restoreAfterAppealTx(tx, { homeBookingId: id });
+    }
 
     // An upheld no-show no longer counts: lift a no-show block it no longer reaches.
     if (approve && b.noShowParty === HomeNoShowParty.CUSTOMER) {

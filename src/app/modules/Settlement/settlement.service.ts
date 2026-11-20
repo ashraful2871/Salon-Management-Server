@@ -217,6 +217,18 @@ export const recordCompletedBooking = async (
       amountMinor: commissionMinor,
       description: "Platform commission",
     },
+    // The referral discount the customer did not pay at the counter: the
+    // platform owes it to the salon (marketing cost). 0 writes nothing.
+    {
+      account: LedgerAccount.PLATFORM_PROMO,
+      amountMinor: -appointment.promoDiscountMinor,
+      description: PROMO_PLATFORM_DESCRIPTION,
+    },
+    {
+      account: LedgerAccount.SALON_PAYABLE,
+      amountMinor: appointment.promoDiscountMinor,
+      description: PROMO_SALON_DESCRIPTION,
+    },
   ]);
 };
 
@@ -339,6 +351,9 @@ export const PREPAID_REVERSED_DESCRIPTION = "Prepaid bill reversed on appeal";
 export const COMMISSION_DEDUCTED_DESCRIPTION = "Platform commission deducted";
 export const COMMISSION_RETURNED_DESCRIPTION = "Platform commission returned";
 export const SALON_REFUND_DESCRIPTION = "Refund to customer";
+/** The referral promo legs of a completed booking (contract: platform-funded). */
+export const PROMO_PLATFORM_DESCRIPTION = "Referral discount (platform-funded)";
+export const PROMO_SALON_DESCRIPTION = "Referral discount paid by platform";
 
 const REVERSED: Record<string, string> = {
   [PREPAID_OWED_DESCRIPTION]: PREPAID_REVERSED_DESCRIPTION,

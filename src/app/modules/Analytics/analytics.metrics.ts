@@ -312,6 +312,17 @@ export const METRICS: Metric[] = [
     compute: money((m) => m.commissionMinor),
   },
   {
+    id: "promo.costMinor",
+    kind: "daily",
+    filterable: true,
+    label: "Referral discount cost",
+    definition:
+      "Platform-funded referral discounts, a marketing cost: minus the sum of PLATFORM_PROMO ledger entries by createdAt (written when a booking with a reward completes; from settlement.earnings). Test salons and test customers are left out unless test data is on.",
+    unit: "minor",
+    goodDirection: "down",
+    compute: money((m) => m.promoMinor),
+  },
+  {
     id: "takeRate",
     kind: "ratio",
     num: "commission.minor",
@@ -1168,6 +1179,71 @@ export const METRICS: Metric[] = [
       );
       return { since: last?.updatedAt ?? null, key: last?.key ?? null, outcomes };
     },
+  },
+
+  // Referral program (captured live by `Referral/referral.metrics.ts`, once the
+  // event's transaction has committed; test referrals and test customers are
+  // not counted).
+  {
+    id: "referral.attached",
+    kind: "captured",
+    label: "Referral sign-ups",
+    definition: "New accounts created with a referral code attached. Dimension channel:<link|code>.",
+    unit: "count",
+    goodDirection: "up",
+  },
+  {
+    id: "referral.joined",
+    kind: "captured",
+    label: "Referred friends verified",
+    definition: "Referrals that moved to JOINED: the friend's email was verified (at sign-up when already verified).",
+    unit: "count",
+    goodDirection: "up",
+  },
+  {
+    id: "referral.qualified",
+    kind: "captured",
+    label: "Referrals qualified",
+    definition:
+      "Referrals that qualified: the friend's first completed platform booking within the window (or verification, under the REFEREE_VERIFIED trigger). Dimension booking:<salon|home|none>.",
+    unit: "count",
+    goodDirection: "up",
+  },
+  {
+    id: "referral.rewards_issued",
+    kind: "captured",
+    label: "Referral rewards issued",
+    definition:
+      "Rewards created: welcome rewards, referrer rewards (also those held for review) and admin grants. Dimension kind:<referee_welcome|referrer_bonus|manual_grant>.",
+    unit: "count",
+    goodDirection: "up",
+  },
+  {
+    id: "referral.rewards_redeemed",
+    kind: "captured",
+    label: "Referral rewards redeemed",
+    definition:
+      "Rewards spent on a completed booking (a no-show using one up is not counted). Dimension booking:<salon|home>.",
+    unit: "count",
+    goodDirection: "up",
+  },
+  {
+    id: "referral.flagged",
+    kind: "captured",
+    label: "Referral risk flags",
+    definition:
+      "Flagged events: a referrer reward held for review at qualify time (one per flag on it), and a welcome reward blocked by a phone already used. Dimension flag:<same_device|same_network|velocity|disposable_email|auto_closed|phone_reused>.",
+    unit: "count",
+    goodDirection: "down",
+  },
+  {
+    id: "referral.reconciled",
+    kind: "captured",
+    label: "Referral rewards fixed by reconcile",
+    definition:
+      "RESERVED rewards the daily referral.reconcile job moved because their booking had ended (or was gone) without the booking hook moving them. Should stay at 0.",
+    unit: "count",
+    goodDirection: "down",
   },
 
   // Report tables
