@@ -730,7 +730,31 @@ const quoteAppointment = async (
 
 export type BookingQuote = Awaited<ReturnType<typeof quoteBooking>>;
 
+/**
+ * With no reward named (`rewardId` undefined = "the best one"), a reward that
+ * another booking reserved between the quote and the claim is not this
+ * customer's problem: the booking (rolled back by the 409) is quoted again,
+ * where that reward is no longer a candidate, and goes ahead with the next
+ * best one or none; the last try asks for none. A reward named on purpose
+ * (an id) keeps its 409 `REWARD_UNAVAILABLE`, so the review page can show the
+ * new price before the customer agrees to it.
+ */
 const bookAppointment = async (
+  userId: string,
+  payload: any,
+): Promise<Awaited<ReturnType<typeof bookOnce>>> => {
+  const auto = payload?.rewardId === undefined;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await bookOnce(userId, auto && attempt === 2 ? { ...payload, rewardId: null } : payload);
+    } catch (error) {
+      const lostReward = error instanceof ApiError && error.errorCode === "REWARD_UNAVAILABLE";
+      if (!auto || !lostReward || attempt >= 2) throw error;
+    }
+  }
+};
+
+const bookOnce = async (
   userId: string,
   payload: any,
 ): Promise<Awaited<ReturnType<typeof claimSlotAndCreate>>> => {

@@ -167,7 +167,7 @@ const flagPhoneReused = async (db: Db, referralId: string | null, rewardId: stri
  * The reward for this booking, and the others the customer could pick.
  * `requested`: `undefined` = the best one, `null` = none (options still listed),
  * an id = that one, or a 409 `REWARD_UNAVAILABLE` / 400 `REWARD_NOT_APPLICABLE`
- * saying why not. With redemptions switched off nothing is offered, and asking
+ * saying why not (404 when the id is not one of the customer's rewards). With redemptions switched off nothing is offered, and asking
  * for a particular reward is a `REWARD_NOT_APPLICABLE` (`REDEMPTIONS_OFF`).
  *
  * A welcome reward also needs a valid phone on the account, and no other
@@ -240,8 +240,12 @@ export const quotePromo = async ({
   if (phone) throw notApplicable(PHONE_MESSAGES[phone], phone, requested);
   const miss = first.notApplicable.find((n) => n.reward.id === requested);
   if (miss) throw notApplicable(MATH_MESSAGES[miss.reason](miss.reward, kind), miss.reason, requested);
-  // Not one of the customer's AVAILABLE rewards: used, reserved elsewhere,
-  // expired, revoked, held for review, or somebody else's.
+  // Somebody else's reward (or no such id) is a 404, like another business's
+  // booking (contract 13): it says nothing about whether the id exists.
+  const mine = await db.referralReward.findFirst({ where: { id: requested, userId }, select: { id: true } });
+  if (!mine) throw new ApiError(StatusCodes.NOT_FOUND, "Reward not found");
+  // One of the customer's own rewards that isn't AVAILABLE: used, reserved
+  // elsewhere, expired, revoked or held for review.
   throw rewardUnavailable(requested);
 };
 

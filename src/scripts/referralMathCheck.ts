@@ -22,17 +22,8 @@ import {
   type RewardTerms,
 } from "../app/modules/Referral/referral.math";
 
-let passed = 0;
-let failed = 0;
-
-const eq = (name: string, got: unknown, want: unknown) => {
-  const ok = JSON.stringify(got) === JSON.stringify(want);
-  if (ok) passed++;
-  else failed++;
-  console.log(`${ok ? "✅" : "❌"} ${name}${ok ? "" : `  got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`}`);
-};
-
-const section = (title: string) => console.log(`\n${title}`);
+export type Eq = (name: string, got: unknown, want: unknown) => void;
+export type Section = (title: string) => void;
 
 const NOW = new Date("2026-11-19T06:00:00.000Z");
 const DAY = 86_400_000;
@@ -63,6 +54,8 @@ const why = (r: RewardTerms, c: ApplyCtx) => {
   return a.ok ? `ok:${a.discountMinor}` : a.reason;
 };
 
+/** Every case of the table; `verify:referral` runs the same ones. */
+export const runMathTable = (eq: Eq, section: Section) => {
 // ------------------------------------------------------------------ discount
 section("Discount: rounding");
 eq("৳1,234 × 5% = ৳61 (floored to the taka)", rewardDiscountMinor(123_400, 500, 0), 6_100);
@@ -213,5 +206,18 @@ eq("{cap} with no cap", fillShareMessage("Up to {cap} off", { ...vars, capMinor:
 eq("repeated placeholders all filled, unknown kept", fillShareMessage("{code} {code} {foo}", vars), "ROBIN7K2 ROBIN7K2 {foo}");
 eq("decimal percent", fillShareMessage("{percent}%", { ...vars, percent: 5.5 }), "5.5%");
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+};
+
+if (require.main === module) {
+  let passed = 0;
+  let failed = 0;
+  const eq: Eq = (name, got, want) => {
+    const ok = JSON.stringify(got) === JSON.stringify(want);
+    if (ok) passed++;
+    else failed++;
+    console.log(`${ok ? "✅" : "❌"} ${name}${ok ? "" : `  got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`}`);
+  };
+  runMathTable(eq, (title) => console.log(`\n${title}`));
+  console.log(`\n${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+}

@@ -32,6 +32,7 @@ import prisma from "../app/shared/prisma";
 import { getSetting } from "../app/utils/settings";
 import { systemAuditCtx } from "../app/utils/audit";
 import { runPrepaid } from "./verifyMoney.prepaid";
+import { describePromoProblems, promoLedgerProblems, runPromo } from "./verifyMoney.promo";
 import { AppointmentDeposit } from "../app/modules/Appointment/appointment.deposit";
 import { paymentSummary } from "../app/modules/Appointment/appointment.billing";
 import { expectedForDay } from "../app/modules/Owner/owner.dailyClose";
@@ -697,9 +698,30 @@ const main = async () => {
     }
   }
 
+  // Referral promo (referral Phase 7.3).
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        await runPromo(tx, check);
+        throw new Rollback();
+      },
+      { timeout: 120_000, maxWait: 15_000 },
+    );
+  } catch (error) {
+    if (!(error instanceof Rollback)) {
+      check("referral promo scenario ran to the end", false, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   // Read-only on the real ledger, outside the rolled-back transaction.
   const unbalanced = await SettlementService.findUnbalancedAppointments();
   check("live DB: every journal sums to 0", unbalanced.length === 0, `${unbalanced.length} unbalanced`);
+  const promo = await promoLedgerProblems(prisma);
+  check(
+    "live DB: PLATFORM_PROMO journals sum to 0, each paired with SALON_PAYABLE on its booking",
+    promo.unbalanced === 0 && promo.unmatched === 0 && promo.noBooking === 0,
+    describePromoProblems(promo),
+  );
 
   const width = Math.max(...rows.map((row) => row.check.length));
   for (const row of rows) {
