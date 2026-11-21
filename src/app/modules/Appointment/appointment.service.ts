@@ -384,11 +384,13 @@ export const claimSlot = async (
       select: { id: true },
     });
 
-    throw new ApiError(
+    // SLOT_TAKEN sends the review page back to the time list.
+    throw ApiError.withCode(
       StatusCodes.CONFLICT,
       heldByAnother
         ? "Someone is booking this time right now. Please try another time."
         : "Sorry, this slot has just been booked by another customer. Please select another available slot.",
+      "SLOT_TAKEN",
     );
   }
 };
@@ -545,9 +547,10 @@ const quoteBooking = async (
   });
 
   if (!slot || slot.status !== "AVAILABLE" || slot.isBooked) {
-    throw new ApiError(
+    throw ApiError.withCode(
       StatusCodes.CONFLICT,
       "This slot is no longer available. Please select another time.",
+      "SLOT_TAKEN",
     );
   }
 
@@ -1342,7 +1345,7 @@ const getAllAppointments = async (
 };
 
 const getMyAppointments = async (userId: string, query: any) => {
-  const { page = 1, limit = 10, status, salonId, scope } = query;
+  const { page = 1, limit = 10, status, salonId, slotId, scope } = query;
   const skip = (Number(page) - 1) * Number(limit);
 
   const whereConditions: any = {
@@ -1355,6 +1358,11 @@ const getMyAppointments = async (userId: string, query: any) => {
 
   if (salonId) {
     whereConditions.salonId = salonId;
+  }
+
+  // "Is this taken time my own booking?" - asked by the review page.
+  if (typeof slotId === "string" && slotId) {
+    whereConditions.slotId = slotId;
   }
 
   // "upcoming" is a live booking from today on, soonest first; "past" is

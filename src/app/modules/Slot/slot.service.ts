@@ -381,7 +381,14 @@ const getSlots = async (query: any) => {
     const now = new Date();
     // A booking screen also never offers a time inside a closure; the owner's
     // manager sees those slots (they were BLOCKED when the closure was set).
-    return withoutClosed(slots.filter((slot) => !hasSlotStarted(slot, now)));
+    // Nor one somebody is checking out right now in the chat (an assistant
+    // hold): it would only fail at confirm. The hold lapses on its own and the
+    // time comes back, the way the owner's calendar already counts it.
+    return withoutClosed(
+      slots.filter(
+        (slot) => !hasSlotStarted(slot, now) && !(slot.heldUntil && slot.heldUntil > now),
+      ),
+    );
   }
 
   return slots;

@@ -942,10 +942,33 @@ const storageCap = async () => {
   }
 };
 
-const resolveOwner = async () => {
+type OwnerUser = Prisma.UserGetPayload<{ include: { salonOwner: true } }>;
+
+/**
+ * On a fresh database the owner account does not exist yet: --apply creates it
+ * verified and with no password, so the owner signs in with Google or sets a
+ * password through "Forgot password".
+ */
+const resolveOwner = async (): Promise<OwnerUser> => {
   const user = await prisma.user.findUnique({ where: { email: OWNER_EMAIL }, include: { salonOwner: true } });
-  if (!user) throw new Error(`No user with email ${OWNER_EMAIL}. Register that account first.`);
-  return user;
+  if (user) return user;
+  const name = "Salon Owner";
+  if (!APPLY) {
+    console.log(`  ${OWNER_EMAIL} does not exist yet; --apply creates it (no password)`);
+    return { id: "pending", name, role: UserRole.CUSTOMER, emailVerifiedAt: null, salonOwner: null } as unknown as OwnerUser;
+  }
+  console.log(`  creating owner account ${OWNER_EMAIL} (no password: sign in with Google or "Forgot password")`);
+  return prisma.user.create({
+    data: {
+      email: OWNER_EMAIL,
+      name,
+      role: UserRole.SALON_OWNER,
+      status: UserStatus.ACTIVE,
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
+    },
+    include: { salonOwner: true },
+  });
 };
 
 /**
