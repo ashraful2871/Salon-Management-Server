@@ -1,14 +1,17 @@
 /**
  * Pre-flight for the referral program: is the hash secret set, is the settings
- * registry readable, has the ledger got PLATFORM_PROMO yet, is the Neon test
- * branch reachable, and what does the customer data look like for the fraud
- * rules (verified share, usable phones, phones shared between accounts).
+ * registry readable, has the ledger got PLATFORM_PROMO yet, is the test
+ * database reachable (when a branch file names one), and what does the customer
+ * data look like for the fraud rules (verified share, usable phones, phones
+ * shared between accounts).
  *
  *   npm run referral:check
  *   REFERRAL_BRANCH_FILE=.env.other npm run referral:check   # another branch file
  *
  * Read-only: SELECTs only, against the `.env` database (the live one) and, for
- * `SELECT 1` + its migration state, the branch from `.env.homebranch`.
+ * `SELECT 1` + its migration state, the test database from `.env.homebranch`
+ * (once a Neon branch; since 2026-11-20 the live DB is a VPS Postgres, so a test
+ * database there or a throwaway Docker one). No branch file → skipped, not failed.
  * Prints counts and set/missing only - never a row, a phone, a secret or a URL.
  * Exits 1 if any ❌ check failed; ℹ️ lines never fail.
  */
@@ -86,7 +89,7 @@ const checkLiveDb = async () => {
     return true;
   } catch (error) {
     report(false, "database (.env) reachable", `${errorCode(error)}${errorText(error)}`,
-      "check DATABASE_URL; a Neon compute may be disabled in the console");
+      "check DATABASE_URL and that the database server (VPS Postgres) is up and reachable");
     return false;
   }
 };
@@ -134,13 +137,13 @@ const checkLedgerEnum = async () => {
 };
 
 const checkBranch = async () => {
-  const label = "Neon test branch reachable";
+  const label = "test database reachable";
   const branch = readBranchTarget(process.env.REFERRAL_BRANCH_FILE || ".env.homebranch");
   const name = path.basename(branch.file);
   if (!branch.exists) return info(`${label} - skipped (no branch file ${name})`);
   if (!branch.url) {
     return report(false, label, `${name} has no DIRECT_URL / DATABASE_URL`,
-      "put the Neon branch URL in the branch file");
+      "put the test database URL in the branch file as DIRECT_URL");
   }
   if (!branch.matches) {
     return report(false, label,
@@ -159,9 +162,9 @@ const checkBranch = async () => {
     info(`branch migrations applied: ${state.n}, latest ${state.latest ?? "-"}`);
   } catch (error) {
     report(false, label, `${errorCode(error)}${errorText(error)}`,
-      "Prisma reports a rejected Neon login as \"Can't reach\" / a pool timeout too: copy a fresh " +
-      "connection string from Neon console → the branch → Connect (the password changes on reset); " +
-      "if the branch is gone, create one from Vercel → Storage → Open in Neon");
+      "a rejected login can also show as \"Can't reach\" / a pool timeout: check the URL's user, " +
+      "password, host and database (a VPS test database, e.g. salon_test, or a Neon branch's fresh " +
+      "connection string); if that database is gone, rename the branch file away (the check then skips)");
   } finally {
     await client.$disconnect();
   }
